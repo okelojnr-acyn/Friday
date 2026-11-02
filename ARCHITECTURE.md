@@ -16,11 +16,11 @@ way" reference both of those point to.
                          └─────────┬────────────┘
                                    │ reverse proxy
                                    │ /api/{app}/* → app's BaseURL
-                        ┌──────────┼──────────┐
-                        ▼          ▼          ▼
-                 apps/crm   apps/invoicing  apps/projects
-                 (FastAPI)   (FastAPI)       (FastAPI)
-                  own schema  own schema      own schema
+              ┌──────────┼──────────┬───────────┐
+              ▼          ▼          ▼           ▼
+       apps/crm   apps/invoicing  apps/projects  apps/inventory
+       (FastAPI)   (FastAPI)       (FastAPI)      (FastAPI)
+        own schema  own schema      own schema     own schema
 ```
 
 - **`kernel/` (Go)** — the only thing the browser ever talks to. Owns
@@ -32,7 +32,7 @@ way" reference both of those point to.
   (`kernel/internal/gateway/events.go`) — see "Cross-app integration"
   below.
 - **`apps/*` (Python/FastAPI)** — one business domain per app
-  (`crm`, `invoicing`, `projects`), each owning its own Postgres schema
+  (`crm`, `invoicing`, `projects`, `inventory`), each owning its own Postgres schema
   and migration, each verifying the kernel-issued JWT itself (shared
   HS256 secret — see "Trust boundary" below) rather than calling back
   into the kernel per request. Every app is built on
@@ -102,22 +102,34 @@ would need to change.
 
 ## Cross-app integration: events, not direct calls
 
-Apps never import or call each other directly. The one integration
-point in the MVP is CRM → Invoicing: winning an opportunity
+Apps never import or call each other directly. Two integration points
+exist so far, both the same shape: winning an opportunity
 (`apps/crm/app/main.py`) publishes a `crm.opportunity.won` event to
 `POST /internal/events` on the kernel
 (`kernel/internal/gateway/events.go`), which fans it out to subscribing
 apps' webhook endpoints (`apps/invoicing/app/webhooks.py`) so Invoicing
-can draft an invoice from the won deal. This is deliberately plain HTTP
-POST, not a message broker — at Friday's target scale, a broker is
-infrastructure to operate for a problem ("one app tells another app
-something happened") that HTTP already solves, and every event hop is
-visible in normal HTTP logs instead of hidden in queue internals.
+can draft an invoice from the won deal; recording a POS sale
+(`apps/invoicing/app/main.py`'s `record_pos_sale`) publishes
+`invoicing.pos_sale.recorded`, which Inventory subscribes to
+(`apps/inventory/app/main.py`'s `pos_sale_recorded`) to decrement stock
+for every sold line that carries a `product_id`. This is deliberately
+plain HTTP POST, not a message broker — at Friday's target scale, a
+broker is infrastructure to operate for a problem ("one app tells
+another app something happened") that HTTP already solves, and every
+event hop is visible in normal HTTP logs instead of hidden in queue
+internals. Adding a new cross-app reaction is one line in
+`kernel/internal/gateway/events.go`'s `subscriptions` list plus a
+webhook handler in the subscribing app — see either example above.
 
 The POS register reuses the same "already-paid invoice" shape instead of
 a separate sales ledger: `POST /api/invoicing/pos/sales` creates an
 `Invoice` with `source="pos"` and an immediate `Payment` — one ledger to
-reconcile, not two (`apps/invoicing/app/main.py`'s `record_pos_sale`).
+reconcile, not two. A line rung up from the product catalog (barcode
+scan or search, not freeform entry) carries a `product_id`, set
+client-side in `web/src/apps/pos/PosPage.tsx` and threaded through
+`pos-engine`'s `LineItem` (`pos-engine/src/cart.rs`) so it survives the
+register's offline sync queue — a sale made offline still decrements
+stock correctly once it syncs, not just an online one.
 
 ## Data ownership
 

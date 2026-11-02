@@ -23,17 +23,19 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        app: [crm, invoicing, projects]
+        app: [crm, invoicing, projects, inventory]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r apps/${{ matrix.app }}/requirements.txt -r apps/${{ matrix.app }}/requirements-dev.txt
-      # exit code 5 = "no tests collected" -- tolerated until apps/*/tests
-      # has test files (tracked follow-up, see ARCHITECTURE.md); any other
-      # non-zero exit still fails the job.
-      - run: pytest apps/${{ matrix.app }}/tests || [ $? -eq 5 ]
+      # Scans the whole app dir, not just tests/ -- git doesn't track empty
+      # directories, so an untouched tests/ subdir wouldn't even exist
+      # after a fresh checkout. Exit code 5 = "no tests collected",
+      # tolerated until test files exist (tracked follow-up, see
+      # ARCHITECTURE.md); any other non-zero exit still fails the job.
+      - run: pytest apps/${{ matrix.app }} || [ $? -eq 5 ]
 
   pos-engine:
     runs-on: ubuntu-latest

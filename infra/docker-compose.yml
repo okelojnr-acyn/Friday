@@ -1,4 +1,4 @@
-# Local dev stack: postgres + kernel + the three app services + web.
+# Local dev stack: postgres + kernel + the four app services + web.
 # Each language service runs off its official base image with the repo
 # mounted in, rather than a bespoke Dockerfile per service -- there's
 # nothing to build/push for local dev, and `scripts/setup.sh` already
@@ -39,6 +39,7 @@ services:
       APP_CRM_URL: http://crm:8001
       APP_INVOICING_URL: http://invoicing:8002
       APP_PROJECTS_URL: http://projects:8003
+      APP_INVENTORY_URL: http://inventory:8004
     ports:
       - "8080:8080"
     depends_on:
@@ -110,6 +111,29 @@ services:
       CORS_ORIGINS: '["http://localhost:5173"]'
     ports:
       - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  inventory:
+    image: python:3.12-slim
+    working_dir: /src
+    volumes:
+      - ..:/src
+    command: >
+      sh -c "pip install -q -r apps/inventory/requirements.txt -r apps/inventory/requirements-dev.txt &&
+             python -m friday_common.migrate apps/inventory inventory &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8004 --app-dir apps/inventory"
+    environment:
+      SERVICE_NAME: friday-inventory
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
+      DB_SCHEMA: inventory
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      KERNEL_INTERNAL_URL: http://kernel:8080/internal
+      KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
+      CORS_ORIGINS: '["http://localhost:5173"]'
+    ports:
+      - "8004:8004"
     depends_on:
       postgres:
         condition: service_healthy

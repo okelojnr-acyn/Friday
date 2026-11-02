@@ -1,14 +1,15 @@
 # Friday
 
 A small, focused business suite — CRM, Invoicing, Projects & Helpdesk,
-and a POS register — on a shared kernel. See `DESIGN.md` for the product
-philosophy and `ARCHITECTURE.md` for how the four pieces fit together.
+Inventory, and a POS register with barcode scanning — on a shared
+kernel. See `DESIGN.md` for the product philosophy and `ARCHITECTURE.md`
+for how the pieces fit together.
 
 ## Quickstart
 
 ```
 ./scripts/setup.sh                            # installs deps for every toolchain, copies .env.example -> .env
-docker compose -f infra/docker-compose.yml up  # postgres + kernel + crm + invoicing + projects + web
+docker compose -f infra/docker-compose.yml up  # postgres + kernel + crm + invoicing + projects + inventory + web
 ```
 
 Then open http://localhost:5173, register an org, and you're in.
@@ -22,7 +23,7 @@ development (below).
 - `kernel/` (Go) — auth, orgs, the app registry, the API gateway. Every
   request from `web/` goes through here.
 - `apps/*` (Python/FastAPI) — one business domain per app (`crm`,
-  `invoicing`, `projects`), each with its own Postgres schema.
+  `invoicing`, `projects`, `inventory`), each with its own Postgres schema.
 - `pos-engine/` (Rust) — cart/pricing/tax/offline-sync logic, compiled
   native and to WASM for the browser POS register.
 - `web/` (TypeScript/React) — the unified shell every app renders
@@ -42,12 +43,12 @@ go run ./cmd/kernel
 ```
 
 **An app (Python/FastAPI)** — same shape for `apps/crm`, `apps/invoicing`,
-`apps/projects`:
+`apps/projects`, `apps/inventory`:
 ```
 cd apps/crm
 pip install -r requirements.txt -r requirements-dev.txt
 pytest
-uvicorn app.main:app --reload --port 8001   # 8002 for invoicing, 8003 for projects
+uvicorn app.main:app --reload --port 8001   # 8002 invoicing, 8003 projects, 8004 inventory
 ```
 
 **POS engine (Rust)**
