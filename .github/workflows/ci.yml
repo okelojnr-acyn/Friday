@@ -24,18 +24,32 @@ jobs:
     strategy:
       matrix:
         app: [crm, invoicing, projects, inventory]
+    services:
+      # Each app's conftest.py (friday_common/testing.py) migrates its
+      # own "<app>_test" schema on this server at session start -- no
+      # separate migration step needed here, just a reachable Postgres.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: friday
+          POSTGRES_PASSWORD: friday
+          POSTGRES_DB: friday
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U friday"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgresql+asyncpg://friday:friday@localhost:5432/friday
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r apps/${{ matrix.app }}/requirements.txt -r apps/${{ matrix.app }}/requirements-dev.txt
-      # Scans the whole app dir, not just tests/ -- git doesn't track empty
-      # directories, so an untouched tests/ subdir wouldn't even exist
-      # after a fresh checkout. Exit code 5 = "no tests collected",
-      # tolerated until test files exist (tracked follow-up, see
-      # ARCHITECTURE.md); any other non-zero exit still fails the job.
-      - run: pytest apps/${{ matrix.app }} || [ $? -eq 5 ]
+      - run: pytest apps/${{ matrix.app }}
 
   pos-engine:
     runs-on: ubuntu-latest

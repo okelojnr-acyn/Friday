@@ -11,6 +11,7 @@ class ProductCreate(BaseModel):
     price_cents: int = 0
     cost_cents: int = 0
     on_hand_qty: int = 0
+    reorder_point: int = 0
     track_inventory: bool = True
 
 
@@ -20,6 +21,7 @@ class ProductUpdate(BaseModel):
     barcode: str | None = None
     price_cents: int | None = None
     cost_cents: int | None = None
+    reorder_point: int | None = None
     track_inventory: bool | None = None
 
 
@@ -32,6 +34,7 @@ class ProductOut(BaseModel):
     price_cents: int
     cost_cents: int
     on_hand_qty: int
+    reorder_point: int
     track_inventory: bool
     created_at: datetime
     updated_at: datetime

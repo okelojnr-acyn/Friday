@@ -65,6 +65,9 @@ resource(
         search_fields=("title",),
         fields=(
             FieldSpec("title", "Title", "text", required=True),
+            FieldSpec(
+                "project_id", "Project", "reference", reference="projects.project", list_visible=False
+            ),
             FieldSpec("status", "Status", "select", options=TASK_STATUSES, required=True),
             FieldSpec("priority", "Priority", "select", options=TASK_PRIORITIES, required=True),
             FieldSpec("assignee_email", "Assignee", "email"),

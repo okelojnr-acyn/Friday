@@ -21,6 +21,9 @@ class Product(Base):
     price_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     cost_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     on_hand_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Cheap equivalent of Odoo's reordering rules: a visible threshold,
+    # not a replenishment engine with purchase orders.
+    reorder_point: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Some products (services, one-off items) never carry stock -- their
     # on_hand_qty stays meaningless and POS/sales shouldn't decrement it.
     track_inventory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

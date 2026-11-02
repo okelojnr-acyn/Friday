@@ -36,6 +36,7 @@ resource(
             FieldSpec("priority", "Priority", "select", options=PRIORITIES, required=True),
             FieldSpec("value_cents", "Value", "currency"),
             FieldSpec("currency", "Currency", "text"),
+            FieldSpec("next_step_at", "Next step", "date"),
             FieldSpec("notes", "Notes", "textarea", list_visible=False),
             FieldSpec("created_at", "Created", "datetime", form_visible=False),
         ),

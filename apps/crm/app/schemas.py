@@ -15,6 +15,7 @@ class OpportunityCreate(BaseModel):
     value_cents: int = 0
     currency: str = "USD"
     notes: str = ""
+    next_step_at: datetime | None = None
 
 
 class OpportunityUpdate(BaseModel):
@@ -26,6 +27,7 @@ class OpportunityUpdate(BaseModel):
     value_cents: int | None = None
     currency: str | None = None
     notes: str | None = None
+    next_step_at: datetime | None = None
 
 
 class OpportunityOut(BaseModel):
@@ -39,6 +41,7 @@ class OpportunityOut(BaseModel):
     value_cents: int
     currency: str
     notes: str
+    next_step_at: datetime | None
     created_at: datetime
     updated_at: datetime
 

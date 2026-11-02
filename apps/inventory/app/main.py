@@ -36,6 +36,7 @@ resource(
             FieldSpec("price_cents", "Price", "currency", required=True),
             FieldSpec("cost_cents", "Cost", "currency"),
             FieldSpec("on_hand_qty", "On hand", "number", form_visible=False),
+            FieldSpec("reorder_point", "Reorder at", "number"),
             FieldSpec("track_inventory", "Tracks stock", "boolean"),
         ),
     )

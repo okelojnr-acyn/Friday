@@ -54,6 +54,13 @@ resource(
         search_fields=("number",),
         fields=(
             FieldSpec("number", "Number", "text", form_visible=False),
+            FieldSpec(
+                "customer_id",
+                "Customer",
+                "reference",
+                reference="invoicing.customer",
+                form_visible=False,
+            ),
             FieldSpec("status", "Status", "select", options=INVOICE_STATUSES, required=True),
             FieldSpec("total_cents", "Total", "currency", form_visible=False),
             FieldSpec("balance_cents", "Balance", "currency", form_visible=False),
