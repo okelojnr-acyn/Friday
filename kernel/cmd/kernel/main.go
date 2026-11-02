@@ -13,6 +13,7 @@ import (
 	"github.com/acyn-innovation/friday/kernel/internal/auth"
 	"github.com/acyn-innovation/friday/kernel/internal/db"
 	"github.com/acyn-innovation/friday/kernel/internal/gateway"
+	"github.com/acyn-innovation/friday/kernel/internal/integrations"
 	"github.com/acyn-innovation/friday/kernel/internal/org"
 	"github.com/acyn-innovation/friday/kernel/internal/registry"
 )
@@ -67,6 +68,13 @@ func main() {
 	mux.Handle("GET /orgs/apps", requireAuth(http.HandlerFunc(catalog.List)))
 	mux.Handle("POST /orgs/apps/{app}/install", requireAuth(catalog.SetInstalled(true)))
 	mux.Handle("DELETE /orgs/apps/{app}/install", requireAuth(catalog.SetInstalled(false)))
+
+	integrationHandlers := &integrations.Handlers{Pool: pool, InternalToken: eventsToken}
+	mux.Handle("GET /orgs/integrations", requireAuth(http.HandlerFunc(integrationHandlers.List)))
+	mux.Handle("GET /orgs/integrations/{provider}", requireAuth(http.HandlerFunc(integrationHandlers.Get)))
+	mux.Handle("PUT /orgs/integrations/{provider}", requireAuth(http.HandlerFunc(integrationHandlers.Set)))
+	mux.Handle("DELETE /orgs/integrations/{provider}", requireAuth(http.HandlerFunc(integrationHandlers.Delete)))
+	mux.HandleFunc("GET /internal/integrations/{org_id}/{provider}", integrationHandlers.GetInternal)
 
 	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(apps, eventsToken))
 

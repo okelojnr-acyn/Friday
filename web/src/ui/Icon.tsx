@@ -19,7 +19,17 @@ export type IconName =
   | "app-window"
   | "arrow-up-right"
   | "trend-up"
-  | "ticket";
+  | "ticket"
+  | "wallet"
+  | "calendar"
+  | "message-circle"
+  | "credit-card"
+  | "database"
+  | "link-2"
+  | "key"
+  | "shield-check"
+  | "history"
+  | "percent";
 
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = {
@@ -145,6 +155,81 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
         <svg {...common}>
           <path d="M3 9a2 2 0 0 0 0 4v2a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2a2 2 0 0 1 0-4V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v2z" />
           <path d="M10 6v12" strokeDasharray="2 2" />
+        </svg>
+      );
+    case "wallet":
+      return (
+        <svg {...common}>
+          <rect x="3" y="6" width="18" height="13" rx="2" />
+          <path d="M3 10h18" />
+          <circle cx="16" cy="14" r="1.2" fill="currentColor" stroke="none" />
+          <path d="M7 6V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1" />
+        </svg>
+      );
+    case "calendar":
+      return (
+        <svg {...common}>
+          <rect x="3" y="5" width="18" height="16" rx="2" />
+          <path d="M3 10h18M8 3v4M16 3v4" />
+        </svg>
+      );
+    case "message-circle":
+      return (
+        <svg {...common}>
+          <path d="M21 12a8 8 0 1 1-3.2-6.4L21 4l-1 4.2A7.9 7.9 0 0 1 21 12z" />
+          <path d="M8 11h.01M12 11h.01M16 11h.01" />
+        </svg>
+      );
+    case "credit-card":
+      return (
+        <svg {...common}>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <path d="M3 10h18M7 15h4" />
+        </svg>
+      );
+    case "database":
+      return (
+        <svg {...common}>
+          <ellipse cx="12" cy="5.5" rx="8" ry="3" />
+          <path d="M4 5.5V12c0 1.7 3.6 3 8 3s8-1.3 8-3V5.5" />
+          <path d="M4 12v6.5c0 1.7 3.6 3 8 3s8-1.3 8-3V12" />
+        </svg>
+      );
+    case "link-2":
+      return (
+        <svg {...common}>
+          <path d="M9 17H7a5 5 0 0 1 0-10h2M15 7h2a5 5 0 0 1 0 10h-2" />
+          <path d="M8 12h8" />
+        </svg>
+      );
+    case "key":
+      return (
+        <svg {...common}>
+          <circle cx="8" cy="15" r="4" />
+          <path d="M11 12l9-9M17 6l2 2M14 9l2 2" />
+        </svg>
+      );
+    case "shield-check":
+      return (
+        <svg {...common}>
+          <path d="M12 3l8 3.5v5c0 5-3.5 8-8 9.5-4.5-1.5-8-4.5-8-9.5v-5L12 3z" />
+          <path d="M9 12l2.2 2.2L15.5 10" />
+        </svg>
+      );
+    case "history":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="8" />
+          <path d="M12 8v4l2.5 1.5" />
+          <path d="M3.5 9.5 2 8l-.5 2.5" />
+        </svg>
+      );
+    case "percent":
+      return (
+        <svg {...common}>
+          <path d="M19 5 5 19" />
+          <circle cx="7" cy="7" r="2.2" />
+          <circle cx="17" cy="17" r="2.2" />
         </svg>
       );
     case "app-window":

@@ -2,9 +2,6 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from friday_common import (
     FieldSpec,
     Principal,
@@ -14,6 +11,8 @@ from friday_common import (
     get_org_session,
     resource,
 )
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     PROJECT_STATUSES,
@@ -24,6 +23,7 @@ from .models import (
     Project,
     Task,
     Ticket,
+    TimeEntry,
 )
 from .schemas import (
     ProjectCreate,
@@ -35,6 +35,8 @@ from .schemas import (
     TicketCreate,
     TicketOut,
     TicketUpdate,
+    TimeEntryCreate,
+    TimeEntryOut,
 )
 
 resource(
@@ -91,7 +93,25 @@ resource(
             FieldSpec("status", "Status", "select", options=TICKET_STATUSES, required=True),
             FieldSpec("priority", "Priority", "select", options=TICKET_PRIORITIES, required=True),
             FieldSpec("requester_email", "Requester", "email"),
+            FieldSpec("due_at", "Due", "date"),
             FieldSpec("description", "Description", "textarea", list_visible=False),
+        ),
+    )
+)
+
+resource(
+    ResourceSpec(
+        name="time_entry",
+        app="projects",
+        label="Time Entry",
+        label_plural="Time Entries",
+        views=("list",),
+        search_fields=("note",),
+        fields=(
+            FieldSpec("task_id", "Task", "reference", reference="projects.task", required=True),
+            FieldSpec("minutes", "Minutes", "number", required=True),
+            FieldSpec("note", "Note", "text"),
+            FieldSpec("created_at", "Logged", "datetime", form_visible=False),
         ),
     )
 )
@@ -100,6 +120,7 @@ app = create_app("friday-projects")
 
 projects_router = APIRouter(prefix="/projects", tags=["projects"])
 tasks_router = APIRouter(prefix="/tasks", tags=["tasks"])
+time_entries_router = APIRouter(prefix="/time_entries", tags=["time-entries"])
 tickets_router = APIRouter(prefix="/tickets", tags=["tickets"])
 
 
@@ -244,6 +265,42 @@ async def update_ticket(
     return ticket
 
 
+@time_entries_router.get("", response_model=list[TimeEntryOut])
+async def list_time_entries(
+    task_id: uuid.UUID | None = None,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    query = select(TimeEntry).where(TimeEntry.org_id == _org(principal))
+    if task_id is not None:
+        query = query.where(TimeEntry.task_id == task_id)
+    rows = await session.execute(query.order_by(TimeEntry.created_at.desc()))
+    return rows.scalars().all()
+
+
+@time_entries_router.post("", response_model=TimeEntryOut, status_code=201)
+async def create_time_entry(
+    body: TimeEntryCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    task = await session.get(Task, body.task_id)
+    if task is None or str(task.org_id) != principal.org_id:
+        raise HTTPException(404, "task not found")
+    entry = TimeEntry(
+        org_id=_org(principal),
+        task_id=body.task_id,
+        minutes=body.minutes,
+        note=body.note,
+        created_at=datetime.now(UTC),
+    )
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)
+    return entry
+
+
 app.include_router(projects_router)
 app.include_router(tasks_router)
 app.include_router(tickets_router)
+app.include_router(time_entries_router)

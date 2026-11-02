@@ -31,8 +31,13 @@ different. What Friday owns is the visual language layered on top of them.
    chrome (nav, headers, empty states) is generous and calm.
 6. **One component kit, every app.** Every app renders through
    `web/src/ui` — no app ships its own buttons, inputs, or cards. This is
-   what keeps 4+ independently-built apps feeling like one product, and
-   what lets the whole UI restyle from one place.
+   what keeps 5+ independently-built apps feeling like one product, and
+   what lets the whole UI restyle from one place. Icons follow the same
+   rule: `web/src/ui/Icon.tsx` is one small hand-rolled stroke-icon set
+   (`currentColor`, no external icon library), grown by adding a glyph
+   there as each new surface needs one (Web3's wallet icon, the
+   Integrations settings screen's provider icons) rather than any app
+   reaching for its own icon set.
 
 ## Tokens (`web/src/ui/tokens.css`)
 
@@ -84,8 +89,11 @@ history log) — not as a general dark-mode toggle for the whole app.
 - **List / Kanban / Form, one switcher** — every resource in every app gets
   these three views for free from the generic schema-driven renderer
   (`web/src/ui/resource/*`). Apps only write a custom screen when the
-  workflow genuinely needs one (POS register, pipeline kanban with
-  drag-and-drop stage logic).
+  workflow genuinely needs one — POS register, pipeline kanban with
+  drag-and-drop stage logic, Invoicing's "Pay with card" panel (real
+  Stripe Elements, can't be a `FieldSpec`), Inventory's "Create purchase
+  order" panel, and Web3's Treasury panel are the full list today, each
+  justified by a doc comment at its own definition.
 - **Smart buttons on records** — every record detail page gets a small
   strip of related-record counts (e.g. a Project's "3 Tasks", a
   Customer's "2 Invoices"), derived by scanning the app's own schema for
@@ -97,6 +105,13 @@ history log) — not as a general dark-mode toggle for the whole app.
   (`web/src/ui/resource/ReferenceInput.tsx`).
 - **Apps catalog** — a single screen to see what's installed and enable more,
   instead of discovering features by accident in a menu tree.
+- **Integrations settings** — the same "one screen, one list" instinct as
+  the Apps catalog, applied to third-party providers instead of Friday's
+  own apps: `web/src/shell/IntegrationsSettingsPage.tsx` is one card per
+  provider (Stripe, Slack, Acyn Wallet, and the documented stubs — see
+  `INTEGRATIONS.md`), each with a connect/edit form shaped by that
+  provider's own config fields, backed by the kernel's credential store
+  rather than a page per vendor.
 
 ## What we explicitly did not copy
 

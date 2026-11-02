@@ -2,9 +2,6 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from friday_common import (
     FieldSpec,
     Principal,
@@ -17,9 +14,30 @@ from friday_common import (
     resource,
     set_org_context,
 )
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import REASONS, Product, StockMove
-from .schemas import ProductCreate, ProductOut, ProductUpdate, StockAdjust, StockMoveOut
+from .models import (
+    PURCHASE_ORDER_STATUSES,
+    REASONS,
+    Product,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    StockMove,
+    Supplier,
+)
+from .schemas import (
+    ProductCreate,
+    ProductOut,
+    ProductUpdate,
+    PurchaseOrderCreate,
+    PurchaseOrderOut,
+    PurchaseOrderStatusUpdate,
+    StockAdjust,
+    StockMoveOut,
+    SupplierCreate,
+    SupplierOut,
+)
 
 resource(
     ResourceSpec(
@@ -60,10 +78,47 @@ resource(
     )
 )
 
+resource(
+    ResourceSpec(
+        name="supplier",
+        app="inventory",
+        label="Supplier",
+        label_plural="Suppliers",
+        views=("list", "form"),
+        search_fields=("name", "email"),
+        fields=(
+            FieldSpec("name", "Name", "text", required=True),
+            FieldSpec("email", "Email", "email"),
+            FieldSpec("phone", "Phone", "phone"),
+            FieldSpec("created_at", "Added", "datetime", form_visible=False),
+        ),
+    )
+)
+
+resource(
+    ResourceSpec(
+        name="purchase_order",
+        app="inventory",
+        label="Purchase Order",
+        label_plural="Purchase Orders",
+        views=("list", "form"),
+        search_fields=("number",),
+        fields=(
+            FieldSpec("number", "Number", "text", form_visible=False),
+            FieldSpec("supplier_id", "Supplier", "reference", reference="inventory.supplier", form_visible=False),
+            FieldSpec("status", "Status", "select", options=PURCHASE_ORDER_STATUSES, required=True),
+            FieldSpec("total_cost_cents", "Total cost", "currency", form_visible=False),
+            FieldSpec("created_at", "Created", "datetime", form_visible=False),
+        ),
+    )
+)
+
 app = create_app("friday-inventory")
 
 products_router = APIRouter(prefix="/products", tags=["products"])
 moves_router = APIRouter(prefix="/stock_moves", tags=["stock-moves"])
+suppliers_router = APIRouter(prefix="/suppliers", tags=["suppliers"])
+purchase_orders_router = APIRouter(prefix="/purchase_orders", tags=["purchase-orders"])
 webhooks_router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
 
 
@@ -218,6 +273,175 @@ async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_sess
     await session.commit()
 
 
+@suppliers_router.get("", response_model=list[SupplierOut])
+async def list_suppliers(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(
+        select(Supplier).where(Supplier.org_id == _org(principal)).order_by(Supplier.name)
+    )
+    return rows.scalars().all()
+
+
+@suppliers_router.post("", response_model=SupplierOut, status_code=201)
+async def create_supplier(
+    body: SupplierCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    supplier = Supplier(org_id=_org(principal), created_at=datetime.now(UTC), **body.model_dump())
+    session.add(supplier)
+    await session.commit()
+    await session.refresh(supplier)
+    return supplier
+
+
+async def _get_owned_po(session: AsyncSession, principal: Principal, po_id: uuid.UUID) -> PurchaseOrder:
+    po = await session.get(PurchaseOrder, po_id)
+    if po is None or str(po.org_id) != principal.org_id:
+        raise HTTPException(404, "purchase order not found")
+    return po
+
+
+@purchase_orders_router.get("", response_model=list[PurchaseOrderOut])
+async def list_purchase_orders(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(
+        select(PurchaseOrder).where(PurchaseOrder.org_id == _org(principal)).order_by(PurchaseOrder.created_at.desc())
+    )
+    return [PurchaseOrderOut.from_model(po) for po in rows.scalars().all()]
+
+
+@purchase_orders_router.post("", response_model=PurchaseOrderOut, status_code=201)
+async def create_purchase_order(
+    body: PurchaseOrderCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    now = datetime.now(UTC)
+    po = PurchaseOrder(
+        org_id=_org(principal),
+        supplier_id=body.supplier_id,
+        number=f"PO-{now:%Y%m}-{uuid.uuid4().hex[:6].upper()}",
+        status="draft",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(po)
+    await session.flush()
+    for line in body.lines:
+        session.add(
+            PurchaseOrderLine(
+                org_id=_org(principal),
+                purchase_order_id=po.id,
+                product_id=line.product_id,
+                description=line.description,
+                quantity=line.quantity,
+                unit_cost_cents=line.unit_cost_cents,
+            )
+        )
+    await session.commit()
+    await session.refresh(po, attribute_names=["lines"])
+    return PurchaseOrderOut.from_model(po)
+
+
+@purchase_orders_router.get("/{po_id}", response_model=PurchaseOrderOut)
+async def get_purchase_order(
+    po_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    po = await _get_owned_po(session, principal, po_id)
+    return PurchaseOrderOut.from_model(po)
+
+
+@purchase_orders_router.patch("/{po_id}/status", response_model=PurchaseOrderOut)
+async def set_purchase_order_status(
+    po_id: uuid.UUID,
+    body: PurchaseOrderStatusUpdate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    if body.status not in PURCHASE_ORDER_STATUSES:
+        raise HTTPException(422, f"status must be one of {PURCHASE_ORDER_STATUSES}")
+    po = await _get_owned_po(session, principal, po_id)
+    previous_status = po.status
+    po.status = body.status
+    po.updated_at = datetime.now(UTC)
+
+    # Receiving a PO is the one side effect: each line carrying a
+    # product_id bumps that product's on_hand_qty and writes a StockMove,
+    # the same ledger-plus-cache shape adjust_stock and pos_sale_recorded
+    # already use. Only fires on the transition into "received" so
+    # re-saving an already-received PO never double-counts stock.
+    if previous_status != "received" and body.status == "received":
+        for line in po.lines:
+            if not line.product_id:
+                continue
+            product = await session.get(Product, line.product_id)
+            if product is None or str(product.org_id) != principal.org_id or not product.track_inventory:
+                continue
+            product.on_hand_qty += line.quantity
+            product.updated_at = po.updated_at
+            session.add(
+                StockMove(
+                    org_id=_org(principal),
+                    product_id=product.id,
+                    product_name=product.name,
+                    qty_delta=line.quantity,
+                    reason="received",
+                    reference=po.number,
+                    created_at=po.updated_at,
+                )
+            )
+
+    await session.commit()
+    await session.refresh(po, attribute_names=["lines"])
+    return PurchaseOrderOut.from_model(po)
+
+
+@purchase_orders_router.post("/from-product/{product_id}", response_model=PurchaseOrderOut, status_code=201)
+async def create_purchase_order_from_product(
+    product_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The "Create purchase order" action on a low-stock product (see
+    web/src/apps/inventory/CreatePurchaseOrderPanel.tsx) -- a one-line
+    draft PO that restocks to double the reorder point, left in "draft"
+    for a human to pick a supplier and actually send."""
+    product = await _get_owned(session, principal, product_id)
+    now = datetime.now(UTC)
+    quantity = max(product.reorder_point * 2 - product.on_hand_qty, 1)
+    po = PurchaseOrder(
+        org_id=_org(principal),
+        number=f"PO-{now:%Y%m}-{uuid.uuid4().hex[:6].upper()}",
+        status="draft",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(po)
+    await session.flush()
+    session.add(
+        PurchaseOrderLine(
+            org_id=_org(principal),
+            purchase_order_id=po.id,
+            product_id=product.id,
+            description=product.name,
+            quantity=quantity,
+            unit_cost_cents=product.cost_cents,
+        )
+    )
+    await session.commit()
+    await session.refresh(po, attribute_names=["lines"])
+    return PurchaseOrderOut.from_model(po)
+
+
 app.include_router(products_router)
 app.include_router(moves_router)
+app.include_router(suppliers_router)
+app.include_router(purchase_orders_router)
 app.include_router(webhooks_router)

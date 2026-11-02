@@ -7,6 +7,8 @@ import { Button } from "../Button";
 import { FieldWrap } from "../Field";
 import { FieldInput } from "./FieldInput";
 import { SmartButtons } from "./SmartButtons";
+import { PayWithCardPanel } from "../../apps/invoicing/PayWithCardPanel";
+import { CreatePurchaseOrderPanel } from "../../apps/inventory/CreatePurchaseOrderPanel";
 import { amountInputToCents, centsToAmountInput, toDateInputValue, toDatetimeInputValue } from "./fieldFormat";
 
 interface FormViewProps {
@@ -122,6 +124,20 @@ export function FormView({ spec, app, schema, record, onClose, onSaved }: FormVi
           </Button>
         </div>
       </form>
+      {isEdit && app === "invoicing" && spec.name === "invoice" ? (
+        <PayWithCardPanel
+          invoiceId={record!.id}
+          balanceCents={Number(record!.balance_cents ?? 0)}
+          currency={String(record!.currency ?? "USD")}
+        />
+      ) : null}
+      {isEdit && app === "inventory" && spec.name === "product" ? (
+        <CreatePurchaseOrderPanel
+          productId={record!.id}
+          onHandQty={Number(record!.on_hand_qty ?? 0)}
+          reorderPoint={Number(record!.reorder_point ?? 0)}
+        />
+      ) : null}
     </Modal>
   );
 }

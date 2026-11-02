@@ -1,4 +1,5 @@
 import type { FieldSpec } from "../../lib/types";
+import { statusTone } from "../Badge";
 
 /** Cents (what every app stores) <-> a dollar-amount string (what a form
  * input shows). Keeps money as integers everywhere outside this one
@@ -53,6 +54,23 @@ export function isDueDateField(field: FieldSpec): boolean {
 
 export function isPriorityField(field: FieldSpec): boolean {
   return field.name === "priority" && field.type === "select";
+}
+
+/** True for a due-date field whose date has passed on a record that
+ * isn't already in a "done"-shaped state (reuses statusTone's success
+ * vocabulary -- won/paid/synced/resolved/closed/done -- rather than a
+ * second list of terminal statuses to keep in sync). Generic across
+ * every app's resources the same way isPriorityField/isDueDateField
+ * already are: a resource earns the "Overdue" treatment just by having a
+ * `due_at`-shaped field and a `status` field, no extra config. */
+export function isOverdue(field: FieldSpec, record: { [key: string]: unknown }): boolean {
+  if (!isDueDateField(field)) return false;
+  const raw = record[field.name];
+  if (typeof raw !== "string" || !raw) return false;
+  const due = new Date(raw).getTime();
+  if (Number.isNaN(due) || due >= Date.now()) return false;
+  const status = record.status;
+  return !(typeof status === "string" && statusTone(status) === "success");
 }
 
 export function initials(value: unknown): string {

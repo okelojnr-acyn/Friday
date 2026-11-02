@@ -12,7 +12,8 @@ class Base(DeclarativeBase):
 
 
 INVOICE_STATUSES = ("draft", "sent", "paid", "void")
-PAYMENT_METHODS = ("cash", "card", "pos", "bank_transfer", "other")
+PAYMENT_METHODS = ("cash", "card", "pos", "bank_transfer", "refund", "other")
+RECURRING_INTERVALS = ("", "weekly", "monthly", "yearly")
 
 
 class Customer(Base):
@@ -41,6 +42,16 @@ class Invoice(Base):
     source_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set once a "Pay with card" PaymentIntent has been created for this
+    # invoice (see friday_common.integrations.stripe.StripeProvider and
+    # pay_with_card below) -- lets the Stripe webhook find its way back to
+    # the right invoice without trusting the webhook body alone.
+    stripe_payment_intent_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # "" means this invoice isn't a recurring template. A non-empty value
+    # makes generate_recurring_invoices (see main.py) clone this invoice's
+    # lines into a fresh draft invoice once `next_recurrence_at` passes.
+    recurring_interval: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    next_recurrence_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -63,6 +74,11 @@ class InvoiceLine(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=1)
     unit_price_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Set when this line was rung up from the POS product catalog (see
+    # pos_router.record_pos_sale) -- lets a later return
+    # (pos_router.return_pos_sale) restock the right product. Plain
+    # column, no FK -- see 0003_pos_returns.sql's comment.
+    product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="lines")
 

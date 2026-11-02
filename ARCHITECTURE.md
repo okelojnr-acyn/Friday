@@ -1,44 +1,49 @@
 # Friday Architecture
 
-Friday is four pieces talking over HTTP, not a monolith and not a
+Friday is five pieces talking over HTTP, not a monolith and not a
 microservices sprawl. Each piece is boring and small on purpose — see
-`DESIGN.md` for the product/UI reasoning and `CONTRIBUTING.md` for the
-day-to-day workflow. This document is the "why does it fit together this
-way" reference both of those point to.
+`DESIGN.md` for the product/UI reasoning, `PRD.md` for the product scope
+this architecture serves, and `CONTRIBUTING.md` for the day-to-day
+workflow. This document is the "why does it fit together this way"
+reference all three point to.
 
-## The four pieces
+## The five pieces
 
 ```
                          ┌────────────────────┐
   Browser  ───────────▶  │  kernel (Go)        │
   (web/)                 │  auth · orgs · apps  │
                          │  catalog · gateway   │
+                         │  integration creds   │
                          └─────────┬────────────┘
                                    │ reverse proxy
                                    │ /api/{app}/* → app's BaseURL
-              ┌──────────┼──────────┬───────────┐
-              ▼          ▼          ▼           ▼
-       apps/crm   apps/invoicing  apps/projects  apps/inventory
-       (FastAPI)   (FastAPI)       (FastAPI)      (FastAPI)
-        own schema  own schema      own schema     own schema
+          ┌──────────┬──────────┬───────────┬──────────┐
+          ▼          ▼          ▼           ▼          ▼
+   apps/crm   apps/invoicing  apps/projects  apps/inventory  apps/web3
+   (FastAPI)   (FastAPI)       (FastAPI)      (FastAPI)       (FastAPI)
+    own schema  own schema      own schema     own schema      own schema
 ```
 
 - **`kernel/` (Go)** — the only thing the browser ever talks to. Owns
   auth (JWT issuance/verification), the org/membership model, the apps
   catalog (which apps exist in this deployment, which ones an org has
-  enabled), and a reverse-proxy gateway that forwards `/api/{app}/*` to
-  the right app service with the caller's bearer token passed through
-  unchanged. It also fans out domain events between apps
+  enabled), the per-org third-party integration credential store
+  (`kernel/internal/integrations` — see "Integrations" below), and a
+  reverse-proxy gateway that forwards `/api/{app}/*` to the right app
+  service with the caller's bearer token passed through unchanged. It
+  also fans out domain events between apps
   (`kernel/internal/gateway/events.go`) — see "Cross-app integration"
   below.
 - **`apps/*` (Python/FastAPI)** — one business domain per app
-  (`crm`, `invoicing`, `projects`, `inventory`), each owning its own Postgres schema
-  and migration, each verifying the kernel-issued JWT itself (shared
-  HS256 secret — see "Trust boundary" below) rather than calling back
-  into the kernel per request. Every app is built on
+  (`crm`, `invoicing`, `projects`, `inventory`, `web3`), each owning its
+  own Postgres schema and migration, each verifying the kernel-issued JWT
+  itself (shared HS256 secret — see "Trust boundary" below) rather than
+  calling back into the kernel per request. Every app is built on
   `packages/py-common/friday_common` (`create_app`, auth dependency,
-  DB session, the resource/schema registry) so adding an app never means
-  re-inventing health checks, CORS, or the schema endpoint.
+  DB session, the resource/schema registry, and the integration-adapter
+  package — see below) so adding an app never means re-inventing health
+  checks, CORS, or the schema endpoint.
 - **`pos-engine/` (Rust)** — cart/pricing/tax math and an offline sale
   queue, compiled both natively (`cargo test`, any future backend reuse)
   and to WASM (`wasm-pack build --target web`) for the browser POS
@@ -140,6 +145,42 @@ client-side in `web/src/apps/pos/PosPage.tsx` and threaded through
 register's offline sync queue — a sale made offline still decrements
 stock correctly once it syncs, not just an online one.
 
+## Integrations
+
+A third-party provider (Stripe, Slack, Acyn Wallet, ...) is connected
+per-org, not per-deployment: an org admin pastes an API key or webhook
+URL into Settings > Integrations, which calls the kernel's
+`core.integration_credentials` store (`kernel/internal/integrations`,
+migration `0002_integrations.sql`) — one JSON blob per `(org, provider)`.
+An app fetches it back with `friday_common.get_integration_config(org_id,
+provider)`, a plain HTTP call to the kernel guarded by the same shared
+token `events.go` already uses for the reverse direction, returning `{}`
+(never raising) if the org hasn't connected that provider.
+
+Every provider is wrapped in a small adapter
+(`packages/py-common/friday_common/integrations/*.py`) implementing one
+of a handful of category interfaces (`base.py`): `PaymentProvider`,
+`ChatProvider`, `CalendarProvider`, `WalletProvider`, `OnChainProvider`,
+`CustodyProvider`, `OnOffRampProvider`, `BaaSProvider`. An app's call site
+depends on the interface, not the vendor — CRM's won/lost Slack
+notification (`apps/crm/app/main.py`'s `_notify_slack`) and Invoicing's
+Stripe pay-with-card (`apps/invoicing/app/main.py`'s `pay_with_card`,
+`apps/invoicing/app/webhooks.py`'s `stripe_webhook`) are the two
+code-ready, real examples; every other listed provider is the same
+interface behind a documented stub. See `INTEGRATIONS.md` for the full
+provider list, which are code-ready vs. stubs, and the exact config shape
+each one expects — that file is also the instruction set a coding agent
+follows to finish a stub, so the pattern stays consistent no matter who
+(or what) extends it.
+
+One webhook in this system breaks the "kernel is the only public entry
+point" rule on purpose: Stripe calls `apps/invoicing/app/webhooks.py`'s
+`stripe_webhook` directly, because Stripe can't carry a Friday session
+token for the kernel's gateway to check. That route verifies Stripe's own
+request signature instead of a bearer token — see its doc comment for
+the full trust model — and a production deployment needs to route that
+one path to the invoicing service directly, bypassing the kernel.
+
 ## Data ownership
 
 Every app's migration lives under its own directory
@@ -154,7 +195,14 @@ never a cross-schema SQL join.
 ## What we explicitly did not build
 
 No XML view-inheritance system, no deep ACL/record-rule graph, no
-dual free/paywalled edition, no message broker, no 80-item app menu.
-Each of these is a real feature in systems like Odoo that Friday is
-intentionally lighter than — see `DESIGN.md` for the product-level
-version of this same argument.
+dual free/paywalled edition, no message broker, no 80-item app menu, no
+built-in scheduler (`apps/invoicing/app/main.py`'s
+`generate_recurring_invoices` exists to be *called* on a schedule — cron,
+Task Scheduler, whatever a deployment already runs — not to run one
+itself), no OAuth consent/callback flow in the web shell yet (the one
+integration that needs it, Google Calendar, is a documented stub for
+exactly that reason — see `INTEGRATIONS.md`). Each of these is a real
+feature in systems like Odoo that Friday is intentionally lighter than —
+see `DESIGN.md` for the product-level version of this same argument, and
+`PRD.md` for why "cheap to extend" matters more here than "comes with
+everything built in."

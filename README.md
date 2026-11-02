@@ -1,9 +1,14 @@
 # Friday
 
 A small, focused business suite — CRM, Invoicing, Projects & Helpdesk,
-Inventory, and a POS register with barcode scanning — on a shared
-kernel. See `DESIGN.md` for the product philosophy and `ARCHITECTURE.md`
-for how the pieces fit together.
+Inventory, a POS register with barcode scanning, and a Web3 business
+wallet — on a shared kernel, with a documented pattern for connecting
+third-party tools (Stripe, Slack, Calendly, and more). See `PRD.md` for
+the product scope, `DESIGN.md` for the product philosophy,
+`ARCHITECTURE.md` for how the pieces fit together, `INTEGRATIONS.md` for
+connecting (or finishing) a third-party provider, and
+`docs/building-an-industry-site.md` for forking Friday toward one
+specific business or industry.
 
 ## Quickstart
 
@@ -20,10 +25,12 @@ development (below).
 
 ## Project layout
 
-- `kernel/` (Go) — auth, orgs, the app registry, the API gateway. Every
-  request from `web/` goes through here.
+- `kernel/` (Go) — auth, orgs, the app registry, the API gateway, and the
+  per-org third-party integration credential store. Every request from
+  `web/` goes through here.
 - `apps/*` (Python/FastAPI) — one business domain per app (`crm`,
-  `invoicing`, `projects`, `inventory`), each with its own Postgres schema.
+  `invoicing`, `projects`, `inventory`, `web3`), each with its own
+  Postgres schema.
 - `pos-engine/` (Rust) — cart/pricing/tax/offline-sync logic, compiled
   native and to WASM for the browser POS register.
 - `web/` (TypeScript/React) — the unified shell every app renders
@@ -43,12 +50,12 @@ go run ./cmd/kernel
 ```
 
 **An app (Python/FastAPI)** — same shape for `apps/crm`, `apps/invoicing`,
-`apps/projects`, `apps/inventory`:
+`apps/projects`, `apps/inventory`, `apps/web3`:
 ```
 cd apps/crm
 pip install -r requirements.txt -r requirements-dev.txt
 pytest
-uvicorn app.main:app --reload --port 8001   # 8002 invoicing, 8003 projects, 8004 inventory
+uvicorn app.main:app --reload --port 8001   # 8002 invoicing, 8003 projects, 8004 inventory, 8005 web3
 ```
 
 **POS engine (Rust)**

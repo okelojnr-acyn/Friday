@@ -14,6 +14,7 @@ from .db import get_session, get_org_session, make_engine, set_org_context
 from .events import publish_event, require_kernel_token
 from .resource import FieldSpec, ResourceSpec, resource
 from .app_factory import create_app
+from .integrations import get_integration_config
 
 __all__ = [
     "FridaySettings",
@@ -31,4 +32,5 @@ __all__ = [
     "ResourceSpec",
     "resource",
     "create_app",
+    "get_integration_config",
 ]

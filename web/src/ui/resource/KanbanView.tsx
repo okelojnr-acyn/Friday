@@ -4,7 +4,15 @@ import { Avatar } from "../Avatar";
 import { Icon } from "../Icon";
 import { PriorityFlag } from "../PriorityFlag";
 import { statusTone } from "../Badge";
-import { formatCellValue, initials, isDueDateField, isPersonField, isPriorityField, sumCents } from "./fieldFormat";
+import {
+  formatCellValue,
+  initials,
+  isDueDateField,
+  isOverdue,
+  isPersonField,
+  isPriorityField,
+  sumCents,
+} from "./fieldFormat";
 
 interface KanbanViewProps {
   spec: ResourceSpec;
@@ -117,7 +125,10 @@ export function KanbanView({ spec, records, onCardClick, onMove }: KanbanViewPro
                           <PriorityFlag value={String(record[priorityField.name] ?? "medium")} />
                         ) : null}
                         {dueField && record[dueField.name] ? (
-                          <span className="kanban-card-meta-item">
+                          <span
+                            className="kanban-card-meta-item"
+                            style={isOverdue(dueField, record) ? { color: "var(--danger)", fontWeight: 600 } : undefined}
+                          >
                             <Icon name="clock" size={12} />
                             {formatCellValue(dueField, record[dueField.name])}
                           </span>

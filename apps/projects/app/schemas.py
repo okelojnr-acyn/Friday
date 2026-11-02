@@ -69,6 +69,7 @@ class TicketCreate(BaseModel):
     status: str = "open"
     priority: str = "medium"
     requester_email: str = ""
+    due_at: datetime | None = None
 
 
 class TicketUpdate(BaseModel):
@@ -77,6 +78,7 @@ class TicketUpdate(BaseModel):
     status: str | None = None
     priority: str | None = None
     requester_email: str | None = None
+    due_at: datetime | None = None
 
 
 class TicketOut(BaseModel):
@@ -87,7 +89,25 @@ class TicketOut(BaseModel):
     status: str
     priority: str
     requester_email: str
+    due_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TimeEntryCreate(BaseModel):
+    task_id: uuid.UUID
+    minutes: int = Field(gt=0)
+    note: str = ""
+
+
+class TimeEntryOut(BaseModel):
+    id: uuid.UUID
+    org_id: uuid.UUID
+    task_id: uuid.UUID
+    minutes: int
+    note: str
+    created_at: datetime
 
     model_config = {"from_attributes": True}

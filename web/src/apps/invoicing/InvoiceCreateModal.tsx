@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Modal } from "../../ui/Modal";
 import { Button } from "../../ui/Button";
 import { Icon } from "../../ui/Icon";
-import { FieldWrap, Input } from "../../ui/Field";
+import { FieldWrap, Input, Select } from "../../ui/Field";
 import { ReferenceInput } from "../../ui/resource/ReferenceInput";
 import { amountInputToCents } from "../../ui/resource/fieldFormat";
 import { createRecord } from "../../lib/resourceApi";
@@ -45,6 +45,7 @@ interface InvoiceCreateModalProps {
 export function InvoiceCreateModal({ onClose, onSaved }: InvoiceCreateModalProps) {
   const [customerId, setCustomerId] = useState<unknown>(null);
   const [currency, setCurrency] = useState("USD");
+  const [recurringInterval, setRecurringInterval] = useState("");
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -78,6 +79,7 @@ export function InvoiceCreateModal({ onClose, onSaved }: InvoiceCreateModalProps
       const saved = await createRecord("invoicing", "invoice", {
         customer_id: customerId || null,
         currency,
+        recurring_interval: recurringInterval,
         lines: validLines.map((l) => ({
           description: l.description,
           quantity: Number(l.quantity) || 1,
@@ -118,6 +120,14 @@ export function InvoiceCreateModal({ onClose, onSaved }: InvoiceCreateModalProps
           onChange={(e) => setCurrency(e.target.value.toUpperCase().slice(0, 3))}
           style={{ width: 90 }}
         />
+      </FieldWrap>
+      <FieldWrap label="Repeats">
+        <Select value={recurringInterval} onChange={(e) => setRecurringInterval(e.target.value)} style={{ width: 140 }}>
+          <option value="">Does not repeat</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+          <option value="yearly">Yearly</option>
+        </Select>
       </FieldWrap>
 
       <div className="invoice-lines">

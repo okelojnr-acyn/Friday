@@ -26,6 +26,7 @@ class LineIn(BaseModel):
     description: str = Field(min_length=1)
     quantity: Decimal = Decimal(1)
     unit_price_cents: int = 0
+    product_id: uuid.UUID | None = None
 
 
 class LineOut(LineIn):
@@ -39,10 +40,16 @@ class InvoiceCreate(BaseModel):
     customer_id: uuid.UUID | None = None
     currency: str = "USD"
     lines: list[LineIn] = []
+    recurring_interval: str = ""
 
 
 class InvoiceStatusUpdate(BaseModel):
     status: str
+
+
+class PayWithCardOut(BaseModel):
+    client_secret: str | None
+    publishable_key: str
 
 
 class PaymentCreate(BaseModel):
@@ -68,6 +75,8 @@ class InvoiceOut(BaseModel):
     currency: str
     source: str
     source_ref: str | None
+    recurring_interval: str
+    next_recurrence_at: datetime | None
     created_at: datetime
     updated_at: datetime
     lines: list[LineOut]
@@ -91,9 +100,21 @@ class InvoiceOut(BaseModel):
             currency=inv.currency,
             source=inv.source,
             source_ref=inv.source_ref,
+            recurring_interval=inv.recurring_interval,
+            next_recurrence_at=inv.next_recurrence_at,
             created_at=inv.created_at,
             updated_at=inv.updated_at,
-            lines=[LineOut(id=l.id, description=l.description, quantity=l.quantity, unit_price_cents=l.unit_price_cents, total_cents=l.total_cents) for l in inv.lines],
+            lines=[
+                LineOut(
+                    id=l.id,
+                    description=l.description,
+                    quantity=l.quantity,
+                    unit_price_cents=l.unit_price_cents,
+                    product_id=l.product_id,
+                    total_cents=l.total_cents,
+                )
+                for l in inv.lines
+            ],
             payments=[PaymentOut.model_validate(p) for p in inv.payments],
             total_cents=total,
             paid_cents=paid,

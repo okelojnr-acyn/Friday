@@ -16,6 +16,7 @@ class OpportunityCreate(BaseModel):
     currency: str = "USD"
     notes: str = ""
     next_step_at: datetime | None = None
+    lost_reason: str = ""
 
 
 class OpportunityUpdate(BaseModel):
@@ -28,6 +29,7 @@ class OpportunityUpdate(BaseModel):
     currency: str | None = None
     notes: str | None = None
     next_step_at: datetime | None = None
+    lost_reason: str | None = None
 
 
 class OpportunityOut(BaseModel):
@@ -42,10 +44,33 @@ class OpportunityOut(BaseModel):
     currency: str
     notes: str
     next_step_at: datetime | None
+    lost_reason: str
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
 
 
-__all__ = ["OpportunityCreate", "OpportunityUpdate", "OpportunityOut", "STAGES"]
+class ActivityCreate(BaseModel):
+    opportunity_id: uuid.UUID
+    body: str = Field(min_length=1)
+
+
+class ActivityOut(BaseModel):
+    id: uuid.UUID
+    org_id: uuid.UUID
+    opportunity_id: uuid.UUID
+    body: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+__all__ = [
+    "STAGES",
+    "ActivityCreate",
+    "ActivityOut",
+    "OpportunityCreate",
+    "OpportunityOut",
+    "OpportunityUpdate",
+]

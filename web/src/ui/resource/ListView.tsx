@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import type { FieldSpec, RecordRow, ResourceSpec } from "../../lib/types";
 import { Avatar } from "../Avatar";
+import { Badge } from "../Badge";
 import { PriorityFlag } from "../PriorityFlag";
-import { formatCellValue, initials, isPersonField, isPriorityField, sumCents } from "./fieldFormat";
+import { formatCellValue, initials, isOverdue, isPersonField, isPriorityField, sumCents } from "./fieldFormat";
 import { resolveReferenceLabel } from "../../lib/referenceCache";
 
 interface ListViewProps {
@@ -31,7 +32,15 @@ function ReferenceCell({ field, value }: { field: FieldSpec; value: unknown }) {
   return <>{label ?? "…"}</>;
 }
 
-function Cell({ field, value }: { field: FieldSpec; value: unknown }) {
+function Cell({ field, value, record }: { field: FieldSpec; value: unknown; record: RecordRow }) {
+  if (isOverdue(field, record)) {
+    return (
+      <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        {formatCellValue(field, value)}
+        <Badge tone="danger">Overdue</Badge>
+      </span>
+    );
+  }
   if (isPersonField(field) && value) {
     const v = String(value);
     return (
@@ -75,7 +84,7 @@ export function ListView({ spec, records, onRowClick }: ListViewProps) {
             <tr key={record.id} onClick={() => onRowClick(record)}>
               {columns.map((f) => (
                 <td key={f.name} className={f.type === "currency" ? "cell-currency" : undefined}>
-                  <Cell field={f} value={record[f.name]} />
+                  <Cell field={f} value={record[f.name]} record={record} />
                 </td>
               ))}
             </tr>

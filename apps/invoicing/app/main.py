@@ -1,22 +1,23 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from friday_common import (
     FieldSpec,
     Principal,
     ResourceSpec,
     create_app,
     get_current_principal,
+    get_integration_config,
     get_org_session,
     publish_event,
     resource,
 )
+from friday_common.integrations import StripeProvider
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import INVOICE_STATUSES, Customer, Invoice, InvoiceLine, Payment
+from .models import INVOICE_STATUSES, RECURRING_INTERVALS, Customer, Invoice, InvoiceLine, Payment
 from .schemas import (
     CustomerCreate,
     CustomerOut,
@@ -24,7 +25,9 @@ from .schemas import (
     InvoiceOut,
     InvoiceStatusUpdate,
     PaymentCreate,
+    PayWithCardOut,
 )
+from .webhooks import external_router
 from .webhooks import router as webhooks_router
 
 resource(
@@ -65,12 +68,39 @@ resource(
             FieldSpec("total_cents", "Total", "currency", form_visible=False),
             FieldSpec("balance_cents", "Balance", "currency", form_visible=False),
             FieldSpec("source", "Source", "select", options=("manual", "crm", "pos"), form_visible=False),
+            # form_visible=False on both: recurring_interval is only ever
+            # set at creation time (InvoiceCreateModal's "Repeats" picker)
+            # -- the generic form's Save always PATCHes /status (see
+            # resourceApi.ts's UPDATE_PATH_OVERRIDES), which has no way to
+            # change these, so exposing them as editable here would look
+            # editable without actually persisting.
+            FieldSpec("recurring_interval", "Repeats", "select", options=RECURRING_INTERVALS, form_visible=False),
+            FieldSpec("next_recurrence_at", "Next invoice", "datetime", list_visible=False, form_visible=False),
             FieldSpec("created_at", "Created", "datetime", form_visible=False),
         ),
     )
 )
 
 app = create_app("friday-invoicing")
+
+
+def _advance(dt: datetime, interval: str) -> datetime:
+    """Next occurrence after `dt`. Dependency-free (no dateutil) at the
+    cost of clamping a monthly recurrence to day 28 -- a template invoice
+    created on the 31st recurs on the 28th every month rather than
+    skipping or overflowing into the next month. Good enough for "bill
+    roughly monthly"; a deployment that needs exact month-end billing
+    should add python-dateutil's relativedelta here instead."""
+    if interval == "weekly":
+        return dt + timedelta(days=7)
+    if interval == "monthly":
+        year = dt.year + (dt.month // 12)
+        month = dt.month % 12 + 1
+        return dt.replace(year=year, month=month, day=min(dt.day, 28))
+    if interval == "yearly":
+        return dt.replace(year=dt.year + 1)
+    raise ValueError(f"unknown recurring interval: {interval!r}")
+
 
 customers_router = APIRouter(prefix="/customers", tags=["customers"])
 invoices_router = APIRouter(prefix="/invoices", tags=["invoices"])
@@ -125,6 +155,8 @@ async def create_invoice(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_org_session),
 ):
+    if body.recurring_interval not in RECURRING_INTERVALS:
+        raise HTTPException(422, f"recurring_interval must be one of {RECURRING_INTERVALS}")
     now = datetime.now(UTC)
     invoice = Invoice(
         org_id=uuid.UUID(principal.org_id),
@@ -133,6 +165,8 @@ async def create_invoice(
         status="draft",
         currency=body.currency,
         source="manual",
+        recurring_interval=body.recurring_interval,
+        next_recurrence_at=_advance(now, body.recurring_interval) if body.recurring_interval else None,
         created_at=now,
         updated_at=now,
     )
@@ -213,6 +247,94 @@ async def record_payment(
     return InvoiceOut.from_model(inv)
 
 
+@invoices_router.post("/{invoice_id}/pay-with-card", response_model=PayWithCardOut, status_code=201)
+async def pay_with_card(
+    invoice_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Creates a Stripe PaymentIntent for the invoice's outstanding
+    balance -- the frontend confirms it with Stripe.js using the returned
+    client_secret. The actual "mark this invoice paid" side effect
+    happens in the webhook below once Stripe reports success, never here
+    (this request can be abandoned mid-checkout; the webhook is the only
+    thing that moves money server-side)."""
+    inv = await _get_invoice(session, principal, invoice_id)
+    config = await get_integration_config(principal.org_id, "stripe")
+    if not config.get("secret_key"):
+        raise HTTPException(400, "Stripe is not connected -- add a secret key in Settings > Integrations")
+
+    total = sum(l.total_cents for l in inv.lines)
+    paid = sum(p.amount_cents for p in inv.payments)
+    balance = total - paid
+    if balance <= 0:
+        raise HTTPException(400, "invoice has no outstanding balance")
+
+    intent = await StripeProvider(config).create_payment_intent(
+        balance,
+        inv.currency,
+        {"invoice_id": str(inv.id), "org_id": principal.org_id},
+    )
+    inv.stripe_payment_intent_id = intent["id"]
+    await session.commit()
+    return PayWithCardOut(client_secret=intent.get("client_secret"), publishable_key=config.get("publishable_key", ""))
+
+
+@invoices_router.post("/generate-recurring")
+async def generate_recurring_invoices(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Clones every recurring template invoice whose `next_recurrence_at`
+    has passed into a fresh draft invoice, then advances the template.
+    Meant to be called on a schedule (cron / Task Scheduler hitting this
+    route through the kernel with a real org member's token) -- Friday
+    deliberately has no built-in scheduler (see ARCHITECTURE.md's "what
+    we explicitly did not build"), so this is the one piece a deployment
+    wires up itself."""
+    now = datetime.now(UTC)
+    due = await session.execute(
+        select(Invoice).where(
+            Invoice.org_id == uuid.UUID(principal.org_id),
+            Invoice.recurring_interval != "",
+            Invoice.next_recurrence_at <= now,
+        )
+    )
+    created = []
+    for template in due.scalars().all():
+        await session.refresh(template, attribute_names=["lines"])
+        new_invoice = Invoice(
+            org_id=template.org_id,
+            customer_id=template.customer_id,
+            number=f"INV-{now:%Y%m}-{uuid.uuid4().hex[:6].upper()}",
+            status="draft",
+            currency=template.currency,
+            source="manual",
+            source_ref=str(template.id),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(new_invoice)
+        await session.flush()
+        for line in template.lines:
+            session.add(
+                InvoiceLine(
+                    org_id=template.org_id,
+                    invoice_id=new_invoice.id,
+                    description=line.description,
+                    quantity=line.quantity,
+                    unit_price_cents=line.unit_price_cents,
+                )
+            )
+        template.next_recurrence_at = _advance(template.next_recurrence_at, template.recurring_interval)
+        created.append(new_invoice)
+
+    await session.commit()
+    for inv in created:
+        await session.refresh(inv, attribute_names=["lines", "payments"])
+    return [InvoiceOut.from_model(inv) for inv in created]
+
+
 @pos_router.post("/sales", status_code=201)
 async def record_pos_sale(
     body: dict,
@@ -247,6 +369,7 @@ async def record_pos_sale(
         qty = line.get("quantity", 1)
         unit_price = line.get("unit_price_cents", 0)
         total_cents += int(qty * unit_price)
+        product_id = line.get("product_id")
         session.add(
             InvoiceLine(
                 org_id=uuid.UUID(principal.org_id),
@@ -254,6 +377,7 @@ async def record_pos_sale(
                 description=line.get("description", "Item"),
                 quantity=qty,
                 unit_price_cents=unit_price,
+                product_id=uuid.UUID(product_id) if product_id else None,
             )
         )
 
@@ -312,7 +436,111 @@ async def record_pos_sale(
     return InvoiceOut.from_model(invoice)
 
 
+async def _get_pos_sale(session: AsyncSession, principal: Principal, number: str) -> Invoice:
+    rows = await session.execute(
+        select(Invoice).where(
+            Invoice.org_id == uuid.UUID(principal.org_id), Invoice.number == number, Invoice.source == "pos"
+        )
+    )
+    inv = rows.scalars().first()
+    if inv is None:
+        raise HTTPException(404, "pos sale not found")
+    return inv
+
+
+@pos_router.get("/sales/{number}", response_model=InvoiceOut)
+async def get_pos_sale(
+    number: str,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Looks up a past sale by receipt number -- what the POS register's
+    returns screen calls before offering to refund it."""
+    inv = await _get_pos_sale(session, principal, number)
+    return InvoiceOut.from_model(inv)
+
+
+@pos_router.post("/sales/{number}/return", response_model=InvoiceOut, status_code=201)
+async def return_pos_sale(
+    number: str,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Refunds a past POS sale in full: a new invoice mirroring every
+    line with a negated quantity, a matching negative Payment, and the
+    original marked void -- same ledger, no separate refunds table (see
+    ARCHITECTURE.md's "one ledger to reconcile, not two" for why POS
+    sales work this way in the first place). Publishing the *same*
+    invoicing.pos_sale.recorded event shape with negative quantities
+    makes Inventory's existing pos_sale_recorded webhook restock
+    automatically -- zero Inventory code needed for returns."""
+    original = await _get_pos_sale(session, principal, number)
+    if original.status == "void":
+        raise HTTPException(400, "sale is already void")
+    await session.refresh(original, attribute_names=["lines", "payments"])
+
+    now = datetime.now(UTC)
+    refund = Invoice(
+        org_id=uuid.UUID(principal.org_id),
+        number=f"RET-{now:%Y%m%d}-{uuid.uuid4().hex[:6].upper()}",
+        status="paid",
+        currency=original.currency,
+        source="pos",
+        source_ref=original.number,
+        issued_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(refund)
+    await session.flush()
+
+    refund_total_cents = 0
+    for line in original.lines:
+        refund_total_cents += -line.total_cents
+        session.add(
+            InvoiceLine(
+                org_id=uuid.UUID(principal.org_id),
+                invoice_id=refund.id,
+                description=f"Return: {line.description}",
+                quantity=-line.quantity,
+                unit_price_cents=line.unit_price_cents,
+                product_id=line.product_id,
+            )
+        )
+
+    session.add(
+        Payment(
+            org_id=uuid.UUID(principal.org_id),
+            invoice_id=refund.id,
+            amount_cents=refund_total_cents,
+            method="refund",
+            received_at=now,
+        )
+    )
+    original.status = "void"
+    original.updated_at = now
+
+    await session.commit()
+    await session.refresh(refund, attribute_names=["lines", "payments"])
+
+    await publish_event(
+        "invoicing.pos_sale.recorded",
+        principal.org_id,
+        {
+            "invoice_number": refund.number,
+            "lines": [
+                {"product_id": str(line.product_id), "quantity": float(line.quantity)}
+                for line in refund.lines
+                if line.product_id
+            ],
+        },
+    )
+
+    return InvoiceOut.from_model(refund)
+
+
 app.include_router(customers_router)
 app.include_router(invoices_router)
 app.include_router(pos_router)
 app.include_router(webhooks_router)
+app.include_router(external_router)

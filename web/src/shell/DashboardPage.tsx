@@ -171,7 +171,12 @@ export function DashboardPage() {
 
       <div className="app-grid" style={{ marginBottom: 32 }}>
         {installedApps.map((a) => (
-          <AppTile key={a.name} to={`/${a.name}`} icon={a.icon} label={a.label} />
+          <AppTile
+            key={a.name}
+            to={a.name === "web3" ? "/web3/treasury" : `/${a.name}`}
+            icon={a.icon}
+            label={a.label}
+          />
         ))}
         {installed.has("invoicing") ? <AppTile to="/pos" icon="receipt" label="Point of Sale" /> : null}
       </div>

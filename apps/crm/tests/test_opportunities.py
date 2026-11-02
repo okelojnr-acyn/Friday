@@ -70,6 +70,68 @@ async def test_winning_an_opportunity_publishes_crm_opportunity_won(client, monk
     }
 
 
+async def test_marking_lost_stores_reason_and_does_not_publish_won(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr("app.main.publish_event", lambda *a, **kw: calls.append(a))
+
+    created = (await client.post("/opportunities", json={"contact_name": "Ada"})).json()
+    resp = await client.patch(
+        f"/opportunities/{created['id']}", json={"stage": "lost", "lost_reason": "chose a competitor"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["lost_reason"] == "chose a competitor"
+    assert calls == []
+
+
+async def test_winning_notifies_slack_when_connected(client, monkeypatch):
+    async def noop_publish(*a, **kw):
+        return None
+
+    monkeypatch.setattr("app.main.publish_event", noop_publish)
+
+    async def fake_config(org_id, provider):
+        assert provider == "slack"
+        return {"webhook_url": "https://hooks.slack.com/services/fake"}
+
+    notified = {}
+
+    class FakeSlack:
+        def __init__(self, config):
+            self.config = config
+
+        async def notify(self, text):
+            notified["text"] = text
+
+    monkeypatch.setattr("app.main.get_integration_config", fake_config)
+    monkeypatch.setattr("app.main.SlackProvider", FakeSlack)
+
+    created = (
+        await client.post("/opportunities", json={"contact_name": "Ada", "company": "Acme", "value_cents": 1000})
+    ).json()
+    await client.patch(f"/opportunities/{created['id']}", json={"stage": "won"})
+
+    assert "Won" in notified["text"]
+    assert "Acme" in notified["text"]
+
+
+async def test_winning_skips_slack_when_not_connected(client, monkeypatch):
+    async def noop_publish(*a, **kw):
+        return None
+
+    monkeypatch.setattr("app.main.publish_event", noop_publish)
+
+    async def fake_config(org_id, provider):
+        return {}
+
+    monkeypatch.setattr("app.main.get_integration_config", fake_config)
+
+    created = (await client.post("/opportunities", json={"contact_name": "Ada"})).json()
+    # Would raise (SlackProvider.__init__ requires config["webhook_url"]) if
+    # the empty-config guard in _notify_slack were ever removed.
+    resp = await client.patch(f"/opportunities/{created['id']}", json={"stage": "won"})
+    assert resp.status_code == 200
+
+
 async def test_moving_between_non_won_stages_does_not_publish(client, monkeypatch):
     calls = []
     monkeypatch.setattr("app.main.publish_event", lambda *a, **kw: calls.append(a))

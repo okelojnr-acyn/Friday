@@ -6,6 +6,7 @@ import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Field";
 import { Badge } from "../../ui/Badge";
 import { Icon } from "../../ui/Icon";
+import { ReturnsPanel } from "./ReturnsPanel";
 
 interface CartLine {
   description: string;
@@ -60,8 +61,10 @@ export function PosPage() {
   const [unitPrice, setUnitPrice] = useState("");
 
   const [selected, setSelected] = useState<number | null>(null);
-  const [mode, setMode] = useState<"qty" | "price">("qty");
+  const [mode, setMode] = useState<"qty" | "price" | "discount">("qty");
   const [buffer, setBuffer] = useState("");
+  const discountBaseCentsRef = useRef<number | null>(null);
+  const [showReturns, setShowReturns] = useState(false);
 
   useEffect(() => {
     init().then(() => {
@@ -137,6 +140,7 @@ export function PosPage() {
   function selectLine(i: number) {
     setSelected(i);
     setBuffer("");
+    if (mode === "discount") discountBaseCentsRef.current = lines[i].unit_price_cents;
   }
 
   function removeSelected() {
@@ -155,7 +159,16 @@ export function PosPage() {
     const newLines = lines.map((l, i) => {
       if (i !== selected) return l;
       if (mode === "qty") return { ...l, quantity: next === "" ? l.quantity : value };
-      return { ...l, unit_price_cents: next === "" ? l.unit_price_cents : Math.round(value * 100) };
+      if (mode === "price") {
+        return { ...l, unit_price_cents: next === "" ? l.unit_price_cents : Math.round(value * 100) };
+      }
+      // "discount": the buffer is a percent-off, applied against the
+      // price captured when discount mode was entered (discountBaseCentsRef)
+      // -- not the line's current price, or repeated digit presses would
+      // compound the discount against its own already-discounted result.
+      const base = discountBaseCentsRef.current ?? l.unit_price_cents;
+      const pct = Math.min(Math.max(value, 0), 100);
+      return { ...l, unit_price_cents: next === "" ? base : Math.round(base * (1 - pct / 100)) };
     });
     rebuildCart(newLines);
   }
@@ -281,12 +294,18 @@ export function PosPage() {
       <div className="pos-cart-pane">
         <div className="pos-cart-header">
           <span className="pos-cart-title">Register</span>
-          {pendingCount > 0 ? (
-            <Badge tone="accent">{`${pendingCount} pending sync`}</Badge>
-          ) : (
-            <Badge tone="success">Synced</Badge>
-          )}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {pendingCount > 0 ? (
+              <Badge tone="accent">{`${pendingCount} pending sync`}</Badge>
+            ) : (
+              <Badge tone="success">Synced</Badge>
+            )}
+            <Button size="sm" variant="secondary" onClick={() => setShowReturns(true)}>
+              <Icon name="history" size={13} /> Returns
+            </Button>
+          </div>
         </div>
+        {showReturns ? <ReturnsPanel onClose={() => setShowReturns(false)} /> : null}
 
         <div className="pos-lines">
           {lines.length === 0 ? (
@@ -430,6 +449,18 @@ export function PosPage() {
             >
               Price
             </Button>
+            <Button
+              size="sm"
+              variant={mode === "discount" ? "primary" : "secondary"}
+              onClick={() => {
+                if (selected !== null) discountBaseCentsRef.current = lines[selected].unit_price_cents;
+                setMode("discount");
+                setBuffer("");
+              }}
+              disabled={selected === null}
+            >
+              <Icon name="percent" size={12} /> Disc
+            </Button>
             <Button size="sm" variant="danger" onClick={removeSelected} disabled={selected === null}>
               Remove
             </Button>
@@ -450,7 +481,11 @@ export function PosPage() {
             </button>
           </div>
           <div className="field-label" style={{ textAlign: "center" }}>
-            {selected === null ? "Select a line to edit its quantity or price" : `Editing ${mode}`}
+            {selected === null
+              ? "Select a line to edit its quantity or price"
+              : mode === "discount"
+                ? "Editing discount (% off)"
+                : `Editing ${mode}`}
           </div>
         </div>
       </div>

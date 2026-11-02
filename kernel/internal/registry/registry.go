@@ -53,6 +53,14 @@ func Load() []App {
 			Category:    "operations",
 			BaseURL:     envOr("APP_INVENTORY_URL", "http://localhost:8004"),
 		},
+		{
+			Name:        "web3",
+			Label:       "Web3",
+			Description: "A business wallet: balances, payouts, and credit transfers via Acyn Wallet.",
+			Icon:        "wallet",
+			Category:    "finance",
+			BaseURL:     envOr("APP_WEB3_URL", "http://localhost:8005"),
+		},
 	}
 }
 

@@ -1,23 +1,27 @@
+import logging
 import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from friday_common import (
     FieldSpec,
     Principal,
     ResourceSpec,
     create_app,
     get_current_principal,
+    get_integration_config,
     get_org_session,
     publish_event,
     resource,
 )
+from friday_common.integrations import SlackProvider
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Opportunity, PRIORITIES
-from .schemas import OpportunityCreate, OpportunityOut, OpportunityUpdate, STAGES
+from .models import PRIORITIES, Activity, Opportunity
+from .schemas import STAGES, ActivityCreate, ActivityOut, OpportunityCreate, OpportunityOut, OpportunityUpdate
+
+logger = logging.getLogger("friday.crm")
 
 resource(
     ResourceSpec(
@@ -38,13 +42,45 @@ resource(
             FieldSpec("currency", "Currency", "text"),
             FieldSpec("next_step_at", "Next step", "date"),
             FieldSpec("notes", "Notes", "textarea", list_visible=False),
+            FieldSpec("lost_reason", "Lost reason", "text", list_visible=False),
             FieldSpec("created_at", "Created", "datetime", form_visible=False),
+        ),
+    )
+)
+
+resource(
+    ResourceSpec(
+        name="activity",
+        app="crm",
+        label="Activity",
+        label_plural="Activities",
+        views=("list",),
+        search_fields=("body",),
+        fields=(
+            FieldSpec("opportunity_id", "Opportunity", "reference", reference="crm.opportunity", required=True),
+            FieldSpec("body", "Note", "textarea", required=True),
+            FieldSpec("created_at", "When", "datetime", form_visible=False),
         ),
     )
 )
 
 app = create_app("friday-crm")
 router = APIRouter(prefix="/opportunities", tags=["opportunities"])
+activities_router = APIRouter(prefix="/activities", tags=["activities"])
+
+
+async def _notify_slack(org_id: str, text: str) -> None:
+    """Best-effort: an org that hasn't connected Slack (the common case)
+    just gets no notification, same posture as `publish_event` -- a
+    notification failing or being unconfigured must never fail the
+    opportunity update that triggered it."""
+    config = await get_integration_config(org_id, "slack")
+    if not config.get("webhook_url"):
+        return
+    try:
+        await SlackProvider(config).notify(text)
+    except Exception as exc:  # noqa: BLE001 -- see docstring, this must never propagate
+        logger.warning("slack notify failed: %s", exc)
 
 
 @router.get("", response_model=list[OpportunityOut])
@@ -136,6 +172,13 @@ async def update_opportunity(
                 "currency": opp.currency,
             },
         )
+        await _notify_slack(
+            principal.org_id,
+            f":tada: Won: {opp.contact_name} ({opp.company}) -- {opp.currency} {opp.value_cents / 100:,.2f}",
+        )
+    elif previous_stage != "lost" and opp.stage == "lost":
+        reason = f" -- {opp.lost_reason}" if opp.lost_reason else ""
+        await _notify_slack(principal.org_id, f":x: Lost: {opp.contact_name} ({opp.company}){reason}")
 
     return opp
 
@@ -151,4 +194,37 @@ async def delete_opportunity(
     await session.commit()
 
 
+@activities_router.get("", response_model=list[ActivityOut])
+async def list_activities(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(
+        select(Activity).where(Activity.org_id == uuid.UUID(principal.org_id)).order_by(Activity.created_at.desc())
+    )
+    return rows.scalars().all()
+
+
+@activities_router.post("", response_model=ActivityOut, status_code=201)
+async def create_activity(
+    body: ActivityCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    opp = await session.get(Opportunity, body.opportunity_id)
+    if opp is None or str(opp.org_id) != principal.org_id:
+        raise HTTPException(404, "opportunity not found")
+    activity = Activity(
+        org_id=uuid.UUID(principal.org_id),
+        opportunity_id=body.opportunity_id,
+        body=body.body,
+        created_at=datetime.now(UTC),
+    )
+    session.add(activity)
+    await session.commit()
+    await session.refresh(activity)
+    return activity
+
+
 app.include_router(router)
+app.include_router(activities_router)
