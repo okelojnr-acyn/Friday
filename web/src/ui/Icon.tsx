@@ -2,7 +2,7 @@
 // dependency. Covers the registry's app icons (target, receipt, kanban)
 // plus the handful of chrome icons the shell needs.
 
-type IconName =
+export type IconName =
   | "target"
   | "receipt"
   | "kanban"
@@ -16,7 +16,10 @@ type IconName =
   | "clock"
   | "box"
   | "barcode"
-  | "app-window";
+  | "app-window"
+  | "arrow-up-right"
+  | "trend-up"
+  | "ticket";
 
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = {
@@ -122,6 +125,26 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
       return (
         <svg {...common}>
           <path d="M4 5v14M8 5v14M11 5v14M15 5v14M18 5v14M21 5v14" />
+        </svg>
+      );
+    case "arrow-up-right":
+      return (
+        <svg {...common}>
+          <path d="M7 17 17 7M9 7h8v8" />
+        </svg>
+      );
+    case "trend-up":
+      return (
+        <svg {...common}>
+          <path d="M3 17l6-6 4 4 8-8" />
+          <path d="M15 7h6v6" />
+        </svg>
+      );
+    case "ticket":
+      return (
+        <svg {...common}>
+          <path d="M3 9a2 2 0 0 0 0 4v2a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2a2 2 0 0 1 0-4V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v2z" />
+          <path d="M10 6v12" strokeDasharray="2 2" />
         </svg>
       );
     case "app-window":

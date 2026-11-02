@@ -6,11 +6,13 @@ import { Modal } from "../Modal";
 import { Button } from "../Button";
 import { FieldWrap } from "../Field";
 import { FieldInput } from "./FieldInput";
+import { SmartButtons } from "./SmartButtons";
 import { amountInputToCents, centsToAmountInput, toDateInputValue, toDatetimeInputValue } from "./fieldFormat";
 
 interface FormViewProps {
   spec: ResourceSpec;
   app: string;
+  schema: ResourceSpec[];
   record?: RecordRow;
   onClose: () => void;
   onSaved: (record: RecordRow) => void;
@@ -34,6 +36,9 @@ function initialValues(spec: ResourceSpec, record?: RecordRow): Record<string, u
       case "boolean":
         values[field.name] = Boolean(raw);
         break;
+      case "reference":
+        values[field.name] = raw ?? null;
+        break;
       default:
         values[field.name] = raw ?? "";
     }
@@ -50,6 +55,13 @@ function toWireBody(spec: ResourceSpec, values: Record<string, unknown>): Record
       body[field.name] = amountInputToCents(String(v ?? "0"));
     } else if (field.type === "number") {
       body[field.name] = v === "" ? 0 : Number(v);
+    } else if (field.type === "reference") {
+      body[field.name] = v || null;
+    } else if (field.type === "date" || field.type === "datetime") {
+      // An empty <input type="date"> is "" -- a bare empty string isn't a
+      // valid value for an Optional[datetime] field server-side, so an
+      // unset date must become null, not "".
+      body[field.name] = v || null;
     } else {
       body[field.name] = v;
     }
@@ -57,7 +69,7 @@ function toWireBody(spec: ResourceSpec, values: Record<string, unknown>): Record
   return body;
 }
 
-export function FormView({ spec, app, record, onClose, onSaved }: FormViewProps) {
+export function FormView({ spec, app, schema, record, onClose, onSaved }: FormViewProps) {
   const [values, setValues] = useState<Record<string, unknown>>(() => initialValues(spec, record));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -86,6 +98,7 @@ export function FormView({ spec, app, record, onClose, onSaved }: FormViewProps)
   return (
     <Modal title={isEdit ? spec.label : `New ${spec.label}`} onClose={onClose}>
       <form onSubmit={onSubmit} className="form-grid">
+        {isEdit ? <SmartButtons app={app} schema={schema} spec={spec} recordId={record!.id} /> : null}
         {error ? <div className="error-banner">{error}</div> : null}
         {fields.length === 0 ? (
           <div className="field-label">Nothing on this record is editable here.</div>

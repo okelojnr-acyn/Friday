@@ -1,12 +1,34 @@
+import { useEffect, useState } from "react";
 import type { FieldSpec, RecordRow, ResourceSpec } from "../../lib/types";
 import { Avatar } from "../Avatar";
 import { PriorityFlag } from "../PriorityFlag";
 import { formatCellValue, initials, isPersonField, isPriorityField, sumCents } from "./fieldFormat";
+import { resolveReferenceLabel } from "../../lib/referenceCache";
 
 interface ListViewProps {
   spec: ResourceSpec;
   records: RecordRow[];
   onRowClick: (record: RecordRow) => void;
+}
+
+function ReferenceCell({ field, value }: { field: FieldSpec; value: unknown }) {
+  const [label, setLabel] = useState<string | null>(null);
+  const [app, resource] = (field.reference ?? "").split(".");
+
+  useEffect(() => {
+    if (!value || !app || !resource) {
+      setLabel(null);
+      return;
+    }
+    let cancelled = false;
+    resolveReferenceLabel(app, resource, String(value)).then((l) => !cancelled && setLabel(l));
+    return () => {
+      cancelled = true;
+    };
+  }, [app, resource, value]);
+
+  if (!value) return <>—</>;
+  return <>{label ?? "…"}</>;
 }
 
 function Cell({ field, value }: { field: FieldSpec; value: unknown }) {
@@ -21,6 +43,9 @@ function Cell({ field, value }: { field: FieldSpec; value: unknown }) {
   }
   if (isPriorityField(field) && value) {
     return <PriorityFlag value={String(value)} />;
+  }
+  if (field.type === "reference") {
+    return <ReferenceCell field={field} value={value} />;
   }
   return <>{formatCellValue(field, value)}</>;
 }

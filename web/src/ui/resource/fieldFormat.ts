@@ -48,7 +48,7 @@ export function isPersonField(field: FieldSpec): boolean {
 }
 
 export function isDueDateField(field: FieldSpec): boolean {
-  return (field.type === "date" || field.type === "datetime") && /due/i.test(field.name);
+  return (field.type === "date" || field.type === "datetime") && /due|next_step/i.test(field.name);
 }
 
 export function isPriorityField(field: FieldSpec): boolean {

@@ -1,5 +1,6 @@
 import type { FieldSpec } from "../../lib/types";
 import { Checkbox, Input, Select, Textarea } from "../Field";
+import { ReferenceInput } from "./ReferenceInput";
 
 interface FieldInputProps {
   field: FieldSpec;
@@ -90,6 +91,7 @@ export function FieldInput({ field, value, onChange }: FieldInputProps) {
         />
       );
     case "reference":
+      return <ReferenceInput field={field} value={value} onChange={onChange} />;
     case "text":
     default:
       return (

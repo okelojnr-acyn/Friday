@@ -1,20 +1,55 @@
-/* Design tokens. See DESIGN.md for the full rationale -- musou black, one
- * accent used sparingly, no gradients/shadows/decorative emoji. Dark is
- * the default; light mode is the same structure with inverted neutrals. */
+/* Design tokens. See DESIGN.md for the full rationale -- a light, warm
+ * dashboard system: soft white cards on a warm off-white page, one
+ * amber accent, generous rounded corners, soft elevation instead of
+ * hard borders. A near-black "ink" palette exists alongside it, not as
+ * a page-wide dark mode but as the deliberate contrast band a data-
+ * dense section (activity feeds, charts) sits on -- see `.band-ink` in
+ * components.css. */
 
 :root {
-  --bg: #0a0a0a;
-  --surface: #141414;
-  --surface-raised: #1c1c1c;
-  --border: #2a2a2a;
-  --text: #f5f5f0;
-  --text-muted: #9a9a94;
-  --accent: #e8a33d;
-  --accent-contrast: #0a0a0a;
-  --success: #3ecf8e;
-  --danger: #e5484d;
-  --radius: 6px;
+  --bg: #f1efe8;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --border: rgba(10, 10, 8, 0.08);
+  --text: #0e0e0b;
+  --text-muted: #87867c;
+  --accent: #e07a35;
+  --accent-contrast: #ffffff;
+  --success: #2f9e63;
+  --danger: #d6483f;
+
+  --radius: 22px;
+  --radius-sm: 14px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 1px 2px rgba(20, 16, 8, 0.04), 0 16px 32px -14px rgba(20, 16, 8, 0.16);
+  --shadow-float: 0 24px 56px -16px rgba(20, 16, 8, 0.32);
+
   --font: Inter, system-ui, sans-serif;
+  --font-display: "Figtree", Inter, system-ui, sans-serif;
+
+  /* The near-black "ink" palette: the deliberate dark band, not a theme. */
+  --ink-bg: #0a0a0a;
+  --ink-surface: #161513;
+  --ink-surface-raised: #1d1c19;
+  --ink-border: #2d2c28;
+  --ink-text: #f5f4ef;
+  --ink-text-muted: #9c9a90;
+
+  /* Warm ambient glow behind the dashboard's glass cards -- used once,
+   * not sprinkled. Three stops (amber / soft gold / a touch of green)
+   * so it reads as a blob, not a flat orange wash. */
+  --gradient-ambient: radial-gradient(ellipse 55% 60% at 20% 10%, rgba(224, 122, 53, 0.4), transparent 60%),
+    radial-gradient(ellipse 50% 50% at 55% -5%, rgba(230, 178, 74, 0.32), transparent 55%),
+    radial-gradient(ellipse 45% 45% at 85% 5%, rgba(122, 163, 84, 0.26), transparent 55%);
+  --gradient-card: linear-gradient(135deg, #3b4a52 0%, #8a6a3f 55%, #c98a3f 100%);
+
+  /* "Liquid glass": a frosted, translucent surface that lets whatever is
+   * behind it (the ambient blob, in practice) bleed through -- used only
+   * where a card actually sits over that glow, not on every surface. */
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.7);
+  --glass-blur: blur(22px) saturate(180%);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -22,19 +57,6 @@
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
-}
-
-[data-theme="light"] {
-  --bg: #f5f5f0;
-  --surface: #ffffff;
-  --surface-raised: #ffffff;
-  --border: #e2e2dc;
-  --text: #16160f;
-  --text-muted: #6b6b63;
-  --accent: #c9801f;
-  --accent-contrast: #ffffff;
-  --success: #1f9d64;
-  --danger: #c9302c;
 }
 
 * {
@@ -55,6 +77,23 @@ body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  position: relative;
+}
+
+/* The grain the reference's warm gradients are shot through -- a fine
+ * SVG noise texture, not a flat color fill. Fixed + pointer-events:none
+ * so it sits over everything as a texture without blocking clicks or
+ * shifting layout. Kept very low-opacity so it never fights with text
+ * contrast in dense tables. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.045;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 a {

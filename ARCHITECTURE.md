@@ -72,10 +72,19 @@ resource(ResourceSpec(
 JSON directly into list/kanban/form screens with zero per-resource React
 code — CRM's pipeline kanban, Invoicing's customer/invoice lists, and
 Projects' task/ticket kanbans are all the *same* generic renderer reading
-different schemas. An app only gets a hand-written screen when the
-workflow genuinely doesn't fit list/kanban/form — in this codebase, that
-is exactly one screen: the POS register (`web/src/apps/pos`), because a
-cart with live tax/offline-sync math isn't a CRUD form.
+different schemas. A `FieldSpec` of type `"reference"` (e.g. Task's
+`project_id`, Invoice's `customer_id`) is a real relation, not a text
+box: it renders as a searchable picker over the target resource
+(`ReferenceInput.tsx`), and any resource referencing the one currently
+open gets a "smart button" count+link for free, derived by scanning the
+app's own schema for a matching `reference` (`SmartButtons.tsx`) -- no
+per-resource wiring on either side. An app only gets a hand-written
+screen when the workflow genuinely doesn't fit list/kanban/form -- in
+this codebase, that's the POS register (`web/src/apps/pos`), because a
+cart with live tax/offline-sync math isn't a CRUD form, and Invoicing's
+"New Invoice" (`web/src/apps/invoicing/InvoiceCreateModal.tsx`), because
+creating an invoice needs a customer and line items up front, not a flat
+field list.
 
 ## The permission model
 

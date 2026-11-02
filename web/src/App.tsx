@@ -3,7 +3,7 @@ import { AuthProvider } from "./lib/auth";
 import { RequireAuth } from "./shell/Layout";
 import { LoginPage } from "./shell/LoginPage";
 import { RegisterPage } from "./shell/RegisterPage";
-import { LauncherPage } from "./shell/LauncherPage";
+import { DashboardPage } from "./shell/DashboardPage";
 import { AppsCatalogPage } from "./shell/AppsCatalogPage";
 import { ResourcePage, AppIndexRedirect } from "./shell/ResourcePage";
 import { PosPage } from "./apps/pos/PosPage";
@@ -15,7 +15,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route element={<RequireAuth />}>
-          <Route path="/" element={<LauncherPage />} />
+          <Route path="/" element={<DashboardPage />} />
           <Route path="/apps" element={<AppsCatalogPage />} />
           <Route path="/pos" element={<PosPage />} />
           <Route path="/:app" element={<AppIndexRedirect />} />

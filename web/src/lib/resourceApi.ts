@@ -1,5 +1,6 @@
 import { api, resourceBasePath } from "./api";
 import type { RecordRow } from "./types";
+import { invalidateReferenceOptions } from "./referenceCache";
 
 // Every resource's update route is PATCH {base}/{id} *except* invoicing's
 // invoice, which deliberately keeps status transitions separate from a
@@ -14,15 +15,17 @@ export function listRecords(app: string, resourceName: string): Promise<RecordRo
   return api.get<RecordRow[]>(resourceBasePath(app, resourceName));
 }
 
-export function createRecord(
+export async function createRecord(
   app: string,
   resourceName: string,
   body: Record<string, unknown>,
 ): Promise<RecordRow> {
-  return api.post<RecordRow>(resourceBasePath(app, resourceName), body);
+  const created = await api.post<RecordRow>(resourceBasePath(app, resourceName), body);
+  invalidateReferenceOptions(app, resourceName);
+  return created;
 }
 
-export function updateRecord(
+export async function updateRecord(
   app: string,
   resourceName: string,
   id: string,
@@ -31,5 +34,7 @@ export function updateRecord(
   const base = resourceBasePath(app, resourceName);
   const override = UPDATE_PATH_OVERRIDES[`${app}.${resourceName}`];
   const path = override ? override(base, id) : `${base}/${id}`;
-  return api.patch<RecordRow>(path, body);
+  const updated = await api.patch<RecordRow>(path, body);
+  invalidateReferenceOptions(app, resourceName);
+  return updated;
 }
