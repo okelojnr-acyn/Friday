@@ -1,0 +1,222 @@
+import uuid
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from friday_common import (
+    FieldSpec,
+    Principal,
+    ResourceSpec,
+    create_app,
+    get_current_principal,
+    get_org_session,
+    get_session,
+    require_kernel_token,
+    resource,
+    set_org_context,
+)
+
+from .models import REASONS, Product, StockMove
+from .schemas import ProductCreate, ProductOut, ProductUpdate, StockAdjust, StockMoveOut
+
+resource(
+    ResourceSpec(
+        name="product",
+        app="inventory",
+        label="Product",
+        label_plural="Products",
+        views=("list", "form"),
+        search_fields=("name", "sku", "barcode"),
+        fields=(
+            FieldSpec("name", "Name", "text", required=True),
+            FieldSpec("sku", "SKU", "text"),
+            FieldSpec("barcode", "Barcode", "text"),
+            FieldSpec("price_cents", "Price", "currency", required=True),
+            FieldSpec("cost_cents", "Cost", "currency"),
+            FieldSpec("on_hand_qty", "On hand", "number", form_visible=False),
+            FieldSpec("track_inventory", "Tracks stock", "boolean"),
+        ),
+    )
+)
+
+resource(
+    ResourceSpec(
+        name="stock_move",
+        app="inventory",
+        label="Stock Move",
+        label_plural="Stock Moves",
+        views=("list",),
+        search_fields=("product_name", "reference"),
+        fields=(
+            FieldSpec("product_name", "Product", "text", required=True),
+            FieldSpec("qty_delta", "Change", "number", required=True),
+            FieldSpec("reason", "Reason", "select", options=REASONS, required=True),
+            FieldSpec("reference", "Reference", "text"),
+            FieldSpec("created_at", "When", "datetime"),
+        ),
+    )
+)
+
+app = create_app("friday-inventory")
+
+products_router = APIRouter(prefix="/products", tags=["products"])
+moves_router = APIRouter(prefix="/stock_moves", tags=["stock-moves"])
+webhooks_router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
+
+
+def _org(principal: Principal) -> uuid.UUID:
+    return uuid.UUID(principal.org_id)
+
+
+@products_router.get("", response_model=list[ProductOut])
+async def list_products(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(
+        select(Product).where(Product.org_id == _org(principal)).order_by(Product.name)
+    )
+    return rows.scalars().all()
+
+
+@products_router.post("", response_model=ProductOut, status_code=201)
+async def create_product(
+    body: ProductCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    now = datetime.now(UTC)
+    product = Product(org_id=_org(principal), created_at=now, updated_at=now, **body.model_dump())
+    session.add(product)
+    await session.flush()
+    if product.on_hand_qty:
+        session.add(
+            StockMove(
+                org_id=_org(principal),
+                product_id=product.id,
+                product_name=product.name,
+                qty_delta=product.on_hand_qty,
+                reason="received",
+                reference="initial stock",
+                created_at=now,
+            )
+        )
+    await session.commit()
+    await session.refresh(product)
+    return product
+
+
+async def _get_owned(session: AsyncSession, principal: Principal, product_id: uuid.UUID) -> Product:
+    product = await session.get(Product, product_id)
+    if product is None or str(product.org_id) != principal.org_id:
+        raise HTTPException(404, "product not found")
+    return product
+
+
+@products_router.get("/{product_id}", response_model=ProductOut)
+async def get_product(
+    product_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    return await _get_owned(session, principal, product_id)
+
+
+@products_router.patch("/{product_id}", response_model=ProductOut)
+async def update_product(
+    product_id: uuid.UUID,
+    body: ProductUpdate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    product = await _get_owned(session, principal, product_id)
+    for field_name, value in body.model_dump(exclude_unset=True).items():
+        setattr(product, field_name, value)
+    product.updated_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(product)
+    return product
+
+
+@products_router.post("/{product_id}/adjust-stock", response_model=ProductOut)
+async def adjust_stock(
+    product_id: uuid.UUID,
+    body: StockAdjust,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The one way on_hand_qty ever changes by hand -- always alongside a
+    StockMove row, so the ledger and the cached count never drift apart."""
+    if body.reason not in REASONS:
+        raise HTTPException(422, f"reason must be one of {REASONS}")
+    product = await _get_owned(session, principal, product_id)
+    now = datetime.now(UTC)
+    product.on_hand_qty += body.delta
+    product.updated_at = now
+    session.add(
+        StockMove(
+            org_id=_org(principal),
+            product_id=product.id,
+            product_name=product.name,
+            qty_delta=body.delta,
+            reason=body.reason,
+            reference=body.reference,
+            created_at=now,
+        )
+    )
+    await session.commit()
+    await session.refresh(product)
+    return product
+
+
+@moves_router.get("", response_model=list[StockMoveOut])
+async def list_stock_moves(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(
+        select(StockMove).where(StockMove.org_id == _org(principal)).order_by(StockMove.created_at.desc())
+    )
+    return rows.scalars().all()
+
+
+@webhooks_router.post("/pos-sale", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_session)):
+    """Subscribed to invoicing.pos_sale.recorded (see
+    kernel/internal/gateway/events.go) -- automatically decrements stock
+    for every sold line that was rung up from the product catalog
+    (freeform/ad-hoc POS lines carry no product_id and are skipped)."""
+    payload = body.get("payload", {})
+    org_id = uuid.UUID(body["org_id"])
+    await set_org_context(session, str(org_id))
+    now = datetime.now(UTC)
+
+    for line in payload.get("lines", []):
+        product_id = line.get("product_id")
+        if not product_id:
+            continue
+        product = await session.get(Product, uuid.UUID(product_id))
+        if product is None or str(product.org_id) != str(org_id) or not product.track_inventory:
+            continue
+        qty = int(line.get("quantity", 0))
+        product.on_hand_qty -= qty
+        product.updated_at = now
+        session.add(
+            StockMove(
+                org_id=org_id,
+                product_id=product.id,
+                product_name=product.name,
+                qty_delta=-qty,
+                reason="pos_sale",
+                reference=payload.get("invoice_number", ""),
+                created_at=now,
+            )
+        )
+    await session.commit()
+
+
+app.include_router(products_router)
+app.include_router(moves_router)
+app.include_router(webhooks_router)

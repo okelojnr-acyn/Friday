@@ -1,0 +1,131 @@
+# Local dev stack: postgres + kernel + the three app services + web.
+# Each language service runs off its official base image with the repo
+# mounted in, rather than a bespoke Dockerfile per service -- there's
+# nothing to build/push for local dev, and `scripts/setup.sh` already
+# documents the equivalent standalone commands per toolchain.
+#
+# Usage: docker compose -f infra/docker-compose.yml up
+
+name: friday
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-friday}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-friday}
+      POSTGRES_DB: ${POSTGRES_DB:-friday}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-friday}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  kernel:
+    image: golang:1.23-alpine
+    working_dir: /src/kernel
+    volumes:
+      - ../kernel:/src/kernel
+    command: go run ./cmd/kernel
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
+      CORS_ORIGIN: http://localhost:5173
+      APP_CRM_URL: http://crm:8001
+      APP_INVOICING_URL: http://invoicing:8002
+      APP_PROJECTS_URL: http://projects:8003
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  crm:
+    image: python:3.12-slim
+    working_dir: /src
+    volumes:
+      - ..:/src
+    command: >
+      sh -c "pip install -q -r apps/crm/requirements.txt -r apps/crm/requirements-dev.txt &&
+             python -m friday_common.migrate apps/crm crm &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8001 --app-dir apps/crm"
+    environment:
+      SERVICE_NAME: friday-crm
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
+      DB_SCHEMA: crm
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      KERNEL_INTERNAL_URL: http://kernel:8080/internal
+      KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
+      CORS_ORIGINS: '["http://localhost:5173"]'
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  invoicing:
+    image: python:3.12-slim
+    working_dir: /src
+    volumes:
+      - ..:/src
+    command: >
+      sh -c "pip install -q -r apps/invoicing/requirements.txt -r apps/invoicing/requirements-dev.txt &&
+             python -m friday_common.migrate apps/invoicing invoicing &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8002 --app-dir apps/invoicing"
+    environment:
+      SERVICE_NAME: friday-invoicing
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
+      DB_SCHEMA: invoicing
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      KERNEL_INTERNAL_URL: http://kernel:8080/internal
+      KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
+      CORS_ORIGINS: '["http://localhost:5173"]'
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  projects:
+    image: python:3.12-slim
+    working_dir: /src
+    volumes:
+      - ..:/src
+    command: >
+      sh -c "pip install -q -r apps/projects/requirements.txt -r apps/projects/requirements-dev.txt &&
+             python -m friday_common.migrate apps/projects projects &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8003 --app-dir apps/projects"
+    environment:
+      SERVICE_NAME: friday-projects
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
+      DB_SCHEMA: projects
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      KERNEL_INTERNAL_URL: http://kernel:8080/internal
+      KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
+      CORS_ORIGINS: '["http://localhost:5173"]'
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    image: node:20-alpine
+    working_dir: /src/web
+    volumes:
+      - ../web:/src/web
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    environment:
+      VITE_KERNEL_URL: http://localhost:8080
+    ports:
+      - "5173:5173"
+    depends_on:
+      - kernel
+
+volumes:
+  pgdata:

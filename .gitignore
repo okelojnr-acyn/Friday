@@ -1,0 +1,43 @@
+# --- general ---
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+Thumbs.db
+
+# --- go ---
+kernel/bin/
+kernel/kernel
+kernel/kernel.exe
+*.test
+
+# --- python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# --- rust ---
+pos-engine/target/
+pos-engine/pkg/
+web/src/apps/pos/engine/
+
+# --- node / web ---
+web/node_modules/
+web/dist/
+web/.vite/
+node_modules/
+
+# --- infra ---
+infra/aws/.terraform/
+infra/aws/*.tfstate
+infra/aws/*.tfstate.*
+infra/aws/.terraform.lock.hcl
+
+# --- editors ---
+.vscode/
+.idea/

@@ -1,0 +1,20 @@
+[package]
+name = "friday-pos-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Cart, pricing, tax, and offline-sale queue for the POS register. Compiles native (tests, any backend) and to WASM (the browser register screen in web/)."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "js"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]

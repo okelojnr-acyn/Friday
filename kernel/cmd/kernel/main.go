@@ -1,0 +1,117 @@
+// Friday kernel: auth, orgs, the apps catalog, and the API gateway that
+// every app service sits behind. See ARCHITECTURE.md for the full picture.
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/acyn-innovation/friday/kernel/internal/auth"
+	"github.com/acyn-innovation/friday/kernel/internal/db"
+	"github.com/acyn-innovation/friday/kernel/internal/gateway"
+	"github.com/acyn-innovation/friday/kernel/internal/org"
+	"github.com/acyn-innovation/friday/kernel/internal/registry"
+)
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func main() {
+	ctx := context.Background()
+
+	databaseURL := envOr("DATABASE_URL", "postgres://friday:friday@localhost:5432/friday")
+	jwtSecret := envOr("JWT_SECRET", "dev-only-change-me")
+	eventsToken := envOr("KERNEL_EVENTS_TOKEN", "dev-only-change-me")
+	addr := ":" + envOr("PORT", "8080")
+	migrationsDir := envOr("MIGRATIONS_DIR", "kernel/migrations")
+	corsOrigin := envOr("CORS_ORIGIN", "http://localhost:5173")
+
+	pool, err := db.Connect(ctx, databaseURL)
+	if err != nil {
+		log.Fatalf("db connect: %v", err)
+	}
+	defer pool.Close()
+
+	if err := db.Migrate(ctx, pool, migrationsDir); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
+
+	apps := registry.Load()
+	catalog := &org.Catalog{Pool: pool, Apps: apps}
+	if err := catalog.SeedApps(ctx); err != nil {
+		log.Fatalf("seed apps: %v", err)
+	}
+
+	issuer := auth.NewIssuer(jwtSecret, 24*time.Hour)
+	authHandlers := &auth.Handlers{Pool: pool, Issuer: issuer}
+	requireAuth := auth.RequireAuth(issuer)
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"ok","service":"kernel"}`))
+	})
+
+	mux.HandleFunc("POST /auth/register", authHandlers.Register)
+	mux.HandleFunc("POST /auth/login", authHandlers.Login)
+	mux.Handle("GET /auth/me", requireAuth(http.HandlerFunc(authHandlers.Me)))
+
+	mux.Handle("GET /orgs/apps", requireAuth(http.HandlerFunc(catalog.List)))
+	mux.Handle("POST /orgs/apps/{app}/install", requireAuth(catalog.SetInstalled(true)))
+	mux.Handle("DELETE /orgs/apps/{app}/install", requireAuth(catalog.SetInstalled(false)))
+
+	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(apps, eventsToken))
+
+	for _, app := range apps {
+		proxy, err := gateway.NewAppProxy(app)
+		if err != nil {
+			log.Fatalf("configure proxy for %s: %v", app.Name, err)
+		}
+		mux.Handle("/api/"+app.Name+"/", requireAuth(proxy))
+		log.Printf("routing /api/%s/* -> %s", app.Name, app.BaseURL)
+	}
+
+	handler := withCORS(corsOrigin, mux)
+
+	log.Printf("kernel listening on %s", addr)
+	if err := http.ListenAndServe(addr, handler); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// withCORS handles preflight for every route (proxied routes are
+// auth-gated, so an OPTIONS preflight -- which never carries the
+// Authorization header -- would otherwise 401 before reaching the app).
+// For the actual request, it only sets CORS headers on routes the kernel
+// serves itself. /api/{app}/* responses already carry CORS headers from
+// the app's own CORSMiddleware (friday_common.create_app) -- the proxy
+// forwards the Origin header through, so the app sees it and responds
+// accordingly -- and httputil.ReverseProxy copies backend headers with
+// Add, not Set, so setting them here too would duplicate the header.
+// Browsers reject a doubled Access-Control-Allow-Origin as invalid CORS,
+// which fails every proxied request with an opaque "Failed to fetch".
+func withCORS(origin string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
