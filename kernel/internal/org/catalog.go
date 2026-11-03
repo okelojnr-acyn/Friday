@@ -69,7 +69,13 @@ func (c *Catalog) List(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var apps []appView
+	// []appView{}, not var apps []appView -- a nil slice encodes as JSON
+	// `null`, which would crash any frontend list.map() call (see the
+	// identical bug this fixed in internal/integrations/integrations.go's
+	// List). Every app is always seeded at startup so this can't happen
+	// in practice today, but the fix costs nothing and the failure mode
+	// if it ever did is a silently-stuck loading spinner, not an error.
+	apps := []appView{}
 	for rows.Next() {
 		var a appView
 		if err := rows.Scan(&a.Name, &a.Label, &a.Description, &a.Icon, &a.Category, &a.Installed); err != nil {

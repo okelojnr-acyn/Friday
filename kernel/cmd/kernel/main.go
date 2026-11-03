@@ -79,15 +79,22 @@ func main() {
 	mux.HandleFunc("POST /auth/register", authHandlers.Register)
 	mux.HandleFunc("POST /auth/otp/request", authHandlers.OtpRequest)
 	mux.HandleFunc("POST /auth/otp/verify", authHandlers.OtpVerify)
+	mux.HandleFunc("POST /auth/invites/accept", authHandlers.AcceptInvite)
 	mux.HandleFunc("POST /auth/passkey/login-options", authHandlers.PasskeyLoginOptions)
 	mux.HandleFunc("POST /auth/passkey/login-verify", authHandlers.PasskeyLoginVerify)
 	mux.Handle("POST /auth/passkey/register-options", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterOptions)))
 	mux.Handle("POST /auth/passkey/register-verify", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterVerify)))
 	mux.Handle("GET /auth/me", requireAuth(http.HandlerFunc(authHandlers.Me)))
+	mux.Handle("POST /orgs/invites", requireAuth(http.HandlerFunc(authHandlers.InviteMember)))
 
 	mux.Handle("GET /orgs/apps", requireAuth(http.HandlerFunc(catalog.List)))
 	mux.Handle("POST /orgs/apps/{app}/install", requireAuth(catalog.SetInstalled(true)))
 	mux.Handle("DELETE /orgs/apps/{app}/install", requireAuth(catalog.SetInstalled(false)))
+
+	members := &org.Members{Pool: pool}
+	mux.Handle("GET /orgs/members", requireAuth(http.HandlerFunc(members.List)))
+	mux.Handle("PATCH /orgs/members/{user_id}/role", requireAuth(http.HandlerFunc(members.SetRole)))
+	mux.Handle("DELETE /orgs/members/{user_id}", requireAuth(http.HandlerFunc(members.Remove)))
 
 	integrationHandlers := &integrations.Handlers{Pool: pool, InternalToken: eventsToken}
 	mux.Handle("GET /orgs/integrations", requireAuth(http.HandlerFunc(integrationHandlers.List)))

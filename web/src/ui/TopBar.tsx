@@ -25,6 +25,12 @@ export function TopBar({ email, role, onLogout }: TopBarProps) {
             Apps
           </Button>
         </Link>
+        <Link to="/settings/members" title="Members">
+          <Button variant="secondary" size="sm" className="btn-pill">
+            <Icon name="users" size={16} />
+            Members
+          </Button>
+        </Link>
         <Link to="/settings/integrations" title="Integrations">
           <Button variant="secondary" size="sm" className="btn-pill">
             <Icon name="link-2" size={16} />
