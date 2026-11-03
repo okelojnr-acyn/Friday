@@ -176,7 +176,7 @@ export function DashboardPage() {
         {installedApps.map((a) => (
           <AppTile
             key={a.name}
-            to={a.name === "web3" ? "/web3/treasury" : `/${a.name}`}
+            to={a.name === "web3" ? "/web3/treasury" : a.name === "accounting" ? "/accounting/reports" : `/${a.name}`}
             icon={a.icon}
             label={a.label}
           />
