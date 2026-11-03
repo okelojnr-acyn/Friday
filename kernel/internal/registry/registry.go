@@ -69,6 +69,14 @@ func Load() []App {
 			Category:    "work",
 			BaseURL:     envOr("APP_MINIONS_URL", "http://localhost:8007"),
 		},
+		{
+			Name:        "fleets",
+			Label:       "Fleets",
+			Description: "Vehicles, drivers, and maintenance/fuel logs.",
+			Icon:        "truck",
+			Category:    "operations",
+			BaseURL:     envOr("APP_FLEETS_URL", "http://localhost:8008"),
+		},
 	}
 }
 

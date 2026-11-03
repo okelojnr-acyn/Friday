@@ -30,7 +30,8 @@ export type IconName =
   | "shield-check"
   | "history"
   | "percent"
-  | "users";
+  | "users"
+  | "truck";
 
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = {
@@ -240,6 +241,15 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
           <path d="M3.5 19c0-3.3 2.5-5.5 5.5-5.5s5.5 2.2 5.5 5.5" />
           <path d="M16 8.3a3 3 0 0 1 0 5.8" />
           <path d="M19 19c0-2.6-1.6-4.6-3.8-5.3" />
+        </svg>
+      );
+    case "truck":
+      return (
+        <svg {...common}>
+          <path d="M3 7h11v9H3z" />
+          <path d="M14 10h4l3 3v3h-7z" />
+          <circle cx="7" cy="18" r="1.6" />
+          <circle cx="17.5" cy="18" r="1.6" />
         </svg>
       );
     case "app-window":
