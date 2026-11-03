@@ -17,8 +17,10 @@ from friday_common.integrations import StripeProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .events import invoice_lines_payload, publish_invoice_paid
 from .models import INVOICE_STATUSES, RECURRING_INTERVALS, Customer, Invoice, InvoiceLine, Payment
 from .schemas import (
+    CustomerBulkCreate,
     CustomerCreate,
     CustomerOut,
     InvoiceCreate,
@@ -42,6 +44,7 @@ resource(
             FieldSpec("name", "Name", "text", required=True),
             FieldSpec("company", "Company", "text"),
             FieldSpec("email", "Email", "email"),
+            FieldSpec("payment_terms_days", "Payment terms (days)", "number"),
             FieldSpec("created_at", "Added", "datetime", form_visible=False),
         ),
     )
@@ -65,9 +68,12 @@ resource(
                 form_visible=False,
             ),
             FieldSpec("status", "Status", "select", options=INVOICE_STATUSES, required=True),
+            FieldSpec("due_at", "Due", "date", form_visible=False),
             FieldSpec("total_cents", "Total", "currency", form_visible=False),
             FieldSpec("balance_cents", "Balance", "currency", form_visible=False),
-            FieldSpec("source", "Source", "select", options=("manual", "crm", "pos"), form_visible=False),
+            FieldSpec(
+                "source", "Source", "select", options=("manual", "crm", "pos", "credit_note"), form_visible=False
+            ),
             # form_visible=False on both: recurring_interval is only ever
             # set at creation time (InvoiceCreateModal's "Repeats" picker)
             # -- the generic form's Save always PATCHes /status (see
@@ -131,6 +137,24 @@ async def create_customer(
     return customer
 
 
+@customers_router.post("/bulk", response_model=list[CustomerOut], status_code=201)
+async def bulk_create_customers(
+    body: CustomerBulkCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Mirrors apps/inventory/app/main.py's bulk_create_products -- lets a
+    caller load an existing customer list in one request instead of one
+    round trip per row."""
+    now = datetime.now(UTC)
+    created = [Customer(org_id=uuid.UUID(principal.org_id), created_at=now, **item.model_dump()) for item in body.customers]
+    session.add_all(created)
+    await session.commit()
+    for customer in created:
+        await session.refresh(customer)
+    return created
+
+
 async def _get_invoice(session: AsyncSession, principal: Principal, invoice_id: uuid.UUID) -> Invoice:
     inv = await session.get(Invoice, invoice_id)
     if inv is None or str(inv.org_id) != principal.org_id:
@@ -158,6 +182,11 @@ async def create_invoice(
     if body.recurring_interval not in RECURRING_INTERVALS:
         raise HTTPException(422, f"recurring_interval must be one of {RECURRING_INTERVALS}")
     now = datetime.now(UTC)
+    due_at = None
+    if body.customer_id is not None:
+        customer = await session.get(Customer, body.customer_id)
+        if customer is not None and str(customer.org_id) == principal.org_id:
+            due_at = now + timedelta(days=customer.payment_terms_days)
     invoice = Invoice(
         org_id=uuid.UUID(principal.org_id),
         customer_id=body.customer_id,
@@ -165,6 +194,7 @@ async def create_invoice(
         status="draft",
         currency=body.currency,
         source="manual",
+        due_at=due_at,
         recurring_interval=body.recurring_interval,
         next_recurrence_at=_advance(now, body.recurring_interval) if body.recurring_interval else None,
         created_at=now,
@@ -180,6 +210,7 @@ async def create_invoice(
                 description=line.description,
                 quantity=line.quantity,
                 unit_price_cents=line.unit_price_cents,
+                tax_rate_bp=line.tax_rate_bp,
                 discount_bp=line.discount_bp,
                 unit_cost_cents=line.unit_cost_cents,
             )
@@ -240,12 +271,15 @@ async def record_payment(
 
     total = sum(l.total_cents for l in inv.lines)
     paid = sum(p.amount_cents for p in inv.payments)
+    newly_paid = paid >= total and inv.status not in ("paid", "void")
     if paid >= total and inv.status != "void":
         inv.status = "paid"
         inv.updated_at = datetime.now(UTC)
 
     await session.commit()
     await session.refresh(inv, attribute_names=["lines", "payments"])
+    if newly_paid:
+        await publish_invoice_paid(principal.org_id, inv, paid, invoice_lines_payload(inv))
     return InvoiceOut.from_model(inv)
 
 
@@ -444,6 +478,9 @@ async def record_pos_sale(
             ],
         },
     )
+    # A POS sale is created already-paid, so this is always a "newly
+    # paid" transition -- no status check needed, unlike record_payment.
+    await publish_invoice_paid(principal.org_id, invoice, charged_cents, invoice_lines_payload(invoice))
 
     return InvoiceOut.from_model(invoice)
 
@@ -553,8 +590,76 @@ async def return_pos_sale(
             ],
         },
     )
+    # Negative paid_amount_cents -- Accounting's invoice-paid webhook
+    # mirrors the debit/credit sides for a negative amount so the ledger
+    # itself never carries a negative entry.
+    await publish_invoice_paid(principal.org_id, refund, refund_total_cents, invoice_lines_payload(refund))
 
     return InvoiceOut.from_model(refund)
+
+
+@invoices_router.post("/{invoice_id}/credit-note", response_model=InvoiceOut, status_code=201)
+async def create_credit_note(
+    invoice_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Credit notes as a first-class concept for manual invoices -- same
+    negated-lines pattern return_pos_sale already established for POS
+    refunds, applied here instead of editing the original invoice (which
+    stays exactly as issued; a credit note is a new document, same as
+    every real-world accounting system treats it). Unlike a POS return,
+    the original isn't voided -- a credit note can be partial, or issued
+    against an invoice that was never actually paid in full."""
+    original = await _get_invoice(session, principal, invoice_id)
+    await session.refresh(original, attribute_names=["lines", "payments"])
+
+    now = datetime.now(UTC)
+    note = Invoice(
+        org_id=uuid.UUID(principal.org_id),
+        customer_id=original.customer_id,
+        number=f"CN-{now:%Y%m}-{uuid.uuid4().hex[:6].upper()}",
+        status="paid",
+        currency=original.currency,
+        source="credit_note",
+        source_ref=original.number,
+        issued_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(note)
+    await session.flush()
+
+    note_total_cents = 0
+    for line in original.lines:
+        note_total_cents += -(line.total_cents + line.tax_cents)
+        session.add(
+            InvoiceLine(
+                org_id=uuid.UUID(principal.org_id),
+                invoice_id=note.id,
+                description=f"Credit: {line.description}",
+                quantity=-line.quantity,
+                unit_price_cents=line.unit_price_cents,
+                tax_rate_bp=line.tax_rate_bp,
+                product_id=line.product_id,
+            )
+        )
+
+    session.add(
+        Payment(
+            org_id=uuid.UUID(principal.org_id),
+            invoice_id=note.id,
+            amount_cents=note_total_cents,
+            method="refund",
+            received_at=now,
+        )
+    )
+    await session.commit()
+    await session.refresh(note, attribute_names=["lines", "payments"])
+
+    await publish_invoice_paid(principal.org_id, note, note_total_cents, invoice_lines_payload(note))
+
+    return InvoiceOut.from_model(note)
 
 
 app.include_router(customers_router)

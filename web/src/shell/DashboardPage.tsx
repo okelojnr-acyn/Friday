@@ -106,7 +106,10 @@ export function DashboardPage() {
     const unpaid = rows.filter((i) => i.status !== "paid" && i.status !== "void");
     const outstanding = unpaid.reduce((sum, i) => sum + (Number(i.balance_cents) || 0), 0);
     const collected = rows.reduce((sum, i) => sum + (Number(i.paid_cents) || 0), 0);
-    return { unpaidCount: unpaid.length, outstanding, collected, total: rows.length };
+    const now = Date.now();
+    const overdue = unpaid.filter((i) => i.due_at && new Date(String(i.due_at)).getTime() < now);
+    const overdueTotal = overdue.reduce((sum, i) => sum + (Number(i.balance_cents) || 0), 0);
+    return { unpaidCount: unpaid.length, outstanding, collected, total: rows.length, overdueCount: overdue.length, overdueTotal };
   }, [invoices]);
 
   const taskStats = useMemo(() => {
@@ -227,6 +230,15 @@ export function DashboardPage() {
               label="Collected"
               value={money(invoicingStats.collected)}
               footer={<span className="field-label">{invoicingStats.total} invoices total</span>}
+            />
+          ) : null}
+          {installed.has("invoicing") && invoicingStats.overdueCount > 0 ? (
+            <StatCard
+              to="/invoicing/invoice"
+              icon="receipt"
+              label="Overdue"
+              value={money(invoicingStats.overdueTotal)}
+              footer={<span className="field-label">{invoicingStats.overdueCount} past due</span>}
             />
           ) : null}
           {installed.has("projects") ? (
