@@ -55,6 +55,66 @@ async def test_reorder_point_is_editable(client):
     assert resp.json()["reorder_point"] == 5
 
 
+async def test_create_product_defaults_to_kind_product(client):
+    product = (await client.post("/products", json={"name": "Widget", "price_cents": 999})).json()
+    assert product["kind"] == "product"
+
+
+async def test_creating_a_service_forces_track_inventory_off(client):
+    service = (
+        await client.post(
+            "/products", json={"name": "Consulting hour", "kind": "service", "price_cents": 10000, "track_inventory": True}
+        )
+    ).json()
+    assert service["kind"] == "service"
+    assert service["track_inventory"] is False
+
+
+async def test_create_product_rejects_invalid_kind(client):
+    resp = await client.post("/products", json={"name": "Widget", "price_cents": 999, "kind": "bogus"})
+    assert resp.status_code == 422
+
+
+async def test_updating_a_product_to_kind_service_forces_track_inventory_off(client):
+    product = (
+        await client.post("/products", json={"name": "Widget", "price_cents": 999, "track_inventory": True})
+    ).json()
+    resp = await client.patch(f"/products/{product['id']}", json={"kind": "service"})
+    assert resp.status_code == 200
+    assert resp.json()["track_inventory"] is False
+
+
+async def test_bulk_create_products_creates_each_row_and_records_stock_moves(client):
+    resp = await client.post(
+        "/products/bulk",
+        json={
+            "products": [
+                {"name": "Widget", "barcode": "111", "price_cents": 500, "on_hand_qty": 5},
+                {"name": "Gadget", "barcode": "222", "price_cents": 1200, "on_hand_qty": 0},
+                {"name": "Consulting hour", "kind": "service", "price_cents": 10000},
+            ]
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert len(body) == 3
+    assert body[2]["kind"] == "service"
+    assert body[2]["track_inventory"] is False
+
+    listed = (await client.get("/products")).json()
+    assert len(listed) == 3
+
+    moves = (await client.get("/stock_moves")).json()
+    bulk_moves = [m for m in moves if m["reference"] == "bulk add"]
+    assert len(bulk_moves) == 1  # only the Widget row had nonzero initial stock
+    assert bulk_moves[0]["qty_delta"] == 5
+
+
+async def test_bulk_create_products_rejects_empty_list(client):
+    resp = await client.post("/products/bulk", json={"products": []})
+    assert resp.status_code == 422
+
+
 async def test_org_isolation_on_products(client, as_principal, principal):
     product = (await client.post("/products", json={"name": "Widget", "price_cents": 999})).json()
 

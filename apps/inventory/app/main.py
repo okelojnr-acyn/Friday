@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
+    PRODUCT_KINDS,
     PURCHASE_ORDER_STATUSES,
     REASONS,
     Product,
@@ -27,6 +28,7 @@ from .models import (
     Supplier,
 )
 from .schemas import (
+    ProductBulkCreate,
     ProductCreate,
     ProductOut,
     ProductUpdate,
@@ -49,6 +51,7 @@ resource(
         search_fields=("name", "sku", "barcode"),
         fields=(
             FieldSpec("name", "Name", "text", required=True),
+            FieldSpec("kind", "Kind", "select", options=PRODUCT_KINDS, required=True),
             FieldSpec("sku", "SKU", "text"),
             FieldSpec("barcode", "Barcode", "text"),
             FieldSpec("price_cents", "Price", "currency", required=True),
@@ -138,13 +141,27 @@ async def list_products(
 
 
 @products_router.post("", response_model=ProductOut, status_code=201)
+def _product_fields(body: ProductCreate) -> dict:
+    """Shared by create_product and the bulk endpoint: validates `kind`
+    and forces track_inventory=False for a service regardless of what
+    the client sent -- a service's on_hand_qty is never meaningful (see
+    Product.kind's doc comment), so this isn't optional client-side
+    behavior to get right, it's enforced here."""
+    if body.kind not in PRODUCT_KINDS:
+        raise HTTPException(422, f"kind must be one of {PRODUCT_KINDS}")
+    data = body.model_dump()
+    if body.kind == "service":
+        data["track_inventory"] = False
+    return data
+
+
 async def create_product(
     body: ProductCreate,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_org_session),
 ):
     now = datetime.now(UTC)
-    product = Product(org_id=_org(principal), created_at=now, updated_at=now, **body.model_dump())
+    product = Product(org_id=_org(principal), created_at=now, updated_at=now, **_product_fields(body))
     session.add(product)
     await session.flush()
     if product.on_hand_qty:
@@ -188,12 +205,53 @@ async def update_product(
     session: AsyncSession = Depends(get_org_session),
 ):
     product = await _get_owned(session, principal, product_id)
-    for field_name, value in body.model_dump(exclude_unset=True).items():
+    changes = body.model_dump(exclude_unset=True)
+    if "kind" in changes and changes["kind"] not in PRODUCT_KINDS:
+        raise HTTPException(422, f"kind must be one of {PRODUCT_KINDS}")
+    for field_name, value in changes.items():
         setattr(product, field_name, value)
+    if product.kind == "service":
+        product.track_inventory = False
     product.updated_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(product)
     return product
+
+
+@products_router.post("/bulk", response_model=list[ProductOut], status_code=201)
+async def bulk_create_products(
+    body: ProductBulkCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The bulk-add screen's one call (see web/src/apps/inventory/
+    BulkAddProductsPanel.tsx): scan/type a batch of products or
+    services and create them all in one request instead of one
+    round trip per row."""
+    now = datetime.now(UTC)
+    created: list[Product] = []
+    for item in body.products:
+        product = Product(org_id=_org(principal), created_at=now, updated_at=now, **_product_fields(item))
+        session.add(product)
+        created.append(product)
+    await session.flush()
+    for product in created:
+        if product.on_hand_qty:
+            session.add(
+                StockMove(
+                    org_id=_org(principal),
+                    product_id=product.id,
+                    product_name=product.name,
+                    qty_delta=product.on_hand_qty,
+                    reason="received",
+                    reference="bulk add",
+                    created_at=now,
+                )
+            )
+    await session.commit()
+    for product in created:
+        await session.refresh(product)
+    return created
 
 
 @products_router.post("/{product_id}/adjust-stock", response_model=ProductOut)

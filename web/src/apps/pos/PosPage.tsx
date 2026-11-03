@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import init, { PosCart, PosOfflineQueue } from "./engine/friday_pos_engine";
 import { api, ApiError } from "../../lib/api";
 import { fetchProductCatalog, type Product } from "../../lib/inventory";
+import { useBarcodeScanner } from "../../lib/useBarcodeScanner";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Field";
 import { Badge } from "../../ui/Badge";
@@ -27,12 +28,6 @@ interface Sale {
 const QUEUE_STORAGE_KEY = "friday.pos.offline_queue";
 const TAX_RATE_BP = 800; // 8% -- a flat dev default; a real deployment would read this from org settings
 const NUMPAD_KEYS = ["7", "8", "9", "4", "5", "6", "1", "2", "3", "+/-", "0", "."];
-
-/** A barcode scanner is a keyboard-wedge device: it "types" a code faster
- * than any human can and ends with Enter. Timing (not focus) is what
- * tells a scan apart from someone typing in the description field. */
-const SCAN_KEY_GAP_MS = 60;
-const SCAN_MIN_LENGTH = 6;
 
 /** The one genuinely custom screen in the product (see ARCHITECTURE.md):
  * a cart with live tax math and offline-first checkout isn't a CRUD form,
@@ -185,43 +180,19 @@ export function PosPage() {
     applyBuffer(buffer.slice(0, -1));
   }
 
-  // Barcode scanner support: any sufficiently fast burst of keystrokes
-  // ending in Enter is treated as a scan and matched against the cached
-  // catalog, regardless of which element has focus (matches how a real
-  // register behaves with a USB/Bluetooth scanner).
-  useEffect(() => {
-    let buffer = "";
-    let lastAt = 0;
-
-    function onKeyDown(e: KeyboardEvent) {
-      const now = performance.now();
-      const gap = now - lastAt;
-      lastAt = now;
-
-      if (e.key === "Enter") {
-        const code = buffer;
-        buffer = "";
-        if (code.length < SCAN_MIN_LENGTH) return;
-        const match = products.find((p) => p.barcode && p.barcode === code);
-        if (match) {
-          addFromCatalog(match);
-          setScanNotice(`Scanned: ${match.name}`);
-        } else {
-          setScanNotice(`No product with barcode ${code}`);
-        }
-        setTimeout(() => setScanNotice(null), 2500);
-        return;
-      }
-      if (e.key.length === 1) {
-        if (gap > SCAN_KEY_GAP_MS) buffer = "";
-        buffer += e.key;
-      }
+  // Barcode scanner support: matches a scan against the cached catalog,
+  // regardless of which element has focus. See useBarcodeScanner's own
+  // doc comment for the scan-vs-typing detection this is built on.
+  useBarcodeScanner((code) => {
+    const match = products.find((p) => p.barcode && p.barcode === code);
+    if (match) {
+      addFromCatalog(match);
+      setScanNotice(`Scanned: ${match.name}`);
+    } else {
+      setScanNotice(`No product with barcode ${code}`);
     }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [products, lines]);
+    setTimeout(() => setScanNotice(null), 2500);
+  });
 
   async function syncPending() {
     const queue = queueRef.current;

@@ -1,8 +1,10 @@
 import { api } from "./api";
+import type { RecordRow } from "./types";
 
 export interface Product {
   id: string;
   name: string;
+  kind: "product" | "service";
   sku: string;
   barcode: string;
   price_cents: number;
@@ -20,3 +22,20 @@ export async function fetchProductCatalog(): Promise<Product[]> {
     return [];
   }
 }
+
+export interface ProductBulkRow {
+  name: string;
+  kind: "product" | "service";
+  sku: string;
+  barcode: string;
+  price_cents: number;
+  cost_cents: number;
+  on_hand_qty: number;
+  track_inventory: boolean;
+}
+
+/** apps/inventory/app/main.py's bulk_create_products -- one request for
+ * every row the bulk-add-products panel collected, instead of one round
+ * trip per row. */
+export const bulkCreateProducts = (products: ProductBulkRow[]) =>
+  api.post<RecordRow[]>("/api/inventory/products/bulk", { products });
