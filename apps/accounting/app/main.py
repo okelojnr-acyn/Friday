@@ -6,6 +6,7 @@ from friday_common import FieldSpec, Principal, ResourceSpec, create_app, get_cu
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .accounts import ensure_default_accounts, get_account_by_code
 from .models import (
     ACCOUNT_TYPES,
     BANK_TRANSACTION_STATUSES,
@@ -32,6 +33,8 @@ from .schemas import (
     JournalEntryOut,
     JournalEntryStatusUpdate,
 )
+from .reports import ledger_router, reports_router
+from .webhooks import webhooks_router
 
 resource(
     ResourceSpec(
@@ -132,45 +135,6 @@ def _org(principal: Principal) -> uuid.UUID:
     return uuid.UUID(principal.org_id)
 
 
-# code -> (name, type) for the standard starter Chart of Accounts every
-# org gets. Lazily seeded (see _ensure_default_accounts) rather than
-# inserted at migration time, since no org exists yet when migrations
-# run.
-DEFAULT_ACCOUNTS = (
-    ("1010", "Cash", "asset"),
-    ("1200", "Accounts Receivable", "asset"),
-    ("1400", "Inventory Asset", "asset"),
-    ("2200", "Tax Payable", "liability"),
-    ("3000", "Owner's Equity", "equity"),
-    ("4000", "Sales Revenue", "income"),
-    ("5000", "Cost of Goods Sold", "expense"),
-    ("6000", "Salary Expense", "expense"),
-)
-
-
-async def _ensure_default_accounts(session: AsyncSession, org_id: uuid.UUID) -> None:
-    """Idempotent upsert-by-code -- safe to call on every request that
-    needs an account to exist (every webhook handler, and the first
-    GET /accounts) rather than needing a dedicated "on org install" hook,
-    which the kernel doesn't have."""
-    existing = await session.execute(select(Account.code).where(Account.org_id == org_id))
-    have = set(existing.scalars().all())
-    now = datetime.now(UTC)
-    for code, name, type_ in DEFAULT_ACCOUNTS:
-        if code not in have:
-            session.add(Account(org_id=org_id, code=code, name=name, type=type_, created_at=now))
-    if have != {c for c, _, _ in DEFAULT_ACCOUNTS}:
-        await session.commit()
-
-
-async def get_account_by_code(session: AsyncSession, org_id: uuid.UUID, code: str) -> Account:
-    rows = await session.execute(select(Account).where(Account.org_id == org_id, Account.code == code))
-    account = rows.scalars().first()
-    if account is None:
-        raise HTTPException(500, f"default account {code!r} missing -- _ensure_default_accounts should have seeded it")
-    return account
-
-
 accounts_router = APIRouter(prefix="/accounts", tags=["accounts"])
 journal_router = APIRouter(prefix="/journal_entries", tags=["journal-entries"])
 fiscal_periods_router = APIRouter(prefix="/fiscal_periods", tags=["fiscal-periods"])
@@ -183,7 +147,7 @@ async def list_accounts(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_org_session),
 ):
-    await _ensure_default_accounts(session, _org(principal))
+    await ensure_default_accounts(session, _org(principal))
     rows = await session.execute(select(Account).where(Account.org_id == _org(principal)).order_by(Account.code))
     return rows.scalars().all()
 
@@ -396,3 +360,6 @@ app.include_router(journal_router)
 app.include_router(fiscal_periods_router)
 app.include_router(bank_accounts_router)
 app.include_router(bank_transactions_router)
+app.include_router(reports_router)
+app.include_router(ledger_router)
+app.include_router(webhooks_router)

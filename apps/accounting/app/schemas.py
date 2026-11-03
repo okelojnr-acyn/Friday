@@ -147,3 +147,45 @@ class LedgerLineOut(BaseModel):
     debit_cents: int
     credit_cents: int
     balance_cents: int
+
+
+class ReportLineOut(BaseModel):
+    account_id: uuid.UUID
+    code: str
+    name: str
+    amount_cents: int
+
+
+class ProfitAndLossOut(BaseModel):
+    start_date: date
+    end_date: date
+    income: list[ReportLineOut]
+    expenses: list[ReportLineOut]
+    total_income_cents: int
+    total_expenses_cents: int
+    net_income_cents: int
+
+
+class BalanceSheetOut(BaseModel):
+    as_of_date: date
+    assets: list[ReportLineOut]
+    liabilities: list[ReportLineOut]
+    equity: list[ReportLineOut]
+    net_income_to_date_cents: int
+    total_assets_cents: int
+    total_liabilities_cents: int
+    total_equity_cents: int
+
+
+class CashFlowBySourceOut(BaseModel):
+    source: str
+    net_cents: int
+
+
+class CashFlowOut(BaseModel):
+    start_date: date
+    end_date: date
+    beginning_balance_cents: int
+    by_source: list[CashFlowBySourceOut]
+    net_change_cents: int
+    ending_balance_cents: int
