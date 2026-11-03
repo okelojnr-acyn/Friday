@@ -61,6 +61,14 @@ func Load() []App {
 			Category:    "finance",
 			BaseURL:     envOr("APP_WEB3_URL", "http://localhost:8005"),
 		},
+		{
+			Name:        "accounting",
+			Label:       "Accounting",
+			Description: "A double-entry ledger -- chart of accounts, journal entries, and reports.",
+			Icon:        "ledger",
+			Category:    "finance",
+			BaseURL:     envOr("APP_ACCOUNTING_URL", "http://localhost:8006"),
+		},
 	}
 }
 

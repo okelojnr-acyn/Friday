@@ -29,7 +29,8 @@ export type IconName =
   | "key"
   | "shield-check"
   | "history"
-  | "percent";
+  | "percent"
+  | "ledger";
 
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = {
@@ -230,6 +231,14 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
           <path d="M19 5 5 19" />
           <circle cx="7" cy="7" r="2.2" />
           <circle cx="17" cy="17" r="2.2" />
+        </svg>
+      );
+    case "ledger":
+      return (
+        <svg {...common}>
+          <path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2V4Z" />
+          <path d="M5 4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2" />
+          <path d="M9 9h6M9 13h6" />
         </svg>
       );
     case "app-window":
