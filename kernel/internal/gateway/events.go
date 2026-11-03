@@ -30,6 +30,8 @@ type subscription struct {
 var subscriptions = []subscription{
 	{Event: "crm.opportunity.won", App: "invoicing", WebhookPath: "/internal/webhooks/crm-won"},
 	{Event: "invoicing.pos_sale.recorded", App: "inventory", WebhookPath: "/internal/webhooks/pos-sale"},
+	{Event: "invoicing.invoice.paid", App: "accounting", WebhookPath: "/internal/webhooks/invoice-paid"},
+	{Event: "invoicing.pos_sale.recorded", App: "accounting", WebhookPath: "/internal/webhooks/pos-sale-cogs"},
 }
 
 // EventsHandler receives events apps publish (friday_common.events.publish_event)
