@@ -208,3 +208,63 @@ async def test_pos_sale_cogs_requires_kernel_token(client, principal):
         json={"org_id": principal.org_id, "payload": {"lines": []}},
     )
     assert resp.status_code == 401
+
+
+async def test_payroll_paid_posts_salary_expense_and_cash(client, kernel_auth_header, principal):
+    payroll_run_id = str(uuid.uuid4())
+    resp = await client.post(
+        "/internal/webhooks/payroll-paid",
+        headers=kernel_auth_header,
+        json={
+            "org_id": principal.org_id,
+            "payload": {"payroll_run_id": payroll_run_id, "amount_cents": 250000, "currency": "USD"},
+        },
+    )
+    assert resp.status_code == 204
+
+    entries = await _journal_entries(client)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["source"] == "payroll"
+    assert entry["source_ref"] == payroll_run_id
+    assert entry["status"] == "posted"
+    assert entry["total_debit_cents"] == 250000
+    assert entry["total_credit_cents"] == 250000
+
+    salary_expense = await _account_id(client, "6000")
+    cash = await _account_id(client, "1010")
+    by_account = {line["account_id"]: line for line in entry["lines"]}
+    assert by_account[salary_expense]["debit_cents"] == 250000
+    assert by_account[cash]["credit_cents"] == 250000
+
+
+async def test_payroll_paid_is_idempotent_on_replay(client, kernel_auth_header, principal):
+    body = {
+        "org_id": principal.org_id,
+        "payload": {"payroll_run_id": str(uuid.uuid4()), "amount_cents": 1000, "currency": "USD"},
+    }
+    for _ in range(2):
+        resp = await client.post("/internal/webhooks/payroll-paid", headers=kernel_auth_header, json=body)
+        assert resp.status_code == 204
+
+    assert len(await _journal_entries(client)) == 1
+
+
+async def test_payroll_paid_skips_zero_amount(client, kernel_auth_header, principal):
+    """Every line in the run blocked/failed -- nothing was actually paid,
+    so there's nothing to post."""
+    resp = await client.post(
+        "/internal/webhooks/payroll-paid",
+        headers=kernel_auth_header,
+        json={"org_id": principal.org_id, "payload": {"payroll_run_id": str(uuid.uuid4()), "amount_cents": 0}},
+    )
+    assert resp.status_code == 204
+    assert await _journal_entries(client) == []
+
+
+async def test_payroll_paid_requires_kernel_token(client, principal):
+    resp = await client.post(
+        "/internal/webhooks/payroll-paid",
+        json={"org_id": principal.org_id, "payload": {"payroll_run_id": str(uuid.uuid4()), "amount_cents": 1000}},
+    )
+    assert resp.status_code == 401

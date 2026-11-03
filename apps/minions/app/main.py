@@ -10,6 +10,7 @@ from friday_common import (
     get_current_principal,
     get_integration_config,
     get_org_session,
+    publish_event,
     require_role,
     resource,
 )
@@ -465,7 +466,10 @@ async def refresh_payroll_run_status(
     """Polls Acyn Wallet for every line that's been sent but not yet
     confirmed -- identical shape to apps/web3's refresh_transaction_status.
     Once every line has reached a terminal state (blocked/confirmed/
-    failed), the run itself is marked paid."""
+    failed), the run itself is marked paid, which is also the moment
+    minions.payroll_run.paid fires -- Accounting's subscriber (see
+    kernel/internal/gateway/events.go) posts Dr Salary Expense / Cr Cash
+    for the lines that actually moved money."""
     run = await _get_owned_run(session, principal, run_id)
     provider = await _provider(principal)
     await session.refresh(run, attribute_names=["lines"])
@@ -483,12 +487,22 @@ async def refresh_payroll_run_status(
 
     await session.flush()
     await session.refresh(run, attribute_names=["lines"])
-    if all(l.status in ("blocked", "confirmed", "failed") for l in run.lines):
+    newly_paid = run.status != "paid" and all(l.status in ("blocked", "confirmed", "failed") for l in run.lines)
+    if newly_paid:
         run.status = "paid"
         run.updated_at = datetime.now(UTC)
 
     await session.commit()
     await session.refresh(run, attribute_names=["lines"])
+
+    if newly_paid:
+        paid_cents = sum(l.gross_amount_cents for l in run.lines if l.status == "confirmed")
+        if paid_cents > 0:
+            await publish_event(
+                "minions.payroll_run.paid",
+                principal.org_id,
+                {"payroll_run_id": str(run.id), "amount_cents": paid_cents, "currency": run.currency},
+            )
     return PayrollRunOut.from_model(run)
 
 

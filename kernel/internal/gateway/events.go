@@ -32,6 +32,7 @@ var subscriptions = []subscription{
 	{Event: "invoicing.pos_sale.recorded", App: "inventory", WebhookPath: "/internal/webhooks/pos-sale"},
 	{Event: "invoicing.invoice.paid", App: "accounting", WebhookPath: "/internal/webhooks/invoice-paid"},
 	{Event: "invoicing.pos_sale.recorded", App: "accounting", WebhookPath: "/internal/webhooks/pos-sale-cogs"},
+	{Event: "minions.payroll_run.paid", App: "accounting", WebhookPath: "/internal/webhooks/payroll-paid"},
 }
 
 // EventsHandler receives events apps publish (friday_common.events.publish_event)
