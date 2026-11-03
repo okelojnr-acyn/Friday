@@ -14,6 +14,7 @@ class Base(DeclarativeBase):
 INVOICE_STATUSES = ("draft", "sent", "paid", "void")
 PAYMENT_METHODS = ("cash", "card", "pos", "bank_transfer", "refund", "other")
 RECURRING_INTERVALS = ("", "weekly", "monthly", "yearly")
+POS_SHIFT_STATUSES = ("open", "closed")
 
 
 class Customer(Base):
@@ -122,3 +123,29 @@ class Payment(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
     invoice: Mapped["Invoice"] = relationship(back_populates="payments")
+
+
+class PosShift(Base):
+    """Cash-drawer reconciliation: a cashier opens a shift with a known
+    starting cash float, the register keeps selling, and closing the
+    shift compares the counted cash in the drawer against what cash
+    sales during the window say should be there. One open shift per
+    org at a time (see open_pos_shift's check) -- a second register
+    needing its own concurrent shift is a real gap this doesn't cover,
+    documented rather than silently wrong."""
+
+    __tablename__ = "pos_shifts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    opening_float_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Set only at close time: what the cashier actually counted, and
+    # what the ledger says should be there (opening float + cash
+    # payments recorded during the window). The difference between them
+    # is the over/under -- computed by the caller from these two
+    # fields, not stored as its own column.
+    closing_count_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    expected_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
