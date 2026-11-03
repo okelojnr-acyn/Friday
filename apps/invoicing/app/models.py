@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -24,6 +24,9 @@ class Customer(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False, default="")
     company: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Days after an invoice is created that it's due -- see create_invoice,
+    # which sets due_at from this at creation time (net-30 by default).
+    payment_terms_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -74,6 +77,11 @@ class InvoiceLine(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=1)
     unit_price_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Basis points (1/100 of a percent) so a line can carry its own tax
+    # rate instead of record_pos_sale's old single synthetic "Tax" line --
+    # also what lets Accounting's pos-sale-cogs webhook split revenue vs.
+    # tax correctly per line rather than per invoice.
+    tax_rate_bp: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Set when this line was rung up from the POS product catalog (see
     # pos_router.record_pos_sale) -- lets a later return
     # (pos_router.return_pos_sale) restock the right product. Plain
@@ -85,6 +93,10 @@ class InvoiceLine(Base):
     @property
     def total_cents(self) -> int:
         return int(self.quantity * self.unit_price_cents)
+
+    @property
+    def tax_cents(self) -> int:
+        return self.total_cents * self.tax_rate_bp // 10000
 
 
 class Payment(Base):
