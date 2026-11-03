@@ -105,6 +105,19 @@ class OnOffRampProvider(ABC):
     async def get_transfer_status(self, transfer_id: str) -> dict: ...
 
 
+class MarketDataProvider(ABC):
+    """Price/trending data for crypto assets (CoinGecko) -- the other
+    half of Web3 beyond a business wallet. Not every Web3 mini-app needs
+    a wallet provider at all; this one is read-only market data, no
+    custody, no API key required for the free tier."""
+
+    @abstractmethod
+    async def get_prices(self, coin_ids: list[str], vs_currency: str = "usd") -> dict: ...
+
+    @abstractmethod
+    async def get_trending(self) -> list[dict]: ...
+
+
 class BaaSProvider(ABC):
     """A managed backend-as-a-service (MongoDB Atlas, etc.) offering more
     than "just point DATABASE_URL at it" -- e.g. Atlas App Services

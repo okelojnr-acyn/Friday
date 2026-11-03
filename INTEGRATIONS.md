@@ -122,9 +122,32 @@ Every provider below is one of two things:
   services (App Services functions/triggers, Atlas Search) beyond "a
   database."
 
+## Market data
+
+### CoinGecko -- code-ready, no credential required
+
+- Adapter: `friday_common/integrations/coingecko.py` (`CoinGeckoProvider`,
+  implementing `MarketDataProvider`).
+- Config: entirely optional. `watchlist` (a list of CoinGecko coin ids)
+  defaults to `["bitcoin", "ethereum", "solana"]` if never set; `api_key`
+  switches to CoinGecko's paid Pro tier (higher rate limits) if a
+  deployment needs it.
+- Call site: `apps/web3/app/main.py`'s `/market/prices` and
+  `/market/trending` -- Web3's other mini-app alongside the Acyn
+  Wallet-backed Treasury one (`web/src/apps/web3/MarketPage.tsx`). Web3
+  isn't just a wallet; it's a small surface for Web3-shaped mini-apps,
+  and Market is the first one that isn't custody-related.
+- Editing the watchlist happens on the Market page itself, not Settings
+  > Integrations (the watchlist is a list, not a single string field,
+  so it doesn't fit that screen's generic text-input form — see
+  `IntegrationsSettingsPage.tsx`'s `ProviderCard` for why its save merges
+  into the existing config instead of replacing it: exactly so editing
+  an unrelated field there, like a Pro API key, can never clobber a
+  watchlist saved from the Market page).
+
 ## Web3
 
-### Acyn Wallet -- code-ready (the recommended path for Web3)
+### Acyn Wallet -- code-ready (the recommended path for the wallet mini-app)
 
 - Adapter: `friday_common/integrations/acyn_wallet.py`
   (`AcynWalletProvider`, implementing `WalletProvider`).

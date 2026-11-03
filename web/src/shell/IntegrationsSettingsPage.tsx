@@ -62,6 +62,20 @@ const PROVIDERS: ProviderDescriptor[] = [
     fields: [{ key: "api_key", label: "Partner API key", secret: true, placeholder: "pk_live_..." }],
   },
   {
+    key: "coingecko",
+    label: "CoinGecko",
+    icon: "trend-up",
+    category: "Market Data",
+    codeReady: true,
+    docAnchor: "coingecko",
+    // No required fields -- the free API needs no key at all, and the
+    // watchlist (a list, not a string) is edited from the Web3 app's
+    // Market page itself (MarketPage.tsx), not here, so this form never
+    // round-trips it through a plain text input and corrupts it into a
+    // string. Pro API key is the only thing this screen actually manages.
+    fields: [{ key: "api_key", label: "Pro API key (optional)", secret: true }],
+  },
+  {
     key: "calendly",
     label: "Calendly",
     icon: "calendar",
@@ -163,6 +177,12 @@ function ProviderCard({
 }) {
   const [editing, setEditing] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
+  // The full stored config, as-is -- a provider's config can hold keys
+  // this form never shows (CoinGecko's `watchlist` array is edited from
+  // apps/web3's Market page, not here). Saving merges `values` into this
+  // rather than replacing the whole config, so editing one field here
+  // never silently drops a key this screen doesn't know about.
+  const [rawConfig, setRawConfig] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -174,7 +194,8 @@ function ProviderCard({
     setLoading(true);
     try {
       const cred = await getIntegration(provider.key);
-      setValues(Object.fromEntries(Object.entries(cred.config).map(([k, v]) => [k, String(v ?? "")])));
+      setRawConfig(cred.config);
+      setValues(Object.fromEntries(provider.fields.map((f) => [f.key, String(cred.config[f.key] ?? "")])));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load config");
     } finally {
@@ -186,7 +207,7 @@ function ProviderCard({
     setSaving(true);
     setError(null);
     try {
-      await setIntegration(provider.key, values);
+      await setIntegration(provider.key, { ...rawConfig, ...values });
       setEditing(false);
       onChanged();
     } catch (err) {

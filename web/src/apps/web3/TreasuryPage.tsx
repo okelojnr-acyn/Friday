@@ -39,6 +39,7 @@ export function TreasuryPage() {
   const [network, setNetwork] = useState("");
   const [reason, setReason] = useState("");
   const [submittingPayout, setSubmittingPayout] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     getIntegration("acyn_wallet")
@@ -104,6 +105,14 @@ export function TreasuryPage() {
     }
   }
 
+  async function copyAddress(address: string) {
+    await navigator.clipboard.writeText(address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  const receiveAddress = wallets[0]?.address || "";
+
   return (
     <div className="page">
       <div className="page-header">
@@ -115,6 +124,9 @@ export function TreasuryPage() {
             </Link>
             <Link to="/web3/transaction" className="btn btn-sm btn-pill btn-secondary">
               Transactions
+            </Link>
+            <Link to="/web3/market" className="btn btn-sm btn-pill btn-secondary">
+              Market
             </Link>
           </nav>
         </div>
@@ -142,19 +154,50 @@ export function TreasuryPage() {
               {connecting ? "Connecting..." : "Connect"}
             </Button>
           </div>
+          <p className="field-label" style={{ marginTop: 10 }}>
+            Don't have a business account yet?{" "}
+            <a href="https://b2bwallet.acyninnovation.com" target="_blank" rel="noopener">
+              Create one at Acyn Wallet <Icon name="arrow-up-right" size={11} />
+            </a>
+          </p>
         </Card>
       ) : null}
 
       {connected ? (
         <>
+          {receiveAddress ? (
+            <Card style={{ marginBottom: 16 }}>
+              <div className="field-label" style={{ marginBottom: 8 }}>
+                <Icon name="arrow-up-right" size={13} /> Receive
+              </div>
+              <p className="field-label" style={{ marginBottom: 8 }}>
+                Share this address to get paid -- Acyn Wallet's deposit watcher credits it automatically, no action
+                needed here.
+              </p>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <Input value={receiveAddress} readOnly style={{ flex: 1, fontFamily: "monospace" }} />
+                <Button size="sm" variant="secondary" onClick={() => copyAddress(receiveAddress)}>
+                  {copied ? "Copied!" : "Copy"}
+                </Button>
+              </div>
+            </Card>
+          ) : null}
+
           <Card style={{ marginBottom: 16 }}>
             <div className="page-header" style={{ marginBottom: 10 }}>
               <div className="field-label">
                 <Icon name="wallet" size={13} /> Balances
               </div>
-              <Button size="sm" variant="secondary" onClick={doRefreshWallets} disabled={refreshing}>
-                {refreshing ? "Refreshing..." : "Refresh"}
-              </Button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <a href="https://b2bwallet.acyninnovation.com" target="_blank" rel="noopener">
+                  <Button size="sm" variant="ghost">
+                    Open Acyn Wallet <Icon name="arrow-up-right" size={11} />
+                  </Button>
+                </a>
+                <Button size="sm" variant="secondary" onClick={doRefreshWallets} disabled={refreshing}>
+                  {refreshing ? "Refreshing..." : "Refresh"}
+                </Button>
+              </div>
             </div>
             {wallets.length === 0 ? (
               <div className="empty-state">No cached balances yet -- hit Refresh to pull from Acyn Wallet.</div>

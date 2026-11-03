@@ -32,9 +32,13 @@ Five app areas on one kernel (`ARCHITECTURE.md` has the technical shape):
   checkout, per-line discounts, and returns -- reading and writing the
   same product catalog and invoice ledger the other apps use, not a
   separate system to reconcile.
-- **Web3** -- a business wallet (balances, payout requests, ISO
-  20022-shaped credit transfers) via Acyn Wallet, Friday's first-class
-  Web3 provider.
+- **Web3** -- not just a wallet: a small surface for Web3-shaped
+  mini-apps. Today that's a business wallet (balances, payout requests,
+  ISO 20022-shaped credit transfers) via Acyn Wallet, Friday's
+  first-class wallet provider, plus a Market mini-app (live prices,
+  trending coins via CoinGecko, no credential required). More mini-apps
+  belong here the same way -- anything Web3-shaped that doesn't need its
+  own top-level app area.
 
 These aren't five separate products bolted together: a CRM deal becoming
 an invoice, a POS sale decrementing stock, and an invoice's "pay with
@@ -71,17 +75,30 @@ interface per category, one settings screen), not any specific
 provider. A new provider request is "add one file following the
 pattern," not "redesign how integrations work."
 
-## Web3 as a first-class area, not a bolt-on
+## Web3 as a mini-apps surface, not a bolt-on wallet
 
 Small businesses increasingly want a business wallet, cross-border
-payouts, and eventually on/off-ramp -- without becoming a crypto company
-to get it. Friday's position: `apps/web3` is a real app area (not a demo)
-whose default path is **Acyn Wallet** -- a business creates an account
-there, gets verified, and connects it to Friday exactly like connecting
-Stripe. Acyn Wallet's own custody (Turnkey), on-chain reads (Alchemy),
-and settlement verification (Bridge) are already handled on that side,
-so a Friday deployment never needs to become its own custodian to offer
-this. Forks that want to run their own custody stack instead of going
+payouts, market awareness, and eventually on/off-ramp -- without
+becoming a crypto company to get any of it. Friday's position:
+`apps/web3` is a real app area (not a demo) built as a small set of
+Web3-shaped mini-apps, not a single wallet feature with a vendor name on
+it:
+
+- The **wallet** mini-app's default path is **Acyn Wallet** -- a
+  business creates an account there, gets verified, and connects it to
+  Friday exactly like connecting Stripe. Acyn Wallet's own custody
+  (Turnkey), on-chain reads (Alchemy), and settlement verification
+  (Bridge) are already handled on that side, so a Friday deployment
+  never needs to become its own custodian to offer this.
+- The **market** mini-app (CoinGecko) needs no account connection at
+  all -- live prices and trending coins work out of the box, the only
+  thing a Friday org can configure is which coins it watches.
+- Anything else Web3-shaped that doesn't warrant its own top-level app
+  area belongs here as another mini-app, following the same pattern:
+  one adapter in `friday_common/integrations`, one small panel in
+  `web/src/apps/web3`, documented in `INTEGRATIONS.md`.
+
+Forks that want to run their own custody stack instead of going
 through Acyn Wallet can -- the direct Alchemy/Turnkey/Bridge adapters
 exist as documented stubs for exactly that -- but it's not the path most
 businesses should need.
