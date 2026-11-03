@@ -100,6 +100,18 @@ async def test_create_invoice_with_lines_computes_total(client):
     assert body["balance_cents"] == 2500
 
 
+async def test_manual_invoice_line_discount_reduces_total(client):
+    resp = await client.post(
+        "/invoices",
+        json={"lines": [{"description": "Consulting", "quantity": 2, "unit_price_cents": 1000, "discount_bp": 2500}]},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    # 2 * 1000 * (1 - 0.25) = 1500
+    assert body["total_cents"] == 1500
+    assert body["lines"][0]["discount_bp"] == 2500
+
+
 async def test_invoice_number_is_unique_per_invoice(client):
     a = (await client.post("/invoices", json={"lines": [{"description": "x", "unit_price_cents": 100}]})).json()
     b = (await client.post("/invoices", json={"lines": [{"description": "y", "unit_price_cents": 100}]})).json()

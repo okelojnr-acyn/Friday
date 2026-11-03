@@ -33,6 +33,8 @@ class LineIn(BaseModel):
     quantity: Decimal = Decimal(1)
     unit_price_cents: int = 0
     tax_rate_bp: int = 0
+    discount_bp: int = 0
+    unit_cost_cents: int | None = None
     product_id: uuid.UUID | None = None
 
 
@@ -125,6 +127,8 @@ class InvoiceOut(BaseModel):
                     quantity=l.quantity,
                     unit_price_cents=l.unit_price_cents,
                     tax_rate_bp=l.tax_rate_bp,
+                    discount_bp=l.discount_bp,
+                    unit_cost_cents=l.unit_cost_cents,
                     product_id=l.product_id,
                     total_cents=l.total_cents,
                     tax_cents=l.tax_cents,
