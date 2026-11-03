@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +15,10 @@ class ProductCreate(BaseModel):
     on_hand_qty: int = 0
     reorder_point: int = 0
     track_inventory: bool = True
+    default_warehouse_id: uuid.UUID | None = None
+    uom_id: uuid.UUID | None = None
+    uom_conversion_factor: Decimal = Decimal(1)
+    valuation_method: str = "standard"
 
 
 class ProductUpdate(BaseModel):
@@ -25,6 +30,10 @@ class ProductUpdate(BaseModel):
     cost_cents: int | None = None
     reorder_point: int | None = None
     track_inventory: bool | None = None
+    default_warehouse_id: uuid.UUID | None = None
+    uom_id: uuid.UUID | None = None
+    uom_conversion_factor: Decimal | None = None
+    valuation_method: str | None = None
 
 
 class ProductOut(BaseModel):
@@ -39,8 +48,46 @@ class ProductOut(BaseModel):
     on_hand_qty: int
     reorder_point: int
     track_inventory: bool
+    default_warehouse_id: uuid.UUID | None
+    uom_id: uuid.UUID | None
+    uom_conversion_factor: Decimal
+    valuation_method: str
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class WarehouseCreate(BaseModel):
+    name: str = Field(min_length=1)
+    code: str = ""
+    address: str = ""
+    is_default: bool = False
+
+
+class WarehouseOut(BaseModel):
+    id: uuid.UUID
+    org_id: uuid.UUID
+    name: str
+    code: str
+    address: str
+    is_default: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class UnitOfMeasureCreate(BaseModel):
+    name: str = Field(min_length=1)
+    abbreviation: str = ""
+
+
+class UnitOfMeasureOut(BaseModel):
+    id: uuid.UUID
+    org_id: uuid.UUID
+    name: str
+    abbreviation: str
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -53,6 +100,7 @@ class StockAdjust(BaseModel):
     delta: int
     reason: str = "manual_adjustment"
     reference: str = ""
+    warehouse_id: uuid.UUID | None = None
 
 
 class StockMoveOut(BaseModel):
@@ -63,6 +111,7 @@ class StockMoveOut(BaseModel):
     qty_delta: int
     reason: str
     reference: str
+    warehouse_id: uuid.UUID | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

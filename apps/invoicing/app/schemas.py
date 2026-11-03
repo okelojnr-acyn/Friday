@@ -9,6 +9,7 @@ class CustomerCreate(BaseModel):
     name: str = Field(min_length=1)
     email: str = ""
     company: str = ""
+    payment_terms_days: int = 30
 
 
 class CustomerOut(BaseModel):
@@ -17,21 +18,30 @@ class CustomerOut(BaseModel):
     name: str
     email: str
     company: str
+    payment_terms_days: int
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class CustomerBulkCreate(BaseModel):
+    customers: list[CustomerCreate] = Field(min_length=1)
 
 
 class LineIn(BaseModel):
     description: str = Field(min_length=1)
     quantity: Decimal = Decimal(1)
     unit_price_cents: int = 0
+    tax_rate_bp: int = 0
+    discount_bp: int = 0
+    unit_cost_cents: int | None = None
     product_id: uuid.UUID | None = None
 
 
 class LineOut(LineIn):
     id: uuid.UUID
     total_cents: int
+    tax_cents: int
 
     model_config = {"from_attributes": True}
 
@@ -96,12 +106,15 @@ class InvoiceOut(BaseModel):
     currency: str
     source: str
     source_ref: str | None
+    due_at: datetime | None
     recurring_interval: str
     next_recurrence_at: datetime | None
     created_at: datetime
     updated_at: datetime
     lines: list[LineOut]
     payments: list[PaymentOut]
+    subtotal_cents: int
+    tax_cents: int
     total_cents: int
     paid_cents: int
     balance_cents: int
@@ -110,7 +123,9 @@ class InvoiceOut(BaseModel):
 
     @classmethod
     def from_model(cls, inv) -> "InvoiceOut":
-        total = sum(line.total_cents for line in inv.lines)
+        subtotal = sum(line.total_cents for line in inv.lines)
+        tax = sum(line.tax_cents for line in inv.lines)
+        total = subtotal + tax
         paid = sum(p.amount_cents for p in inv.payments)
         return cls(
             id=inv.id,
@@ -121,6 +136,7 @@ class InvoiceOut(BaseModel):
             currency=inv.currency,
             source=inv.source,
             source_ref=inv.source_ref,
+            due_at=inv.due_at,
             recurring_interval=inv.recurring_interval,
             next_recurrence_at=inv.next_recurrence_at,
             created_at=inv.created_at,
@@ -131,12 +147,18 @@ class InvoiceOut(BaseModel):
                     description=l.description,
                     quantity=l.quantity,
                     unit_price_cents=l.unit_price_cents,
+                    tax_rate_bp=l.tax_rate_bp,
+                    discount_bp=l.discount_bp,
+                    unit_cost_cents=l.unit_cost_cents,
                     product_id=l.product_id,
                     total_cents=l.total_cents,
+                    tax_cents=l.tax_cents,
                 )
                 for l in inv.lines
             ],
             payments=[PaymentOut.model_validate(p) for p in inv.payments],
+            subtotal_cents=subtotal,
+            tax_cents=tax,
             total_cents=total,
             paid_cents=paid,
             balance_cents=total - paid,

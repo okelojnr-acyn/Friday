@@ -21,11 +21,14 @@ from .models import (
     PRODUCT_KINDS,
     PURCHASE_ORDER_STATUSES,
     REASONS,
+    VALUATION_METHODS,
     Product,
     PurchaseOrder,
     PurchaseOrderLine,
     StockMove,
     Supplier,
+    UnitOfMeasure,
+    Warehouse,
 )
 from .schemas import (
     ProductBulkCreate,
@@ -39,6 +42,10 @@ from .schemas import (
     StockMoveOut,
     SupplierCreate,
     SupplierOut,
+    UnitOfMeasureCreate,
+    UnitOfMeasureOut,
+    WarehouseCreate,
+    WarehouseOut,
 )
 
 resource(
@@ -59,6 +66,50 @@ resource(
             FieldSpec("on_hand_qty", "On hand", "number", form_visible=False),
             FieldSpec("reorder_point", "Reorder at", "number"),
             FieldSpec("track_inventory", "Tracks stock", "boolean"),
+            FieldSpec(
+                "default_warehouse_id",
+                "Default warehouse",
+                "reference",
+                reference="inventory.warehouse",
+                list_visible=False,
+            ),
+            FieldSpec("uom_id", "Unit of measure", "reference", reference="inventory.unit_of_measure", list_visible=False),
+            FieldSpec("uom_conversion_factor", "UoM conversion factor", "number", list_visible=False),
+            FieldSpec("valuation_method", "Valuation method", "select", options=VALUATION_METHODS, list_visible=False),
+        ),
+    )
+)
+
+resource(
+    ResourceSpec(
+        name="warehouse",
+        app="inventory",
+        label="Warehouse",
+        label_plural="Warehouses",
+        views=("list", "form"),
+        search_fields=("name", "code"),
+        fields=(
+            FieldSpec("name", "Name", "text", required=True),
+            FieldSpec("code", "Code", "text"),
+            FieldSpec("address", "Address", "text"),
+            FieldSpec("is_default", "Default", "boolean"),
+            FieldSpec("created_at", "Added", "datetime", form_visible=False),
+        ),
+    )
+)
+
+resource(
+    ResourceSpec(
+        name="unit_of_measure",
+        app="inventory",
+        label="Unit of Measure",
+        label_plural="Units of Measure",
+        views=("list", "form"),
+        search_fields=("name", "abbreviation"),
+        fields=(
+            FieldSpec("name", "Name", "text", required=True),
+            FieldSpec("abbreviation", "Abbreviation", "text"),
+            FieldSpec("created_at", "Added", "datetime", form_visible=False),
         ),
     )
 )
@@ -122,6 +173,8 @@ products_router = APIRouter(prefix="/products", tags=["products"])
 moves_router = APIRouter(prefix="/stock_moves", tags=["stock-moves"])
 suppliers_router = APIRouter(prefix="/suppliers", tags=["suppliers"])
 purchase_orders_router = APIRouter(prefix="/purchase_orders", tags=["purchase-orders"])
+warehouses_router = APIRouter(prefix="/warehouses", tags=["warehouses"])
+uoms_router = APIRouter(prefix="/units_of_measure", tags=["units-of-measure"])
 webhooks_router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
 
 
@@ -148,6 +201,8 @@ def _product_fields(body: ProductCreate) -> dict:
     behavior to get right, it's enforced here."""
     if body.kind not in PRODUCT_KINDS:
         raise HTTPException(422, f"kind must be one of {PRODUCT_KINDS}")
+    if body.valuation_method not in VALUATION_METHODS:
+        raise HTTPException(422, f"valuation_method must be one of {VALUATION_METHODS}")
     data = body.model_dump()
     if body.kind == "service":
         data["track_inventory"] = False
@@ -173,6 +228,7 @@ async def create_product(
                 qty_delta=product.on_hand_qty,
                 reason="received",
                 reference="initial stock",
+                warehouse_id=product.default_warehouse_id,
                 created_at=now,
             )
         )
@@ -208,6 +264,8 @@ async def update_product(
     changes = body.model_dump(exclude_unset=True)
     if "kind" in changes and changes["kind"] not in PRODUCT_KINDS:
         raise HTTPException(422, f"kind must be one of {PRODUCT_KINDS}")
+    if "valuation_method" in changes and changes["valuation_method"] not in VALUATION_METHODS:
+        raise HTTPException(422, f"valuation_method must be one of {VALUATION_METHODS}")
     for field_name, value in changes.items():
         setattr(product, field_name, value)
     if product.kind == "service":
@@ -245,6 +303,7 @@ async def bulk_create_products(
                     qty_delta=product.on_hand_qty,
                     reason="received",
                     reference="bulk add",
+                    warehouse_id=product.default_warehouse_id,
                     created_at=now,
                 )
             )
@@ -277,6 +336,7 @@ async def adjust_stock(
             qty_delta=body.delta,
             reason=body.reason,
             reference=body.reference,
+            warehouse_id=body.warehouse_id or product.default_warehouse_id,
             created_at=now,
         )
     )
@@ -325,6 +385,7 @@ async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_sess
                 qty_delta=-qty,
                 reason="pos_sale",
                 reference=payload.get("invoice_number", ""),
+                warehouse_id=product.default_warehouse_id,
                 created_at=now,
             )
         )
@@ -452,6 +513,7 @@ async def set_purchase_order_status(
                     qty_delta=line.quantity,
                     reason="received",
                     reference=po.number,
+                    warehouse_id=product.default_warehouse_id,
                     created_at=po.updated_at,
                 )
             )
@@ -498,8 +560,56 @@ async def create_purchase_order_from_product(
     return PurchaseOrderOut.from_model(po)
 
 
+@warehouses_router.get("", response_model=list[WarehouseOut])
+async def list_warehouses(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(select(Warehouse).where(Warehouse.org_id == _org(principal)).order_by(Warehouse.name))
+    return rows.scalars().all()
+
+
+@warehouses_router.post("", response_model=WarehouseOut, status_code=201)
+async def create_warehouse(
+    body: WarehouseCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    warehouse = Warehouse(org_id=_org(principal), created_at=datetime.now(UTC), **body.model_dump())
+    session.add(warehouse)
+    await session.commit()
+    await session.refresh(warehouse)
+    return warehouse
+
+
+@uoms_router.get("", response_model=list[UnitOfMeasureOut])
+async def list_units_of_measure(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(
+        select(UnitOfMeasure).where(UnitOfMeasure.org_id == _org(principal)).order_by(UnitOfMeasure.name)
+    )
+    return rows.scalars().all()
+
+
+@uoms_router.post("", response_model=UnitOfMeasureOut, status_code=201)
+async def create_unit_of_measure(
+    body: UnitOfMeasureCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    uom = UnitOfMeasure(org_id=_org(principal), created_at=datetime.now(UTC), **body.model_dump())
+    session.add(uom)
+    await session.commit()
+    await session.refresh(uom)
+    return uom
+
+
 app.include_router(products_router)
 app.include_router(moves_router)
 app.include_router(suppliers_router)
 app.include_router(purchase_orders_router)
+app.include_router(warehouses_router)
+app.include_router(uoms_router)
 app.include_router(webhooks_router)

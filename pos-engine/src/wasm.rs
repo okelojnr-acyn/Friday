@@ -20,8 +20,19 @@ impl PosCart {
         PosCart { inner: Cart::with_tax_rate_bp(tax_rate_bp) }
     }
 
-    pub fn add_line(&mut self, description: String, quantity: f64, unit_price_cents: i64, product_id: Option<String>) {
-        self.inner.add_line(description, quantity, unit_price_cents, product_id);
+    pub fn add_line(
+        &mut self,
+        description: String,
+        quantity: f64,
+        unit_price_cents: i64,
+        product_id: Option<String>,
+        unit_cost_cents: Option<i64>,
+    ) {
+        self.inner.add_line(description, quantity, unit_price_cents, product_id, unit_cost_cents);
+    }
+
+    pub fn set_line_discount_bp(&mut self, index: usize, discount_bp: i64) -> bool {
+        self.inner.set_line_discount_bp(index, discount_bp)
     }
 
     pub fn remove_line(&mut self, index: usize) -> bool {

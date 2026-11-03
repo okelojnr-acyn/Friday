@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn enqueue_and_mark_synced() {
         let mut cart = Cart::new();
-        cart.add_line("Item".into(), 1.0, 500, None);
+        cart.add_line("Item".into(), 1.0, 500, None, None);
         let sale = Sale::from_cart(&cart, "USD", "cash", 1_700_000_000_000);
 
         let mut queue = OfflineQueue::new();

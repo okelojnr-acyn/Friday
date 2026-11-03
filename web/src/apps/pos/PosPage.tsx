@@ -14,6 +14,12 @@ interface CartLine {
   quantity: number;
   unit_price_cents: number;
   product_id: string | null;
+  discount_bp: number;
+  unit_cost_cents: number | null;
+}
+
+function lineTotalCents(line: CartLine): number {
+  return Math.round((line.quantity * line.unit_price_cents * (10_000 - line.discount_bp)) / 10_000);
 }
 
 interface PaymentEntry {
@@ -64,7 +70,6 @@ export function PosPage() {
   const [selected, setSelected] = useState<number | null>(null);
   const [mode, setMode] = useState<"qty" | "price" | "discount">("qty");
   const [buffer, setBuffer] = useState("");
-  const discountBaseCentsRef = useRef<number | null>(null);
   const [showReturns, setShowReturns] = useState(false);
   const [showSplit, setShowSplit] = useState(false);
   const [splitCashInput, setSplitCashInput] = useState("");
@@ -94,18 +99,28 @@ export function PosPage() {
     });
   }
 
-  /** pos-engine has no "update line" method -- it's append/remove/clear
-   * only (see pos-engine/src/wasm.rs). Editing a line's qty/price here
-   * rebuilds the cart from the edited line list so the Rust engine stays
-   * the single source of truth for totals/tax, instead of this component
-   * re-deriving money math in JS. */
+  /** pos-engine has no "update qty/price" method -- it's append/remove/
+   * clear only (see pos-engine/src/wasm.rs). Editing a line's qty/price
+   * here rebuilds the cart from the edited line list so the Rust engine
+   * stays the single source of truth for totals/tax, instead of this
+   * component re-deriving money math in JS. add_line always resets a
+   * line's discount to 0, so each line's existing discount_bp is
+   * reapplied via set_line_discount_bp afterward -- otherwise editing
+   * one line's quantity would silently wipe every other line's discount. */
   function rebuildCart(newLines: CartLine[]) {
     const cart = cartRef.current;
     if (!cart) return;
     cart.clear();
-    for (const l of newLines) {
-      cart.add_line(l.description, l.quantity, BigInt(l.unit_price_cents), l.product_id ?? undefined);
-    }
+    newLines.forEach((l, i) => {
+      cart.add_line(
+        l.description,
+        l.quantity,
+        BigInt(l.unit_price_cents),
+        l.product_id ?? undefined,
+        l.unit_cost_cents != null ? BigInt(l.unit_cost_cents) : undefined,
+      );
+      if (l.discount_bp) cart.set_line_discount_bp(i, BigInt(l.discount_bp));
+    });
     refreshCart();
   }
 
@@ -120,7 +135,7 @@ export function PosPage() {
     const cart = cartRef.current;
     const price = Math.round(Number.parseFloat(unitPrice || "0") * 100);
     if (!cart || !description.trim() || !Number.isFinite(price)) return;
-    cart.add_line(description.trim(), 1, BigInt(price), undefined);
+    cart.add_line(description.trim(), 1, BigInt(price), undefined, undefined);
     setDescription("");
     setUnitPrice("");
     refreshCart();
@@ -132,7 +147,13 @@ export function PosPage() {
   function addFromCatalog(product: Product) {
     const cart = cartRef.current;
     if (!cart) return;
-    cart.add_line(product.name, 1, BigInt(product.price_cents), product.id);
+    cart.add_line(
+      product.name,
+      1,
+      BigInt(product.price_cents),
+      product.id,
+      product.cost_cents ? BigInt(product.cost_cents) : undefined,
+    );
     setSearch("");
     refreshCart();
     setSelected(lines.length);
@@ -143,7 +164,6 @@ export function PosPage() {
   function selectLine(i: number) {
     setSelected(i);
     setBuffer("");
-    if (mode === "discount") discountBaseCentsRef.current = lines[i].unit_price_cents;
   }
 
   function removeSelected() {
@@ -159,19 +179,24 @@ export function PosPage() {
     if (selected === null) return;
     const parsed = next === "" || next === "." ? 0 : Number.parseFloat(next);
     const value = Number.isFinite(parsed) ? parsed : 0;
+
+    if (mode === "discount") {
+      // The buffer is a percent-off, set directly on the line via the
+      // engine (pos-engine/src/cart.rs's set_line_discount_bp) -- the
+      // line's own unit_price_cents is never touched, so this can never
+      // compound against an already-discounted price the way the old
+      // mutate-unit_price_cents approach could.
+      const pct = Math.min(Math.max(value, 0), 100);
+      const bp = next === "" ? 0 : Math.round(pct * 100);
+      cartRef.current?.set_line_discount_bp(selected, BigInt(bp));
+      refreshCart();
+      return;
+    }
+
     const newLines = lines.map((l, i) => {
       if (i !== selected) return l;
       if (mode === "qty") return { ...l, quantity: next === "" ? l.quantity : value };
-      if (mode === "price") {
-        return { ...l, unit_price_cents: next === "" ? l.unit_price_cents : Math.round(value * 100) };
-      }
-      // "discount": the buffer is a percent-off, applied against the
-      // price captured when discount mode was entered (discountBaseCentsRef)
-      // -- not the line's current price, or repeated digit presses would
-      // compound the discount against its own already-discounted result.
-      const base = discountBaseCentsRef.current ?? l.unit_price_cents;
-      const pct = Math.min(Math.max(value, 0), 100);
-      return { ...l, unit_price_cents: next === "" ? base : Math.round(base * (1 - pct / 100)) };
+      return { ...l, unit_price_cents: next === "" ? l.unit_price_cents : Math.round(value * 100) };
     });
     rebuildCart(newLines);
   }
@@ -315,12 +340,13 @@ export function PosPage() {
               >
                 <div className="pos-line-main">
                   <span className="pos-line-desc">{line.description}</span>
-                  <span className="pos-line-amount">
-                    ${((line.quantity * line.unit_price_cents) / 100).toFixed(2)}
-                  </span>
+                  <span className="pos-line-amount">${(lineTotalCents(line) / 100).toFixed(2)}</span>
                 </div>
                 <div className="pos-line-sub">
                   {line.quantity} × ${(line.unit_price_cents / 100).toFixed(2)}
+                  {line.discount_bp > 0 ? (
+                    <Badge tone="accent">{`-${(line.discount_bp / 100).toFixed(0)}%`}</Badge>
+                  ) : null}
                   {line.product_id ? <Icon name="box" size={11} /> : null}
                 </div>
               </div>
@@ -484,7 +510,6 @@ export function PosPage() {
               size="sm"
               variant={mode === "discount" ? "primary" : "secondary"}
               onClick={() => {
-                if (selected !== null) discountBaseCentsRef.current = lines[selected].unit_price_cents;
                 setMode("discount");
                 setBuffer("");
               }}

@@ -25,6 +25,7 @@ from friday_common.integrations import StripeProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .events import invoice_lines_payload, publish_invoice_paid
 from .models import Customer, Invoice, InvoiceLine, Payment
 
 router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
@@ -142,9 +143,13 @@ async def stripe_webhook(request: Request, session: AsyncSession = Depends(get_s
     await session.flush()
     await session.refresh(inv, attribute_names=["payments"])
     paid = sum(p.amount_cents for p in inv.payments)
+    newly_paid = paid >= total and inv.status not in ("paid", "void")
     if paid >= total and inv.status != "void":
         inv.status = "paid"
         inv.updated_at = now
 
     await session.commit()
+    if newly_paid:
+        await session.refresh(inv, attribute_names=["lines", "payments"])
+        await publish_invoice_paid(org_id, inv, paid, invoice_lines_payload(inv))
     return {"ok": True}
