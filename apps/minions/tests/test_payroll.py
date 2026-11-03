@@ -248,3 +248,37 @@ async def test_refresh_status_does_not_publish_when_nothing_was_actually_paid(cl
     assert resp.status_code == 200
     assert resp.json()["status"] == "paid"
     assert captured == {}
+
+
+async def test_my_payroll_shows_only_the_callers_own_lines(client, as_principal, principal):
+    admin = _as_admin(as_principal, principal)
+    jane = await _employee_with_wallet(client, as_principal, principal, admin, email="jane@example.com", wallet="0xjane")
+    bob = await _employee_with_wallet(client, as_principal, principal, admin, email="bob@example.com", wallet="0xbob")
+
+    await client.post(
+        "/payroll_runs",
+        json={
+            "period_start": "2026-01-01T00:00:00Z",
+            "period_end": "2026-01-31T00:00:00Z",
+            "employee_ids": [jane["id"], bob["id"]],
+        },
+    )
+
+    as_principal(make_principal(org_id=principal.org_id, email="jane@example.com"))
+    resp = await client.get("/me/payroll")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["gross_amount_cents"] == 300000
+    assert body[0]["run_status"] == "draft"
+    assert body[0]["line_status"] == "pending"
+
+
+async def test_my_payroll_is_empty_for_an_employee_with_no_runs(client, as_principal, principal):
+    admin = _as_admin(as_principal, principal)
+    await _employee_with_wallet(client, as_principal, principal, admin)
+
+    as_principal(make_principal(org_id=principal.org_id, email="jane@example.com"))
+    resp = await client.get("/me/payroll")
+    assert resp.status_code == 200
+    assert resp.json() == []
