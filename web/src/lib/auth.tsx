@@ -51,6 +51,11 @@ interface AuthContextValue {
   /** Completes either flow: a pending signup, or a fallback login --
    * the server figures out which, the caller doesn't need to track it. */
   verifyCode: (email: string, code: string) => Promise<void>;
+  /** Completes an invite someone else sent via Settings > Members --
+   * joins their org with the role they were invited at, rather than
+   * creating a brand new org (see kernel/internal/auth/invites.go's
+   * AcceptInvite). */
+  acceptInvite: (email: string, code: string, fullName: string) => Promise<void>;
   /** Usernameless passkey login -- the browser's own passkey picker
    * decides which account, no email prompt at all. */
   loginWithPasskey: () => Promise<void>;
@@ -108,6 +113,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applyAuthResponse],
   );
 
+  const acceptInvite = useCallback(
+    async (email: string, code: string, fullName: string) => {
+      const resp = await kernelPost<AuthResponse>("/auth/invites/accept", { email, code, full_name: fullName });
+      applyAuthResponse(resp);
+    },
+    [applyAuthResponse],
+  );
+
   const loginWithPasskey = useCallback(async () => {
     const { session_id, publicKey } = await kernelPost<{
       session_id: string;
@@ -142,8 +155,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ session, ready, startSignup, requestLoginCode, verifyCode, loginWithPasskey, addPasskey, logout }),
-    [session, ready, startSignup, requestLoginCode, verifyCode, loginWithPasskey, addPasskey, logout],
+    () => ({
+      session,
+      ready,
+      startSignup,
+      requestLoginCode,
+      verifyCode,
+      acceptInvite,
+      loginWithPasskey,
+      addPasskey,
+      logout,
+    }),
+    [session, ready, startSignup, requestLoginCode, verifyCode, acceptInvite, loginWithPasskey, addPasskey, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

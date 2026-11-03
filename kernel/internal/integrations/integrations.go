@@ -51,7 +51,12 @@ func (h *Handlers) List(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var out []credentialView
+	// []credentialView{}, not var out []credentialView -- a nil slice
+	// encodes as JSON `null`, which crashed the frontend's `rows.map`
+	// for every org with zero integrations connected (i.e. every fresh
+	// org) until this was caught by live-testing the just-added Members
+	// page right after creating a brand new test org.
+	out := []credentialView{}
 	for rows.Next() {
 		var v credentialView
 		if err := rows.Scan(&v.Provider); err != nil {

@@ -118,7 +118,8 @@ export function LoginPage() {
         )}
 
         <p className="field-label" style={{ marginTop: 16 }}>
-          New here? <Link to="/register">Create an organization</Link>
+          New here? <Link to="/register">Create an organization</Link> or{" "}
+          <Link to="/join">join with an invite</Link>
         </p>
       </Card>
     </div>

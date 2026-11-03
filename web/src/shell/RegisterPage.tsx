@@ -124,6 +124,8 @@ export function RegisterPage() {
 
         <p className="field-label" style={{ marginTop: 16 }}>
           Already have an account? <Link to="/login">Log in</Link>
+          <br />
+          Have an invite code? <Link to="/join">Join with an invite</Link>
         </p>
       </Card>
     </div>
