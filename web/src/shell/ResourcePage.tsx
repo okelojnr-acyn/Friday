@@ -10,6 +10,7 @@ import { ListView } from "../ui/resource/ListView";
 import { KanbanView } from "../ui/resource/KanbanView";
 import { FormView } from "../ui/resource/FormView";
 import { CUSTOM_CREATE_SCREENS } from "./customCreateScreens";
+import { BulkAddProductsPanel } from "../apps/inventory/BulkAddProductsPanel";
 
 export function ResourcePage() {
   const { app = "", resource = "" } = useParams();
@@ -19,6 +20,7 @@ export function ResourcePage() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewKind | null>(null);
   const [editing, setEditing] = useState<RecordRow | "new" | null>(null);
+  const [bulkAdding, setBulkAdding] = useState(false);
 
   useEffect(() => {
     setSchema(null);
@@ -92,6 +94,10 @@ export function ResourcePage() {
     });
   }
 
+  function handleBulkSaved(saved: RecordRow[]) {
+    setRecords((cur) => [...saved, ...(cur ?? [])]);
+  }
+
   return (
     <div className="page">
       <div className="page-header">
@@ -131,6 +137,11 @@ export function ResourcePage() {
                 </Button>
               ))
             : null}
+          {app === "inventory" && resource === "product" ? (
+            <Button variant="secondary" size="sm" className="btn-pill" onClick={() => setBulkAdding(true)}>
+              <Icon name="barcode" size={14} /> Bulk add
+            </Button>
+          ) : null}
           <Button variant="primary" size="sm" className="btn-pill" onClick={() => setEditing("new")}>
             <Icon name="plus" size={14} /> New
           </Button>
@@ -161,6 +172,10 @@ export function ResourcePage() {
           onClose={() => setEditing(null)}
           onSaved={handleSaved}
         />
+      ) : null}
+
+      {bulkAdding ? (
+        <BulkAddProductsPanel onClose={() => setBulkAdding(false)} onSaved={handleBulkSaved} />
       ) : null}
     </div>
   );

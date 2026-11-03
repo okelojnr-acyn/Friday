@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 class ProductCreate(BaseModel):
     name: str = Field(min_length=1)
+    kind: str = "product"
     sku: str = ""
     barcode: str = ""
     price_cents: int = 0
@@ -17,6 +18,7 @@ class ProductCreate(BaseModel):
 
 class ProductUpdate(BaseModel):
     name: str | None = None
+    kind: str | None = None
     sku: str | None = None
     barcode: str | None = None
     price_cents: int | None = None
@@ -29,6 +31,7 @@ class ProductOut(BaseModel):
     id: uuid.UUID
     org_id: uuid.UUID
     name: str
+    kind: str
     sku: str
     barcode: str
     price_cents: int
@@ -40,6 +43,10 @@ class ProductOut(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ProductBulkCreate(BaseModel):
+    products: list[ProductCreate] = Field(min_length=1)
 
 
 class StockAdjust(BaseModel):

@@ -10,12 +10,21 @@ class Base(DeclarativeBase):
     pass
 
 
+PRODUCT_KINDS = ("product", "service")
+
+
 class Product(Base):
     __tablename__ = "products"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    # "service" (consulting hour, labor, a booking) vs "product" (a
+    # physical good with stock). Not just a UI label -- create_product and
+    # update_product force track_inventory=False whenever kind="service",
+    # so a service never silently starts decrementing a stock count that
+    # was never meaningful for it in the first place.
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="product")
     sku: Mapped[str] = mapped_column(Text, nullable=False, default="")
     barcode: Mapped[str] = mapped_column(Text, nullable=False, default="")
     price_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
