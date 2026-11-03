@@ -104,3 +104,23 @@ None of this requires forking the kernel, the design system, or the
 schema-driven UI contract -- that's the point of the architecture in
 `ARCHITECTURE.md`: the parts that make Friday "Friday" stay fixed, and an
 industry fork is additive configuration, theming, and resources on top.
+
+This table is also what `INSTALL.md`'s Step 2 points at when installing
+Friday as the admin layer of an *existing* site, not just a fresh fork --
+same question either way: what does this business actually do, and
+which apps earn a place because of it.
+
+## Before this goes live for real customers
+
+Two things this doc intentionally doesn't cover, because they're
+specific to each deployment rather than generic to "building an
+industry site":
+
+- **Legal documents** -- `legal/` has Privacy Policy, Terms of Service,
+  and Cookie Policy templates. They are templates, not finished
+  documents; read `legal/README.md` before using any of them.
+- **Security configuration specific to this deployment** --
+  `SECURITY.md` covers what Friday does by default; `INSTALL.md`'s
+  Step 7 covers the handful of things that are this deployment's own
+  decision (real secrets, proxy trust, cookie disclosure if you added
+  any).

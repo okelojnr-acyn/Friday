@@ -16,8 +16,15 @@ import (
 	"github.com/acyn-innovation/friday/kernel/internal/integrations"
 	"github.com/acyn-innovation/friday/kernel/internal/mail"
 	"github.com/acyn-innovation/friday/kernel/internal/org"
+	"github.com/acyn-innovation/friday/kernel/internal/ratelimit"
 	"github.com/acyn-innovation/friday/kernel/internal/registry"
 )
+
+// maxRequestBodyBytes caps every request body the kernel itself reads
+// (auth payloads, integration config, catalog toggles -- all genuinely
+// small). Deliberately generous enough to never matter for real traffic
+// while still bounding a maliciously huge body: 1 MiB.
+const maxRequestBodyBytes = 1 << 20
 
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -54,6 +61,16 @@ func main() {
 		log.Fatalf("seed apps: %v", err)
 	}
 
+	// Two tiers: a tight quota on auth-sensitive routes specifically
+	// (brute-forcing an OTP or spamming a login attempt is the thing
+	// that actually matters to stop hard), and a looser one across
+	// everything the kernel serves itself as basic abuse/DoS protection.
+	// Neither covers /api/{app}/* -- each app service is free to set
+	// its own limits appropriate to its own workload (e.g. a bulk
+	// import legitimately posts more often than a login attempt should).
+	authLimiter := ratelimit.New(10, time.Minute)
+	generalLimiter := ratelimit.New(120, time.Minute)
+
 	issuer := auth.NewIssuer(jwtSecret, 24*time.Hour)
 	webAuthn, err := auth.NewWebAuthn(webauthnRPID, webauthnRPName, []string{corsOrigin})
 	if err != nil {
@@ -70,19 +87,29 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// withBody+authLimited: every auth POST goes through both a tight
+	// per-IP quota and the request-body size cap -- these bodies are
+	// always tiny (an email, a code, a WebAuthn response), so there's
+	// no legitimate reason for a huge one.
+	authLimited := func(h http.HandlerFunc) http.Handler {
+		return authLimiter.Middleware("auth", withMaxBodySize(http.HandlerFunc(h)))
+	}
+
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok","service":"kernel"}`))
 	})
 
 	// Passwordless throughout: a passkey ceremony or an emailed one-time
 	// code, matching Acyn Wallet's auth model. See internal/auth/handlers.go.
-	mux.HandleFunc("POST /auth/register", authHandlers.Register)
-	mux.HandleFunc("POST /auth/otp/request", authHandlers.OtpRequest)
-	mux.HandleFunc("POST /auth/otp/verify", authHandlers.OtpVerify)
-	mux.HandleFunc("POST /auth/passkey/login-options", authHandlers.PasskeyLoginOptions)
-	mux.HandleFunc("POST /auth/passkey/login-verify", authHandlers.PasskeyLoginVerify)
-	mux.Handle("POST /auth/passkey/register-options", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterOptions)))
-	mux.Handle("POST /auth/passkey/register-verify", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterVerify)))
+	mux.Handle("POST /auth/register", authLimited(authHandlers.Register))
+	mux.Handle("POST /auth/otp/request", authLimited(authHandlers.OtpRequest))
+	mux.Handle("POST /auth/otp/verify", authLimited(authHandlers.OtpVerify))
+	mux.Handle("POST /auth/passkey/login-options", authLimited(authHandlers.PasskeyLoginOptions))
+	mux.Handle("POST /auth/passkey/login-verify", authLimited(authHandlers.PasskeyLoginVerify))
+	mux.Handle("POST /auth/passkey/register-options",
+		authLimiter.Middleware("auth", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterOptions))))
+	mux.Handle("POST /auth/passkey/register-verify",
+		authLimiter.Middleware("auth", withMaxBodySize(requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterVerify)))))
 	mux.Handle("GET /auth/me", requireAuth(http.HandlerFunc(authHandlers.Me)))
 
 	mux.Handle("GET /orgs/apps", requireAuth(http.HandlerFunc(catalog.List)))
@@ -92,7 +119,7 @@ func main() {
 	integrationHandlers := &integrations.Handlers{Pool: pool, InternalToken: eventsToken}
 	mux.Handle("GET /orgs/integrations", requireAuth(http.HandlerFunc(integrationHandlers.List)))
 	mux.Handle("GET /orgs/integrations/{provider}", requireAuth(http.HandlerFunc(integrationHandlers.Get)))
-	mux.Handle("PUT /orgs/integrations/{provider}", requireAuth(http.HandlerFunc(integrationHandlers.Set)))
+	mux.Handle("PUT /orgs/integrations/{provider}", withMaxBodySize(requireAuth(http.HandlerFunc(integrationHandlers.Set))))
 	mux.Handle("DELETE /orgs/integrations/{provider}", requireAuth(http.HandlerFunc(integrationHandlers.Delete)))
 	mux.HandleFunc("GET /internal/integrations/{org_id}/{provider}", integrationHandlers.GetInternal)
 
@@ -107,12 +134,47 @@ func main() {
 		log.Printf("routing /api/%s/* -> %s", app.Name, app.BaseURL)
 	}
 
-	handler := withCORS(corsOrigin, mux)
+	// Outermost to innermost: CORS first (so a preflight OPTIONS short-
+	// circuits before spending a rate-limit token or growing a header
+	// set it'll never see past), then security headers on every
+	// response, then the general per-IP quota across everything the
+	// kernel serves -- /api/{app}/* included, since a proxied request
+	// still arrived at this process and is worth bounding too, even
+	// though its own tighter auth-specific limiting lives on the
+	// individual routes above instead.
+	handler := withCORS(corsOrigin, withSecurityHeaders(generalLimiter.Middleware("general", mux)))
 
 	log.Printf("kernel listening on %s", addr)
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// withMaxBodySize caps a request body the kernel itself will read
+// (every kernel-served route's payload is small -- an email, a code, a
+// WebAuthn response, a provider config blob). Not applied to the
+// /api/{app}/* proxy -- each app service sets its own limits
+// appropriate to its own workload (e.g. a bulk import).
+func withMaxBodySize(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// withSecurityHeaders sets the handful of response headers that cost
+// nothing and close off a real (if narrow) class of browser-side
+// attacks: MIME-sniffing a response into executing as something it
+// isn't, framing the app in a clickjacking overlay, and leaking the
+// full referrer URL (which can carry a session-bearing path) to a
+// third-party site a link points to.
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // withCORS handles preflight for every route (proxied routes are

@@ -37,8 +37,8 @@ type webauthnUser struct {
 	credentials []webauthn.Credential
 }
 
-func (u *webauthnUser) WebAuthnID() []byte                        { return []byte(u.id) }
-func (u *webauthnUser) WebAuthnName() string                      { return u.email }
+func (u *webauthnUser) WebAuthnID() []byte                         { return []byte(u.id) }
+func (u *webauthnUser) WebAuthnName() string                       { return u.email }
 func (u *webauthnUser) WebAuthnDisplayName() string                { return u.fullName }
 func (u *webauthnUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
 

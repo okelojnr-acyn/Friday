@@ -87,8 +87,11 @@ and a registry entry) — see `CONTRIBUTING.md`.
 
 ## Contributing
 
-See `CONTRIBUTING.md` for the full workflow, `SECURITY.md` to report a
-vulnerability, and `CODE_OF_CONDUCT.md` for community expectations.
+See `CONTRIBUTING.md` for the full workflow, `SECURITY.md` for this
+project's security baseline (and how to report a vulnerability),
+`legal/` for Privacy Policy/Terms/Cookie Policy templates a real
+deployment needs to fill in and have reviewed, and `CODE_OF_CONDUCT.md`
+for community expectations.
 
 ## License
 

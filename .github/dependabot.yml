@@ -1,0 +1,54 @@
+version: 2
+updates:
+  # kernel (Go)
+  - package-ecosystem: "gomod"
+    directory: "/kernel"
+    schedule:
+      interval: "weekly"
+
+  # web (npm)
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+
+  # pos-engine (Rust)
+  - package-ecosystem: "cargo"
+    directory: "/pos-engine"
+    schedule:
+      interval: "weekly"
+
+  # shared Python package every app depends on
+  - package-ecosystem: "pip"
+    directory: "/packages/py-common"
+    schedule:
+      interval: "weekly"
+
+  # one entry per app (pip doesn't recurse across the requirements.txt
+  # files scattered under apps/*, so each gets its own)
+  - package-ecosystem: "pip"
+    directory: "/apps/crm"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/apps/invoicing"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/apps/projects"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/apps/inventory"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/apps/web3"
+    schedule:
+      interval: "weekly"
+
+  # the workflow files themselves
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
