@@ -33,6 +33,7 @@ from .schemas import (
     JournalEntryOut,
     JournalEntryStatusUpdate,
 )
+from .reports import ledger_router, reports_router
 from .webhooks import webhooks_router
 
 resource(
@@ -359,4 +360,6 @@ app.include_router(journal_router)
 app.include_router(fiscal_periods_router)
 app.include_router(bank_accounts_router)
 app.include_router(bank_transactions_router)
+app.include_router(reports_router)
+app.include_router(ledger_router)
 app.include_router(webhooks_router)

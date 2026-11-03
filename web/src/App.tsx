@@ -12,6 +12,7 @@ import { ResourcePage, AppIndexRedirect } from "./shell/ResourcePage";
 import { PosPage } from "./apps/pos/PosPage";
 import { TreasuryPage } from "./apps/web3/TreasuryPage";
 import { MarketPage } from "./apps/web3/MarketPage";
+import { ReportsPage } from "./apps/accounting/ReportsPage";
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/settings/members" element={<MembersSettingsPage />} />
           <Route path="/pos" element={<PosPage />} />
           <Route path="/web3/treasury" element={<TreasuryPage />} />
+          <Route path="/accounting/reports" element={<ReportsPage />} />
           <Route path="/web3/market" element={<MarketPage />} />
           <Route path="/:app" element={<AppIndexRedirect />} />
           <Route path="/:app/:resource" element={<ResourcePage />} />
