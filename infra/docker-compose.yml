@@ -50,6 +50,7 @@ services:
       APP_WEB3_URL: http://web3:8005
       APP_ACCOUNTING_URL: http://accounting:8006
       APP_MINIONS_URL: http://minions:8007
+      APP_FLEETS_URL: http://fleets:8008
     ports:
       - "8080:8080"
     depends_on:
@@ -213,6 +214,29 @@ services:
       CORS_ORIGINS: '["http://localhost:5173"]'
     ports:
       - "8007:8007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  fleets:
+    image: python:3.12-slim
+    working_dir: /src
+    volumes:
+      - ..:/src
+    command: >
+      sh -c "pip install -q -r apps/fleets/requirements.txt -r apps/fleets/requirements-dev.txt &&
+             python -m friday_common.migrate apps/fleets fleets &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8008 --app-dir apps/fleets"
+    environment:
+      SERVICE_NAME: friday-fleets
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
+      DB_SCHEMA: fleets
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      KERNEL_INTERNAL_URL: http://kernel:8080/internal
+      KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
+      CORS_ORIGINS: '["http://localhost:5173"]'
+    ports:
+      - "8008:8008"
     depends_on:
       postgres:
         condition: service_healthy
