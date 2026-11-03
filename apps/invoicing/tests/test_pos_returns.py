@@ -74,7 +74,36 @@ async def test_return_pos_sale_restocks_via_existing_inventory_webhook(client, m
     assert len(captured) == 1
     event_type, payload = captured[0]
     assert event_type == "invoicing.pos_sale.recorded"
-    assert payload["lines"] == [{"product_id": product_id, "quantity": -3.0}]
+    assert payload["lines"] == [{"product_id": product_id, "quantity": -3.0, "unit_cost_cents": None}]
+
+
+async def test_return_pos_sale_carries_discount_and_cost_through_to_refund_line(client):
+    product_id = str(uuid.uuid4())
+    sale = (
+        await client.post(
+            "/pos/sales",
+            json={
+                "lines": [
+                    {
+                        "description": "Widget",
+                        "quantity": 1,
+                        "unit_price_cents": 1000,
+                        "discount_bp": 1000,
+                        "unit_cost_cents": 400,
+                        "product_id": product_id,
+                    }
+                ],
+                "amount_cents": 900,
+            },
+        )
+    ).json()
+
+    resp = await client.post(f"/pos/sales/{sale['number']}/return")
+    assert resp.status_code == 201
+    refund_line = resp.json()["lines"][0]
+    assert refund_line["discount_bp"] == 1000
+    assert refund_line["unit_cost_cents"] == 400
+    assert refund_line["total_cents"] == -900  # 1000 * (1 - 0.10), negated
 
 
 async def test_cannot_return_an_already_voided_sale(client):

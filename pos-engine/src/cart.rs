@@ -13,11 +13,28 @@ pub struct LineItem {
     /// keeps old queued JSON without this field deserializable.
     #[serde(default)]
     pub product_id: Option<String>,
+    /// Basis points, e.g. 1000 = 10% off -- set via Cart::set_line_discount_bp,
+    /// never through add_line, so editing one line's discount can never
+    /// disturb another line's price. Replaces an earlier approach that
+    /// baked the discount directly into unit_price_cents client-side,
+    /// which lost the original price and couldn't be reported on.
+    #[serde(default)]
+    pub discount_bp: i64,
+    /// The product's cost basis at sale time, when known (rung up from
+    /// the catalog) -- None for freeform/ad-hoc lines. Carried through
+    /// unchanged to invoicing.pos_sale.recorded / invoicing.invoice.paid
+    /// so Accounting's COGS webhook has something to post against,
+    /// without Accounting ever querying Inventory directly (apps never
+    /// call each other outside the kernel event bus).
+    #[serde(default)]
+    pub unit_cost_cents: Option<i64>,
 }
 
 impl LineItem {
     pub fn total_cents(&self) -> i64 {
-        (self.quantity * self.unit_price_cents as f64).round() as i64
+        let gross = self.quantity * self.unit_price_cents as f64;
+        let discounted = gross * (10_000 - self.discount_bp) as f64 / 10_000.0;
+        discounted.round() as i64
     }
 }
 
@@ -41,8 +58,35 @@ impl Cart {
         Self { lines: Vec::new(), tax_rate_bp }
     }
 
-    pub fn add_line(&mut self, description: String, quantity: f64, unit_price_cents: i64, product_id: Option<String>) {
-        self.lines.push(LineItem { description, quantity, unit_price_cents, product_id });
+    pub fn add_line(
+        &mut self,
+        description: String,
+        quantity: f64,
+        unit_price_cents: i64,
+        product_id: Option<String>,
+        unit_cost_cents: Option<i64>,
+    ) {
+        self.lines.push(LineItem {
+            description,
+            quantity,
+            unit_price_cents,
+            product_id,
+            discount_bp: 0,
+            unit_cost_cents,
+        });
+    }
+
+    /// The only way a line's discount changes -- clamped to [0, 10000]
+    /// (0% to 100% off) so a typo can't produce a negative total_cents.
+    /// Returns false if `index` is out of range (mirrors remove_line).
+    pub fn set_line_discount_bp(&mut self, index: usize, discount_bp: i64) -> bool {
+        match self.lines.get_mut(index) {
+            Some(line) => {
+                line.discount_bp = discount_bp.clamp(0, 10_000);
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn remove_line(&mut self, index: usize) -> bool {
@@ -91,8 +135,8 @@ mod tests {
     #[test]
     fn totals_with_tax() {
         let mut cart = Cart::with_tax_rate_bp(800); // 8%
-        cart.add_line("Coffee".into(), 2.0, 350, None); // 700
-        cart.add_line("Pastry".into(), 1.0, 450, None); // 450
+        cart.add_line("Coffee".into(), 2.0, 350, None, None); // 700
+        cart.add_line("Pastry".into(), 1.0, 450, None, None); // 450
         assert_eq!(cart.subtotal_cents(), 1150);
         assert_eq!(cart.tax_cents(), 92); // 1150 * 0.08 = 92
         assert_eq!(cart.total_cents(), 1242);
@@ -101,8 +145,8 @@ mod tests {
     #[test]
     fn remove_line_by_index() {
         let mut cart = Cart::new();
-        cart.add_line("A".into(), 1.0, 100, None);
-        cart.add_line("B".into(), 1.0, 200, None);
+        cart.add_line("A".into(), 1.0, 100, None, None);
+        cart.add_line("B".into(), 1.0, 200, None, None);
         assert!(cart.remove_line(0));
         assert_eq!(cart.lines.len(), 1);
         assert_eq!(cart.lines[0].description, "B");
@@ -112,8 +156,70 @@ mod tests {
     #[test]
     fn fractional_quantity_rounds_total() {
         let mut cart = Cart::new();
-        cart.add_line("Bulk rice (kg)".into(), 1.5, 333, None);
+        cart.add_line("Bulk rice (kg)".into(), 1.5, 333, None, None);
         // 1.5 * 333 = 499.5 -> rounds to 500
         assert_eq!(cart.subtotal_cents(), 500);
+    }
+
+    #[test]
+    fn new_line_has_zero_discount() {
+        let mut cart = Cart::new();
+        cart.add_line("Widget".into(), 1.0, 1000, None, None);
+        assert_eq!(cart.lines[0].discount_bp, 0);
+        assert_eq!(cart.lines[0].total_cents(), 1000);
+    }
+
+    #[test]
+    fn discount_reduces_line_total() {
+        let mut cart = Cart::new();
+        cart.add_line("Widget".into(), 1.0, 1000, None, None);
+        assert!(cart.set_line_discount_bp(0, 1000)); // 10% off
+        assert_eq!(cart.lines[0].total_cents(), 900);
+        assert_eq!(cart.subtotal_cents(), 900);
+    }
+
+    #[test]
+    fn discount_and_tax_compose_correctly() {
+        // 10% off a $10 line, then 8% tax on the discounted subtotal --
+        // matches apps/invoicing/app/main.py's record_pos_sale, which
+        // must reconcile against exactly this number.
+        let mut cart = Cart::with_tax_rate_bp(800);
+        cart.add_line("Widget".into(), 1.0, 1000, None, None);
+        cart.set_line_discount_bp(0, 1000);
+        assert_eq!(cart.subtotal_cents(), 900);
+        assert_eq!(cart.tax_cents(), 72); // 900 * 0.08 = 72
+        assert_eq!(cart.total_cents(), 972);
+    }
+
+    #[test]
+    fn discount_is_clamped_to_100_percent() {
+        let mut cart = Cart::new();
+        cart.add_line("Widget".into(), 1.0, 1000, None, None);
+        cart.set_line_discount_bp(0, 15_000); // 150% -- nonsensical input
+        assert_eq!(cart.lines[0].discount_bp, 10_000);
+        assert_eq!(cart.lines[0].total_cents(), 0);
+    }
+
+    #[test]
+    fn set_line_discount_bp_on_missing_index_returns_false() {
+        let mut cart = Cart::new();
+        assert!(!cart.set_line_discount_bp(0, 1000));
+    }
+
+    #[test]
+    fn editing_one_lines_discount_does_not_affect_another() {
+        let mut cart = Cart::new();
+        cart.add_line("A".into(), 1.0, 1000, None, None);
+        cart.add_line("B".into(), 1.0, 1000, None, None);
+        cart.set_line_discount_bp(0, 5000); // 50% off A only
+        assert_eq!(cart.lines[0].total_cents(), 500);
+        assert_eq!(cart.lines[1].total_cents(), 1000);
+    }
+
+    #[test]
+    fn unit_cost_cents_is_carried_through() {
+        let mut cart = Cart::new();
+        cart.add_line("Widget".into(), 1.0, 1000, Some("prod-1".into()), Some(400));
+        assert_eq!(cart.lines[0].unit_cost_cents, Some(400));
     }
 }

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -74,6 +74,16 @@ class InvoiceLine(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=1)
     unit_price_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Basis points, mirroring pos-engine/src/cart.rs's LineItem.discount_bp
+    # exactly -- set by record_pos_sale from the register's real per-line
+    # discount (see that function's own doc comment for why total_cents
+    # has to apply this rather than trusting the client's gross total).
+    discount_bp: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # The product's cost basis at sale time, when known (rung up from the
+    # catalog) -- None for freeform/manual lines. Lets Accounting's future
+    # COGS webhook post Dr COGS / Cr Inventory Asset without ever querying
+    # Inventory directly (apps only talk through the kernel event bus).
+    unit_cost_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # Set when this line was rung up from the POS product catalog (see
     # pos_router.record_pos_sale) -- lets a later return
     # (pos_router.return_pos_sale) restock the right product. Plain
@@ -84,7 +94,7 @@ class InvoiceLine(Base):
 
     @property
     def total_cents(self) -> int:
-        return int(self.quantity * self.unit_price_cents)
+        return int(self.quantity * self.unit_price_cents * (10_000 - self.discount_bp) / 10_000)
 
 
 class Payment(Base):
