@@ -66,6 +66,27 @@ class PaymentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PosShiftOpen(BaseModel):
+    opening_float_cents: int = Field(ge=0, default=0)
+
+
+class PosShiftClose(BaseModel):
+    closing_count_cents: int = Field(ge=0)
+
+
+class PosShiftOut(BaseModel):
+    id: uuid.UUID
+    org_id: uuid.UUID
+    opened_at: datetime
+    closed_at: datetime | None
+    opening_float_cents: int
+    closing_count_cents: int | None
+    expected_cents: int | None
+    status: str
+
+    model_config = {"from_attributes": True}
+
+
 class InvoiceOut(BaseModel):
     id: uuid.UUID
     org_id: uuid.UUID

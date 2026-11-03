@@ -16,6 +16,11 @@ interface CartLine {
   product_id: string | null;
 }
 
+interface PaymentEntry {
+  method: string;
+  amount_cents: number;
+}
+
 interface Sale {
   client_sale_id: string;
   lines: CartLine[];
@@ -23,6 +28,7 @@ interface Sale {
   method: string;
   amount_cents: number;
   created_at_ms: number;
+  payments?: PaymentEntry[];
 }
 
 const QUEUE_STORAGE_KEY = "friday.pos.offline_queue";
@@ -60,6 +66,8 @@ export function PosPage() {
   const [buffer, setBuffer] = useState("");
   const discountBaseCentsRef = useRef<number | null>(null);
   const [showReturns, setShowReturns] = useState(false);
+  const [showSplit, setShowSplit] = useState(false);
+  const [splitCashInput, setSplitCashInput] = useState("");
 
   useEffect(() => {
     init().then(() => {
@@ -221,13 +229,19 @@ export function PosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
-  async function checkout(method: "cash" | "card") {
+  async function checkout(method: "cash" | "card" | "split", payments?: PaymentEntry[]) {
     const cart = cartRef.current;
     const queue = queueRef.current;
     if (!cart || !queue || lines.length === 0) return;
 
     setError(null);
-    const saleJson = cart.checkout_json("USD", method, Date.now());
+    let saleJson: string;
+    try {
+      saleJson = cart.checkout_json("USD", method, Date.now(), payments ? JSON.stringify(payments) : undefined);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not build sale");
+      return;
+    }
     const sale: Sale = JSON.parse(saleJson);
     queue.enqueue_json(saleJson);
     persistQueue();
@@ -248,6 +262,17 @@ export function PosPage() {
           : "Sale saved locally; will sync once back online.",
       );
     }
+  }
+
+  async function confirmSplit() {
+    const cashCents = Math.round(Number.parseFloat(splitCashInput || "0") * 100);
+    if (!Number.isFinite(cashCents) || cashCents <= 0 || cashCents >= totals.total) return;
+    await checkout("split", [
+      { method: "cash", amount_cents: cashCents },
+      { method: "card", amount_cents: totals.total - cashCents },
+    ]);
+    setShowSplit(false);
+    setSplitCashInput("");
   }
 
   const searchResults = useMemo(() => {
@@ -325,12 +350,47 @@ export function PosPage() {
           </div>
         ) : null}
 
+        {showSplit ? (
+          <div className="card card-padded" style={{ marginBottom: 8 }}>
+            <div className="field-label" style={{ marginBottom: 8 }}>
+              Split tender -- cash portion, rest charged to card
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <Input
+                placeholder="Cash amount"
+                type="number"
+                step="0.01"
+                value={splitCashInput}
+                onChange={(e) => setSplitCashInput(e.target.value)}
+                autoFocus
+              />
+              <span className="field-label">
+                Card: $
+                {Math.max(0, totals.total / 100 - Number.parseFloat(splitCashInput || "0")).toFixed(2)}
+              </span>
+              <Button size="sm" variant="primary" onClick={confirmSplit}>
+                Confirm
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => setShowSplit(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="pos-pay-row">
           <Button variant="secondary" disabled={lines.length === 0} onClick={() => checkout("cash")}>
             Cash
           </Button>
           <Button variant="primary" disabled={lines.length === 0} onClick={() => checkout("card")}>
             Charge
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={lines.length === 0}
+            onClick={() => setShowSplit((s) => !s)}
+          >
+            Split
           </Button>
         </div>
       </div>

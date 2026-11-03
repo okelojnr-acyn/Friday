@@ -6,7 +6,7 @@
 use wasm_bindgen::prelude::*;
 
 use crate::cart::Cart;
-use crate::sale::{OfflineQueue, Sale};
+use crate::sale::{OfflineQueue, PaymentEntry, Sale};
 
 #[wasm_bindgen]
 pub struct PosCart {
@@ -49,10 +49,25 @@ impl PosCart {
     }
 
     /// Finalize the cart into a Sale ready to sync, as a JSON string the
-    /// JS side hands to `PosOfflineQueue::enqueue_json`.
-    pub fn checkout_json(&self, currency: &str, method: &str, now_ms: f64) -> String {
-        let sale = Sale::from_cart(&self.inner, currency, method, now_ms as i64);
-        serde_json::to_string(&sale).unwrap_or_else(|_| "null".into())
+    /// JS side hands to `PosOfflineQueue::enqueue_json`. `payments_json`
+    /// is an optional JSON array of `{method, amount_cents}` for a
+    /// split-tender sale (e.g. part cash, part card) -- omit it (JS:
+    /// `undefined`) for the ordinary single-tender case, where `method`
+    /// alone describes the whole sale same as always.
+    pub fn checkout_json(
+        &self,
+        currency: &str,
+        method: &str,
+        now_ms: f64,
+        payments_json: Option<String>,
+    ) -> Result<String, JsError> {
+        let mut sale = Sale::from_cart(&self.inner, currency, method, now_ms as i64);
+        if let Some(json) = payments_json {
+            let payments: Vec<PaymentEntry> =
+                serde_json::from_str(&json).map_err(|e| JsError::new(&e.to_string()))?;
+            sale.payments = Some(payments);
+        }
+        Ok(serde_json::to_string(&sale).unwrap_or_else(|_| "null".into()))
     }
 }
 

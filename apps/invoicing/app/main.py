@@ -17,7 +17,16 @@ from friday_common.integrations import StripeProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import INVOICE_STATUSES, RECURRING_INTERVALS, Customer, Invoice, InvoiceLine, Payment
+from .models import (
+    INVOICE_STATUSES,
+    POS_SHIFT_STATUSES,
+    RECURRING_INTERVALS,
+    Customer,
+    Invoice,
+    InvoiceLine,
+    Payment,
+    PosShift,
+)
 from .schemas import (
     CustomerCreate,
     CustomerOut,
@@ -26,6 +35,9 @@ from .schemas import (
     InvoiceStatusUpdate,
     PaymentCreate,
     PayWithCardOut,
+    PosShiftClose,
+    PosShiftOpen,
+    PosShiftOut,
 )
 from .webhooks import external_router
 from .webhooks import router as webhooks_router
@@ -77,6 +89,25 @@ resource(
             FieldSpec("recurring_interval", "Repeats", "select", options=RECURRING_INTERVALS, form_visible=False),
             FieldSpec("next_recurrence_at", "Next invoice", "datetime", list_visible=False, form_visible=False),
             FieldSpec("created_at", "Created", "datetime", form_visible=False),
+        ),
+    )
+)
+
+resource(
+    ResourceSpec(
+        name="pos_shift",
+        app="invoicing",
+        label="POS Shift",
+        label_plural="POS Shifts",
+        views=("list",),
+        search_fields=(),
+        fields=(
+            FieldSpec("opened_at", "Opened", "datetime", required=True),
+            FieldSpec("closed_at", "Closed", "datetime"),
+            FieldSpec("opening_float_cents", "Opening float", "currency", required=True),
+            FieldSpec("closing_count_cents", "Counted", "currency"),
+            FieldSpec("expected_cents", "Expected", "currency"),
+            FieldSpec("status", "Status", "select", options=POS_SHIFT_STATUSES, required=True),
         ),
     )
 )
@@ -401,15 +432,38 @@ async def record_pos_sale(
         )
         total_cents = charged_cents
 
-    session.add(
-        Payment(
-            org_id=uuid.UUID(principal.org_id),
-            invoice_id=invoice.id,
-            amount_cents=charged_cents,
-            method=body.get("method", "pos"),
-            received_at=now,
+    # Split tender (see pos-engine's Sale.payments): one Payment row per
+    # tender instead of one for the whole charged_cents. Falls back to
+    # the ordinary single-Payment path when the sale has no payments
+    # array at all -- every sale from an older pos-engine build, or any
+    # single-tender sale, takes this branch exactly as before.
+    payments_in = body.get("payments") or []
+    if payments_in:
+        payments_total = sum(int(p.get("amount_cents", 0)) for p in payments_in)
+        if payments_total != charged_cents:
+            raise HTTPException(
+                422, f"split payments total {payments_total} does not match amount_cents {charged_cents}"
+            )
+        for p in payments_in:
+            session.add(
+                Payment(
+                    org_id=uuid.UUID(principal.org_id),
+                    invoice_id=invoice.id,
+                    amount_cents=int(p["amount_cents"]),
+                    method=p.get("method", "other"),
+                    received_at=now,
+                )
+            )
+    else:
+        session.add(
+            Payment(
+                org_id=uuid.UUID(principal.org_id),
+                invoice_id=invoice.id,
+                amount_cents=charged_cents,
+                method=body.get("method", "pos"),
+                received_at=now,
+            )
         )
-    )
     await session.commit()
     await session.refresh(invoice, attribute_names=["lines", "payments"])
 
@@ -537,6 +591,98 @@ async def return_pos_sale(
     )
 
     return InvoiceOut.from_model(refund)
+
+
+@pos_router.get("/shifts", response_model=list[PosShiftOut])
+async def list_pos_shifts(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(
+        select(PosShift).where(PosShift.org_id == uuid.UUID(principal.org_id)).order_by(PosShift.opened_at.desc())
+    )
+    return rows.scalars().all()
+
+
+@pos_router.get("/shifts/current", response_model=PosShiftOut)
+async def get_current_pos_shift(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(
+        select(PosShift).where(PosShift.org_id == uuid.UUID(principal.org_id), PosShift.status == "open")
+    )
+    shift = rows.scalars().first()
+    if shift is None:
+        raise HTTPException(404, "no open shift")
+    return shift
+
+
+@pos_router.post("/shifts/open", response_model=PosShiftOut, status_code=201)
+async def open_pos_shift(
+    body: PosShiftOpen,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The DB-level partial unique index (idx_pos_shifts_one_open_per_org,
+    see 0006_pos_shifts.sql) is the real guard against two concurrent
+    opens racing each other -- this check is just a clean error message
+    for the ordinary case where there's already a visibly open shift."""
+    existing = await session.execute(
+        select(PosShift).where(PosShift.org_id == uuid.UUID(principal.org_id), PosShift.status == "open")
+    )
+    if existing.scalars().first() is not None:
+        raise HTTPException(400, "a shift is already open -- close it before opening a new one")
+
+    shift = PosShift(
+        org_id=uuid.UUID(principal.org_id),
+        opened_at=datetime.now(UTC),
+        opening_float_cents=body.opening_float_cents,
+        status="open",
+    )
+    session.add(shift)
+    await session.commit()
+    await session.refresh(shift)
+    return shift
+
+
+@pos_router.post("/shifts/{shift_id}/close", response_model=PosShiftOut)
+async def close_pos_shift(
+    shift_id: uuid.UUID,
+    body: PosShiftClose,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Expected cash = opening float + cash payments received during the
+    shift's window. Known gap: a cash refund is always recorded with
+    method="refund" (see return_pos_sale), never "cash" specifically --
+    there's no payment-method tracking on a refund today -- so a cash
+    refund during this shift won't reduce the expected count. Documented
+    here rather than silently wrong."""
+    shift = await session.get(PosShift, shift_id)
+    if shift is None or str(shift.org_id) != principal.org_id:
+        raise HTTPException(404, "shift not found")
+    if shift.status != "open":
+        raise HTTPException(400, "shift is already closed")
+
+    now = datetime.now(UTC)
+    cash_rows = await session.execute(
+        select(Payment).where(
+            Payment.org_id == uuid.UUID(principal.org_id),
+            Payment.method == "cash",
+            Payment.received_at >= shift.opened_at,
+            Payment.received_at <= now,
+        )
+    )
+    cash_total = sum(p.amount_cents for p in cash_rows.scalars().all())
+
+    shift.closed_at = now
+    shift.closing_count_cents = body.closing_count_cents
+    shift.expected_cents = shift.opening_float_cents + cash_total
+    shift.status = "closed"
+    await session.commit()
+    await session.refresh(shift)
+    return shift
 
 
 app.include_router(customers_router)
