@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -11,6 +12,29 @@ class Base(DeclarativeBase):
 
 
 PRODUCT_KINDS = ("product", "service")
+VALUATION_METHODS = ("standard", "fifo", "average")
+
+
+class Warehouse(Base):
+    __tablename__ = "warehouses"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    code: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    address: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class UnitOfMeasure(Base):
+    __tablename__ = "units_of_measure"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    abbreviation: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class Product(Base):
@@ -36,6 +60,25 @@ class Product(Base):
     # Some products (services, one-off items) never carry stock -- their
     # on_hand_qty stays meaningless and POS/sales shouldn't decrement it.
     track_inventory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Where new stock lands by default -- on_hand_qty itself stays one
+    # global counter for v1, not split per warehouse (see
+    # 0005_warehouses_and_uom.sql's comment for the documented path to
+    # that). Still real and useful: it's what StockMove.warehouse_id
+    # defaults to when a move doesn't specify one.
+    default_warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+    uom_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True
+    )
+    # How many of on_hand_qty's base unit one selling/purchasing unit of
+    # this product's uom represents. 1 (the default) means uom is
+    # cosmetic -- doesn't change any quantity math.
+    uom_conversion_factor: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=1)
+    # Field only for v1, not a costing engine -- see
+    # 0005_warehouses_and_uom.sql's comment. "standard" (cost_cents
+    # as-is) is the only method any code path actually uses today.
+    valuation_method: Mapped[str] = mapped_column(String(16), nullable=False, default="standard")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -60,6 +103,13 @@ class StockMove(Base):
     qty_delta: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="manual_adjustment")
     reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Which warehouse this move happened at -- defaults to the product's
+    # default_warehouse_id when not given explicitly (see main.py's
+    # adjust_stock). Nullable: a move predating this column, or for an
+    # org that's never set up warehouses, has no location at all.
+    warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
