@@ -69,6 +69,14 @@ func Load() []App {
 			Category:    "finance",
 			BaseURL:     envOr("APP_ACCOUNTING_URL", "http://localhost:8006"),
 		},
+		{
+			Name:        "minions",
+			Label:       "Minions",
+			Description: "Employee workspace: tasks, expense claims, and crypto payroll via Acyn Wallet.",
+			Icon:        "users",
+			Category:    "work",
+			BaseURL:     envOr("APP_MINIONS_URL", "http://localhost:8007"),
+		},
 	}
 }
 

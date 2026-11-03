@@ -5,6 +5,78 @@ async def test_create_customer(client):
     resp = await client.post("/customers", json={"name": "Jane Doe", "email": "jane@example.com"})
     assert resp.status_code == 201
     assert resp.json()["name"] == "Jane Doe"
+    assert resp.json()["payment_terms_days"] == 30
+
+
+async def test_bulk_create_customers(client):
+    resp = await client.post(
+        "/customers/bulk",
+        json={"customers": [{"name": "Alice"}, {"name": "Bob", "payment_terms_days": 14}]},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert len(body) == 2
+    assert {c["name"] for c in body} == {"Alice", "Bob"}
+
+
+async def test_bulk_create_customers_requires_at_least_one(client):
+    resp = await client.post("/customers/bulk", json={"customers": []})
+    assert resp.status_code == 422
+
+
+async def test_invoice_due_at_set_from_customer_payment_terms(client):
+    customer = (
+        await client.post("/customers", json={"name": "Jane Doe", "payment_terms_days": 15})
+    ).json()
+    resp = await client.post(
+        "/invoices",
+        json={"customer_id": customer["id"], "lines": [{"description": "x", "unit_price_cents": 100}]},
+    )
+    body = resp.json()
+    assert body["due_at"] is not None
+
+
+async def test_invoice_without_customer_has_no_due_at(client):
+    resp = await client.post("/invoices", json={"lines": [{"description": "x", "unit_price_cents": 100}]})
+    assert resp.json()["due_at"] is None
+
+
+async def test_create_credit_note_negates_original_lines(client):
+    invoice = (
+        await client.post(
+            "/invoices",
+            json={"lines": [{"description": "Widget", "quantity": 2, "unit_price_cents": 1000}]},
+        )
+    ).json()
+
+    resp = await client.post(f"/invoices/{invoice['id']}/credit-note")
+    assert resp.status_code == 201
+    note = resp.json()
+    assert note["source"] == "credit_note"
+    assert note["source_ref"] == invoice["number"]
+    assert note["status"] == "paid"
+    assert note["total_cents"] == -2000
+    assert note["paid_cents"] == -2000
+    assert note["balance_cents"] == 0
+
+    original = (await client.get(f"/invoices/{invoice['id']}")).json()
+    assert original["status"] == "draft"  # credit note never voids the original
+
+
+async def test_credit_note_publishes_invoice_paid_with_negative_amount(client, monkeypatch):
+    captured = {}
+
+    async def fake(org_id, inv, paid_amount_cents, lines_payload):
+        captured["paid_amount_cents"] = paid_amount_cents
+
+    monkeypatch.setattr("app.main.publish_invoice_paid", fake)
+
+    invoice = (
+        await client.post("/invoices", json={"lines": [{"description": "x", "unit_price_cents": 500}]})
+    ).json()
+    await client.post(f"/invoices/{invoice['id']}/credit-note")
+
+    assert captured["paid_amount_cents"] == -500
 
 
 async def test_create_invoice_with_lines_computes_total(client):
@@ -26,6 +98,18 @@ async def test_create_invoice_with_lines_computes_total(client):
     assert body["total_cents"] == 2500
     assert body["paid_cents"] == 0
     assert body["balance_cents"] == 2500
+
+
+async def test_manual_invoice_line_discount_reduces_total(client):
+    resp = await client.post(
+        "/invoices",
+        json={"lines": [{"description": "Consulting", "quantity": 2, "unit_price_cents": 1000, "discount_bp": 2500}]},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    # 2 * 1000 * (1 - 0.25) = 1500
+    assert body["total_cents"] == 1500
+    assert body["lines"][0]["discount_bp"] == 2500
 
 
 async def test_invoice_number_is_unique_per_invoice(client):

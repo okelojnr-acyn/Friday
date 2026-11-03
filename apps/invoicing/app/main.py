@@ -17,8 +17,10 @@ from friday_common.integrations import StripeProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .events import invoice_lines_payload, publish_invoice_paid
 from .models import INVOICE_STATUSES, RECURRING_INTERVALS, Customer, Invoice, InvoiceLine, Payment
 from .schemas import (
+    CustomerBulkCreate,
     CustomerCreate,
     CustomerOut,
     InvoiceCreate,
@@ -42,6 +44,7 @@ resource(
             FieldSpec("name", "Name", "text", required=True),
             FieldSpec("company", "Company", "text"),
             FieldSpec("email", "Email", "email"),
+            FieldSpec("payment_terms_days", "Payment terms (days)", "number"),
             FieldSpec("created_at", "Added", "datetime", form_visible=False),
         ),
     )
@@ -65,9 +68,12 @@ resource(
                 form_visible=False,
             ),
             FieldSpec("status", "Status", "select", options=INVOICE_STATUSES, required=True),
+            FieldSpec("due_at", "Due", "date", form_visible=False),
             FieldSpec("total_cents", "Total", "currency", form_visible=False),
             FieldSpec("balance_cents", "Balance", "currency", form_visible=False),
-            FieldSpec("source", "Source", "select", options=("manual", "crm", "pos"), form_visible=False),
+            FieldSpec(
+                "source", "Source", "select", options=("manual", "crm", "pos", "credit_note"), form_visible=False
+            ),
             # form_visible=False on both: recurring_interval is only ever
             # set at creation time (InvoiceCreateModal's "Repeats" picker)
             # -- the generic form's Save always PATCHes /status (see
@@ -131,6 +137,24 @@ async def create_customer(
     return customer
 
 
+@customers_router.post("/bulk", response_model=list[CustomerOut], status_code=201)
+async def bulk_create_customers(
+    body: CustomerBulkCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Mirrors apps/inventory/app/main.py's bulk_create_products -- lets a
+    caller load an existing customer list in one request instead of one
+    round trip per row."""
+    now = datetime.now(UTC)
+    created = [Customer(org_id=uuid.UUID(principal.org_id), created_at=now, **item.model_dump()) for item in body.customers]
+    session.add_all(created)
+    await session.commit()
+    for customer in created:
+        await session.refresh(customer)
+    return created
+
+
 async def _get_invoice(session: AsyncSession, principal: Principal, invoice_id: uuid.UUID) -> Invoice:
     inv = await session.get(Invoice, invoice_id)
     if inv is None or str(inv.org_id) != principal.org_id:
@@ -158,6 +182,11 @@ async def create_invoice(
     if body.recurring_interval not in RECURRING_INTERVALS:
         raise HTTPException(422, f"recurring_interval must be one of {RECURRING_INTERVALS}")
     now = datetime.now(UTC)
+    due_at = None
+    if body.customer_id is not None:
+        customer = await session.get(Customer, body.customer_id)
+        if customer is not None and str(customer.org_id) == principal.org_id:
+            due_at = now + timedelta(days=customer.payment_terms_days)
     invoice = Invoice(
         org_id=uuid.UUID(principal.org_id),
         customer_id=body.customer_id,
@@ -165,6 +194,7 @@ async def create_invoice(
         status="draft",
         currency=body.currency,
         source="manual",
+        due_at=due_at,
         recurring_interval=body.recurring_interval,
         next_recurrence_at=_advance(now, body.recurring_interval) if body.recurring_interval else None,
         created_at=now,
@@ -180,6 +210,9 @@ async def create_invoice(
                 description=line.description,
                 quantity=line.quantity,
                 unit_price_cents=line.unit_price_cents,
+                tax_rate_bp=line.tax_rate_bp,
+                discount_bp=line.discount_bp,
+                unit_cost_cents=line.unit_cost_cents,
             )
         )
     await session.commit()
@@ -238,12 +271,15 @@ async def record_payment(
 
     total = sum(l.total_cents for l in inv.lines)
     paid = sum(p.amount_cents for p in inv.payments)
+    newly_paid = paid >= total and inv.status not in ("paid", "void")
     if paid >= total and inv.status != "void":
         inv.status = "paid"
         inv.updated_at = datetime.now(UTC)
 
     await session.commit()
     await session.refresh(inv, attribute_names=["lines", "payments"])
+    if newly_paid:
+        await publish_invoice_paid(principal.org_id, inv, paid, invoice_lines_payload(inv))
     return InvoiceOut.from_model(inv)
 
 
@@ -368,35 +404,40 @@ async def record_pos_sale(
     for line in lines_in:
         qty = line.get("quantity", 1)
         unit_price = line.get("unit_price_cents", 0)
-        total_cents += int(qty * unit_price)
+        discount_bp = line.get("discount_bp", 0)
         product_id = line.get("product_id")
-        session.add(
-            InvoiceLine(
-                org_id=uuid.UUID(principal.org_id),
-                invoice_id=invoice.id,
-                description=line.get("description", "Item"),
-                quantity=qty,
-                unit_price_cents=unit_price,
-                product_id=uuid.UUID(product_id) if product_id else None,
-            )
+        invoice_line = InvoiceLine(
+            org_id=uuid.UUID(principal.org_id),
+            invoice_id=invoice.id,
+            description=line.get("description", "Item"),
+            quantity=qty,
+            unit_price_cents=unit_price,
+            discount_bp=discount_bp,
+            unit_cost_cents=line.get("unit_cost_cents"),
+            product_id=uuid.UUID(product_id) if product_id else None,
         )
+        session.add(invoice_line)
+        total_cents += invoice_line.total_cents
 
     # pos-engine's Cart.total_cents() (what the register actually charged,
-    # body["amount_cents"]) includes tax; the line items above don't carry
-    # a tax line of their own. Without reconciling the two, total_cents
-    # (sum of lines) undercounts what was paid and the invoice shows a
-    # negative balance on every taxed sale. Record the difference as its
-    # own line so the invoice ledger and the amount collected always agree.
+    # body["amount_cents"]) includes tax and any per-line discounts have
+    # already been applied above (InvoiceLine.total_cents accounts for
+    # discount_bp) -- but a POS-side rounding difference or a flat tax
+    # rate still needs reconciling against the line total. The sign tells
+    # us which: positive means tax was charged beyond the lines' total,
+    # negative means the lines (post-discount) still overstate what was
+    # actually collected. Recording it as its own line keeps the invoice
+    # ledger and the amount collected in exact agreement either way.
     charged_cents = body.get("amount_cents", total_cents)
-    tax_cents = charged_cents - total_cents
-    if tax_cents > 0:
+    adjustment_cents = charged_cents - total_cents
+    if adjustment_cents != 0:
         session.add(
             InvoiceLine(
                 org_id=uuid.UUID(principal.org_id),
                 invoice_id=invoice.id,
-                description="Tax",
+                description="Tax" if adjustment_cents > 0 else "Discount",
                 quantity=1,
-                unit_price_cents=tax_cents,
+                unit_price_cents=adjustment_cents,
             )
         )
         total_cents = charged_cents
@@ -416,7 +457,11 @@ async def record_pos_sale(
     # Lets Inventory auto-decrement stock for any line rung up from the
     # product catalog (product_id set client-side by the POS register --
     # see web/src/apps/pos/PosPage.tsx). Freeform/ad-hoc lines have no
-    # product_id and are skipped on the subscriber side.
+    # product_id and are skipped on the subscriber side. unit_cost_cents
+    # rides along unused by Inventory's own subscriber, but is what a
+    # future Accounting COGS webhook on this same event would post
+    # against -- see record_pos_sale's own line construction above for
+    # where this value comes from.
     await publish_event(
         "invoicing.pos_sale.recorded",
         principal.org_id,
@@ -426,12 +471,16 @@ async def record_pos_sale(
                 {
                     "product_id": line.get("product_id"),
                     "quantity": line.get("quantity", 1),
+                    "unit_cost_cents": line.get("unit_cost_cents"),
                 }
                 for line in lines_in
                 if line.get("product_id")
             ],
         },
     )
+    # A POS sale is created already-paid, so this is always a "newly
+    # paid" transition -- no status check needed, unlike record_payment.
+    await publish_invoice_paid(principal.org_id, invoice, charged_cents, invoice_lines_payload(invoice))
 
     return InvoiceOut.from_model(invoice)
 
@@ -504,6 +553,8 @@ async def return_pos_sale(
                 description=f"Return: {line.description}",
                 quantity=-line.quantity,
                 unit_price_cents=line.unit_price_cents,
+                discount_bp=line.discount_bp,
+                unit_cost_cents=line.unit_cost_cents,
                 product_id=line.product_id,
             )
         )
@@ -529,14 +580,86 @@ async def return_pos_sale(
         {
             "invoice_number": refund.number,
             "lines": [
-                {"product_id": str(line.product_id), "quantity": float(line.quantity)}
+                {
+                    "product_id": str(line.product_id),
+                    "quantity": float(line.quantity),
+                    "unit_cost_cents": line.unit_cost_cents,
+                }
                 for line in refund.lines
                 if line.product_id
             ],
         },
     )
+    # Negative paid_amount_cents -- Accounting's invoice-paid webhook
+    # mirrors the debit/credit sides for a negative amount so the ledger
+    # itself never carries a negative entry.
+    await publish_invoice_paid(principal.org_id, refund, refund_total_cents, invoice_lines_payload(refund))
 
     return InvoiceOut.from_model(refund)
+
+
+@invoices_router.post("/{invoice_id}/credit-note", response_model=InvoiceOut, status_code=201)
+async def create_credit_note(
+    invoice_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Credit notes as a first-class concept for manual invoices -- same
+    negated-lines pattern return_pos_sale already established for POS
+    refunds, applied here instead of editing the original invoice (which
+    stays exactly as issued; a credit note is a new document, same as
+    every real-world accounting system treats it). Unlike a POS return,
+    the original isn't voided -- a credit note can be partial, or issued
+    against an invoice that was never actually paid in full."""
+    original = await _get_invoice(session, principal, invoice_id)
+    await session.refresh(original, attribute_names=["lines", "payments"])
+
+    now = datetime.now(UTC)
+    note = Invoice(
+        org_id=uuid.UUID(principal.org_id),
+        customer_id=original.customer_id,
+        number=f"CN-{now:%Y%m}-{uuid.uuid4().hex[:6].upper()}",
+        status="paid",
+        currency=original.currency,
+        source="credit_note",
+        source_ref=original.number,
+        issued_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(note)
+    await session.flush()
+
+    note_total_cents = 0
+    for line in original.lines:
+        note_total_cents += -(line.total_cents + line.tax_cents)
+        session.add(
+            InvoiceLine(
+                org_id=uuid.UUID(principal.org_id),
+                invoice_id=note.id,
+                description=f"Credit: {line.description}",
+                quantity=-line.quantity,
+                unit_price_cents=line.unit_price_cents,
+                tax_rate_bp=line.tax_rate_bp,
+                product_id=line.product_id,
+            )
+        )
+
+    session.add(
+        Payment(
+            org_id=uuid.UUID(principal.org_id),
+            invoice_id=note.id,
+            amount_cents=note_total_cents,
+            method="refund",
+            received_at=now,
+        )
+    )
+    await session.commit()
+    await session.refresh(note, attribute_names=["lines", "payments"])
+
+    await publish_invoice_paid(principal.org_id, note, note_total_cents, invoice_lines_payload(note))
+
+    return InvoiceOut.from_model(note)
 
 
 app.include_router(customers_router)

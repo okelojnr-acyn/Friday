@@ -8,6 +8,7 @@ export interface Product {
   sku: string;
   barcode: string;
   price_cents: number;
+  cost_cents: number;
   on_hand_qty: number;
   track_inventory: boolean;
 }
