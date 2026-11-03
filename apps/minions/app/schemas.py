@@ -119,3 +119,17 @@ class PayrollRunOut(BaseModel):
             lines=[PayrollLineOut.model_validate(l) for l in run.lines],
             total_amount_cents=run.total_amount_cents,
         )
+
+
+class MyPayrollLineOut(BaseModel):
+    """The employee-facing view of one of their own payroll lines --
+    deliberately not PayrollRunOut, which nests every employee's line in
+    the run and would leak coworkers' pay."""
+
+    payroll_run_id: uuid.UUID
+    period_start: datetime
+    period_end: datetime
+    run_status: str
+    gross_amount_cents: int
+    currency: str
+    line_status: str

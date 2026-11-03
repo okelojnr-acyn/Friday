@@ -34,6 +34,7 @@ from .schemas import (
     ExpenseClaimCreate,
     ExpenseClaimOut,
     ExpenseClaimStatusUpdate,
+    MyPayrollLineOut,
     PayrollRunCreate,
     PayrollRunOut,
     WalletLinkOut,
@@ -235,6 +236,35 @@ async def set_my_wallet(
     await session.commit()
     await session.refresh(employee)
     return employee
+
+
+@me_router.get("/payroll", response_model=list[MyPayrollLineOut])
+async def my_payroll(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Self-service read of the caller's own payroll history -- same
+    self-resolve pattern as /me/wallet. No admin actions here; approve/
+    pay/refresh-status stay admin-gated on the payroll_runs routes."""
+    employee = await _resolve_my_employee(session, principal)
+    rows = await session.execute(
+        select(PayrollLine, PayrollRun)
+        .join(PayrollRun, PayrollLine.payroll_run_id == PayrollRun.id)
+        .where(PayrollLine.employee_id == employee.id)
+        .order_by(PayrollRun.period_start.desc())
+    )
+    return [
+        MyPayrollLineOut(
+            payroll_run_id=line.payroll_run_id,
+            period_start=run.period_start,
+            period_end=run.period_end,
+            run_status=run.status,
+            gross_amount_cents=line.gross_amount_cents,
+            currency=run.currency,
+            line_status=line.status,
+        )
+        for line, run in rows.all()
+    ]
 
 
 @expense_claims_router.get("", response_model=list[ExpenseClaimOut])
