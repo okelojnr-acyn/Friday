@@ -1,0 +1,4 @@
+# install from the repo root: pip install -r apps/accounting/requirements.txt
+-e packages/py-common
+fastapi>=0.115
+uvicorn[standard]>=0.30
