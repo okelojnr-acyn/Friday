@@ -188,3 +188,65 @@ async def pos_sale_cogs(body: dict, session: AsyncSession = Depends(get_session)
         )
     )
     await session.commit()
+
+
+@webhooks_router.post("/payroll-paid", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def payroll_paid(body: dict, session: AsyncSession = Depends(get_session)):
+    """Subscribed to minions.payroll_run.paid -- posts Dr Salary Expense /
+    Cr Cash for the amount actually paid out (Minions only publishes this
+    once every line in the run has reached a terminal state, and only
+    counts lines that were actually confirmed -- blocked/failed lines
+    never moved money, see apps/minions/app/main.py's
+    refresh_payroll_run_status)."""
+    payload = body.get("payload", {})
+    org_id = uuid.UUID(body["org_id"])
+    await set_org_context(session, str(org_id))
+
+    payroll_run_id = payload.get("payroll_run_id") or ""
+    if payroll_run_id and await _already_posted(session, org_id, "payroll", payroll_run_id):
+        return
+
+    amount_cents = payload.get("amount_cents", 0) or 0
+    if amount_cents <= 0:
+        return
+
+    await ensure_default_accounts(session, org_id)
+    salary_expense = await get_account_by_code(session, org_id, "6000")
+    cash = await get_account_by_code(session, org_id, "1010")
+
+    now = datetime.now(UTC)
+    entry = JournalEntry(
+        org_id=org_id,
+        number=_new_entry_number(now),
+        entry_date=now.date(),
+        memo=f"Payroll run {payroll_run_id} paid",
+        source="payroll",
+        source_ref=payroll_run_id,
+        status="posted",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(entry)
+    await session.flush()
+
+    session.add(
+        JournalLine(
+            org_id=org_id,
+            journal_entry_id=entry.id,
+            account_id=salary_expense.id,
+            debit_cents=amount_cents,
+            credit_cents=0,
+            description="Salary expense",
+        )
+    )
+    session.add(
+        JournalLine(
+            org_id=org_id,
+            journal_entry_id=entry.id,
+            account_id=cash.id,
+            debit_cents=0,
+            credit_cents=amount_cents,
+            description="Cash paid out",
+        )
+    )
+    await session.commit()

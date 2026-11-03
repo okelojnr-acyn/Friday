@@ -176,8 +176,75 @@ async def test_refresh_status_confirms_and_marks_run_paid(client, as_principal, 
             return {"status": "completed"}
 
     monkeypatch.setattr("app.main.AcynWalletProvider", FakeProviderStatus)
+
+    captured = {}
+
+    async def fake_publish_event(event_type, org_id, payload):
+        captured["event_type"] = event_type
+        captured["org_id"] = org_id
+        captured["payload"] = payload
+
+    monkeypatch.setattr("app.main.publish_event", fake_publish_event)
+
     resp = await client.post(f"/payroll_runs/{run['id']}/refresh-status")
     assert resp.status_code == 200
     body = resp.json()
     assert body["lines"][0]["status"] == "confirmed"
     assert body["status"] == "paid"
+
+    assert captured["event_type"] == "minions.payroll_run.paid"
+    assert captured["org_id"] == principal.org_id
+    assert captured["payload"]["payroll_run_id"] == run["id"]
+    assert captured["payload"]["amount_cents"] == 300000
+
+    # A second refresh-status call on an already-paid run must not
+    # republish -- Accounting's webhook is idempotent too, but there's no
+    # reason to even call it again.
+    captured.clear()
+    resp = await client.post(f"/payroll_runs/{run['id']}/refresh-status")
+    assert resp.status_code == 200
+    assert captured == {}
+
+
+async def test_refresh_status_does_not_publish_when_nothing_was_actually_paid(client, as_principal, principal, monkeypatch):
+    """A run made up entirely of wallet-less (blocked) employees still
+    reaches 'paid' once there's nothing left to poll for, but zero money
+    moved -- there's nothing for Accounting to post."""
+    admin = _as_admin(as_principal, principal)
+    employee = (await client.post("/employees", json={"name": "Bob", "email": "bob@example.com"})).json()
+
+    run = (
+        await client.post(
+            "/payroll_runs",
+            json={
+                "period_start": "2026-01-01T00:00:00Z",
+                "period_end": "2026-01-31T00:00:00Z",
+                "employee_ids": [employee["id"]],
+            },
+        )
+    ).json()
+    assert run["lines"][0]["status"] == "blocked"
+    await client.post(f"/payroll_runs/{run['id']}/approve")
+
+    async def fake_config(org_id, provider):
+        return {"api_key": "test-key"}
+
+    class FakeProvider:
+        def __init__(self, config):
+            pass
+
+    monkeypatch.setattr("app.main.get_integration_config", fake_config)
+    monkeypatch.setattr("app.main.AcynWalletProvider", FakeProvider)
+    await client.post(f"/payroll_runs/{run['id']}/pay")
+
+    captured = {}
+
+    async def fake_publish_event(event_type, org_id, payload):
+        captured["called"] = True
+
+    monkeypatch.setattr("app.main.publish_event", fake_publish_event)
+
+    resp = await client.post(f"/payroll_runs/{run['id']}/refresh-status")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "paid"
+    assert captured == {}
