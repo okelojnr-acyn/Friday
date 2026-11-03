@@ -63,16 +63,27 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
     steps:
       - uses: actions/checkout@v4
+      # web/src/apps/pos/PosPage.tsx imports the compiled WASM engine from
+      # pos-engine/ (web/src/apps/pos/engine/ -- gitignored, never
+      # committed, same reason apps/*'s own generated files aren't). A
+      # checkout alone never has it; build it before anything in web/
+      # tries to type-check or bundle against it.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build the POS WASM engine
+        working-directory: pos-engine
+        run: wasm-pack build --target web --out-dir ../web/src/apps/pos/engine --out-name friday_pos_engine
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm install
-      - run: npx tsc --noEmit
-      - run: npm run build
+      - working-directory: web
+        run: npm install
+      - working-directory: web
+        run: npx tsc --noEmit
+      - working-directory: web
+        run: npm run build

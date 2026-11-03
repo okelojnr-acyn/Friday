@@ -140,7 +140,6 @@ async def list_products(
     return rows.scalars().all()
 
 
-@products_router.post("", response_model=ProductOut, status_code=201)
 def _product_fields(body: ProductCreate) -> dict:
     """Shared by create_product and the bulk endpoint: validates `kind`
     and forces track_inventory=False for a service regardless of what
@@ -155,6 +154,7 @@ def _product_fields(body: ProductCreate) -> dict:
     return data
 
 
+@products_router.post("", response_model=ProductOut, status_code=201)
 async def create_product(
     body: ProductCreate,
     principal: Principal = Depends(get_current_principal),
