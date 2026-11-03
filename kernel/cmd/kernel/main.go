@@ -14,6 +14,7 @@ import (
 	"github.com/acyn-innovation/friday/kernel/internal/db"
 	"github.com/acyn-innovation/friday/kernel/internal/gateway"
 	"github.com/acyn-innovation/friday/kernel/internal/integrations"
+	"github.com/acyn-innovation/friday/kernel/internal/mail"
 	"github.com/acyn-innovation/friday/kernel/internal/org"
 	"github.com/acyn-innovation/friday/kernel/internal/registry"
 )
@@ -34,6 +35,8 @@ func main() {
 	addr := ":" + envOr("PORT", "8080")
 	migrationsDir := envOr("MIGRATIONS_DIR", "kernel/migrations")
 	corsOrigin := envOr("CORS_ORIGIN", "http://localhost:5173")
+	webauthnRPID := envOr("WEBAUTHN_RP_ID", "localhost")
+	webauthnRPName := envOr("WEBAUTHN_RP_NAME", "Friday")
 
 	pool, err := db.Connect(ctx, databaseURL)
 	if err != nil {
@@ -52,7 +55,17 @@ func main() {
 	}
 
 	issuer := auth.NewIssuer(jwtSecret, 24*time.Hour)
-	authHandlers := &auth.Handlers{Pool: pool, Issuer: issuer}
+	webAuthn, err := auth.NewWebAuthn(webauthnRPID, webauthnRPName, []string{corsOrigin})
+	if err != nil {
+		log.Fatalf("configure webauthn: %v", err)
+	}
+	authHandlers := &auth.Handlers{
+		Pool:     pool,
+		Issuer:   issuer,
+		WebAuthn: webAuthn,
+		Mailer:   mail.New(),
+		Otp:      &auth.OtpStore{Pool: pool},
+	}
 	requireAuth := auth.RequireAuth(issuer)
 
 	mux := http.NewServeMux()
@@ -61,8 +74,15 @@ func main() {
 		w.Write([]byte(`{"status":"ok","service":"kernel"}`))
 	})
 
+	// Passwordless throughout: a passkey ceremony or an emailed one-time
+	// code, matching Acyn Wallet's auth model. See internal/auth/handlers.go.
 	mux.HandleFunc("POST /auth/register", authHandlers.Register)
-	mux.HandleFunc("POST /auth/login", authHandlers.Login)
+	mux.HandleFunc("POST /auth/otp/request", authHandlers.OtpRequest)
+	mux.HandleFunc("POST /auth/otp/verify", authHandlers.OtpVerify)
+	mux.HandleFunc("POST /auth/passkey/login-options", authHandlers.PasskeyLoginOptions)
+	mux.HandleFunc("POST /auth/passkey/login-verify", authHandlers.PasskeyLoginVerify)
+	mux.Handle("POST /auth/passkey/register-options", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterOptions)))
+	mux.Handle("POST /auth/passkey/register-verify", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterVerify)))
 	mux.Handle("GET /auth/me", requireAuth(http.HandlerFunc(authHandlers.Me)))
 
 	mux.Handle("GET /orgs/apps", requireAuth(http.HandlerFunc(catalog.List)))

@@ -1,4 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  startAuthentication,
+  startRegistration,
+  type PublicKeyCredentialCreationOptionsJSON,
+  type PublicKeyCredentialRequestOptionsJSON,
+} from "@simplewebauthn/browser";
 import { ApiError } from "./api";
 import { clearSession, loadSession, saveSession } from "./session";
 import type { Session } from "./types";
@@ -9,26 +15,48 @@ interface AuthResponse {
   token: string;
   org_id: string;
   role: Session["role"];
+  email: string;
 }
 
-async function kernelPost<T>(path: string, body: unknown): Promise<T> {
+async function kernelFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${KERNEL_URL}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers as Record<string, string> | undefined) },
   });
   if (!res.ok) {
     const payload = await res.json().catch(() => ({}));
     throw new ApiError(res.status, payload.error ?? res.statusText);
   }
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
+
+const kernelPost = <T,>(path: string, body?: unknown, headers?: Record<string, string>) =>
+  kernelFetch<T>(path, {
+    method: "POST",
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
 
 interface AuthContextValue {
   session: Session | null;
   ready: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (orgName: string, email: string, password: string, fullName: string) => Promise<void>;
+  /** Starts a signup: stores the pending org/profile and emails a
+   * verification code. No account exists yet -- call verifyCode next. */
+  startSignup: (orgName: string, email: string, fullName: string) => Promise<void>;
+  /** Emails a login code to an existing account. Same response whether
+   * or not the email has one -- see kernel/internal/auth/handlers.go's
+   * OtpRequest. */
+  requestLoginCode: (email: string) => Promise<void>;
+  /** Completes either flow: a pending signup, or a fallback login --
+   * the server figures out which, the caller doesn't need to track it. */
+  verifyCode: (email: string, code: string) => Promise<void>;
+  /** Usernameless passkey login -- the browser's own passkey picker
+   * decides which account, no email prompt at all. */
+  loginWithPasskey: () => Promise<void>;
+  /** Adds a passkey to the *current* session's account (call right
+   * after signup, or later from a settings screen). */
+  addPasskey: () => Promise<void>;
   logout: () => void;
 }
 
@@ -58,32 +86,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setReady(true));
   }, []);
 
-  const applyAuthResponse = useCallback((resp: AuthResponse, email: string) => {
-    const next: Session = { token: resp.token, orgId: resp.org_id, role: resp.role, email };
+  const applyAuthResponse = useCallback((resp: AuthResponse) => {
+    const next: Session = { token: resp.token, orgId: resp.org_id, role: resp.role, email: resp.email };
     saveSession(next);
     setSession(next);
   }, []);
 
-  const login = useCallback(
-    async (email: string, password: string) => {
-      const resp = await kernelPost<AuthResponse>("/auth/login", { email, password });
-      applyAuthResponse(resp, email);
+  const startSignup = useCallback(async (orgName: string, email: string, fullName: string) => {
+    await kernelPost("/auth/register", { org_name: orgName, email, full_name: fullName });
+  }, []);
+
+  const requestLoginCode = useCallback(async (email: string) => {
+    await kernelPost("/auth/otp/request", { email });
+  }, []);
+
+  const verifyCode = useCallback(
+    async (email: string, code: string) => {
+      const resp = await kernelPost<AuthResponse>("/auth/otp/verify", { email, code });
+      applyAuthResponse(resp);
     },
     [applyAuthResponse],
   );
 
-  const register = useCallback(
-    async (orgName: string, email: string, password: string, fullName: string) => {
-      const resp = await kernelPost<AuthResponse>("/auth/register", {
-        org_name: orgName,
-        email,
-        password,
-        full_name: fullName,
-      });
-      applyAuthResponse(resp, email);
-    },
-    [applyAuthResponse],
-  );
+  const loginWithPasskey = useCallback(async () => {
+    const { session_id, publicKey } = await kernelPost<{
+      session_id: string;
+      publicKey: PublicKeyCredentialRequestOptionsJSON;
+    }>("/auth/passkey/login-options");
+    const responseJSON = await startAuthentication({ optionsJSON: publicKey });
+    const resp = await kernelFetch<AuthResponse>(`/auth/passkey/login-verify?session_id=${session_id}`, {
+      method: "POST",
+      body: JSON.stringify(responseJSON),
+    });
+    applyAuthResponse(resp);
+  }, [applyAuthResponse]);
+
+  const addPasskey = useCallback(async () => {
+    if (!session) throw new Error("addPasskey requires an active session");
+    const authHeader = { Authorization: `Bearer ${session.token}` };
+    const { session_id, publicKey } = await kernelPost<{
+      session_id: string;
+      publicKey: PublicKeyCredentialCreationOptionsJSON;
+    }>("/auth/passkey/register-options", undefined, authHeader);
+    const responseJSON = await startRegistration({ optionsJSON: publicKey });
+    await kernelFetch(`/auth/passkey/register-verify?session_id=${session_id}`, {
+      method: "POST",
+      headers: authHeader,
+      body: JSON.stringify(responseJSON),
+    });
+  }, [session]);
 
   const logout = useCallback(() => {
     clearSession();
@@ -91,8 +142,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ session, ready, login, register, logout }),
-    [session, ready, login, register, logout],
+    () => ({ session, ready, startSignup, requestLoginCode, verifyCode, loginWithPasskey, addPasskey, logout }),
+    [session, ready, startSignup, requestLoginCode, verifyCode, loginWithPasskey, addPasskey, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

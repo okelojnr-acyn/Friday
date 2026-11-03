@@ -12,7 +12,7 @@ from friday_common import (
     get_org_session,
     resource,
 )
-from friday_common.integrations import AcynWalletProvider
+from friday_common.integrations import AcynWalletProvider, CoinGeckoProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +62,7 @@ app = create_app("friday-web3")
 
 wallets_router = APIRouter(prefix="/wallets", tags=["wallets"])
 transactions_router = APIRouter(prefix="/transactions", tags=["transactions"])
+market_router = APIRouter(prefix="/market", tags=["market"])
 
 
 def _org(principal: Principal) -> uuid.UUID:
@@ -222,5 +223,30 @@ async def refresh_transaction_status(
     return txn
 
 
+@market_router.get("/prices")
+async def market_prices(
+    ids: str | None = None,
+    principal: Principal = Depends(get_current_principal),
+):
+    """The Market mini-app's one read -- Web3 isn't only the Acyn
+    Wallet-backed Treasury mini-app; this is the other one, live crypto
+    prices via CoinGecko's free public API. `ids` is a comma-separated
+    list of CoinGecko coin ids; falls back to the org's saved watchlist
+    (Settings > Integrations > CoinGecko), or a small sensible default
+    if that was never configured either -- see CoinGeckoProvider's
+    DEFAULT_WATCHLIST. No API key required for this to work at all."""
+    config = await get_integration_config(principal.org_id, "coingecko")
+    provider = CoinGeckoProvider(config)
+    coin_ids = ids.split(",") if ids else provider.watchlist
+    return await provider.get_prices(coin_ids)
+
+
+@market_router.get("/trending")
+async def market_trending(principal: Principal = Depends(get_current_principal)):
+    config = await get_integration_config(principal.org_id, "coingecko")
+    return await CoinGeckoProvider(config).get_trending()
+
+
 app.include_router(wallets_router)
 app.include_router(transactions_router)
+app.include_router(market_router)

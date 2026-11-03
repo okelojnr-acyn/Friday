@@ -9,6 +9,7 @@ import { IntegrationsSettingsPage } from "./shell/IntegrationsSettingsPage";
 import { ResourcePage, AppIndexRedirect } from "./shell/ResourcePage";
 import { PosPage } from "./apps/pos/PosPage";
 import { TreasuryPage } from "./apps/web3/TreasuryPage";
+import { MarketPage } from "./apps/web3/MarketPage";
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/settings/integrations" element={<IntegrationsSettingsPage />} />
           <Route path="/pos" element={<PosPage />} />
           <Route path="/web3/treasury" element={<TreasuryPage />} />
+          <Route path="/web3/market" element={<MarketPage />} />
           <Route path="/:app" element={<AppIndexRedirect />} />
           <Route path="/:app/:resource" element={<ResourcePage />} />
         </Route>

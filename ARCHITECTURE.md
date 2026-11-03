@@ -102,6 +102,40 @@ missing feature: Friday's target is small/mid orgs where "can this
 person manage billing" is the only permission question that actually
 comes up, not a configurable rules engine.
 
+## Authentication: passkeys, not passwords
+
+No password field, no username -- an account is a WebAuthn passkey plus
+an emailed one-time code as the only fallback, the same model Acyn
+Wallet uses (see `kernel/internal/auth/handlers.go`'s own doc comments
+for the full rationale). Concretely:
+
+- **Signup** (`POST /auth/register`) doesn't create an account yet --
+  it stores the pending org/profile and emails a verification code
+  (`core.otp_codes`, purpose `"signup"`). The account, org, membership,
+  and default app installs are only created once that code is verified
+  (`POST /auth/otp/verify`), so an email nobody owns can never end up
+  with a live org attached to it.
+- **Passkey login is usernameless.** `POST /auth/passkey/login-options`
+  takes no email at all -- it starts a *discoverable* WebAuthn ceremony
+  (`webauthn.BeginDiscoverableLogin`), and the browser's own passkey
+  picker decides which account. The chosen credential's embedded user
+  handle (set to that account's real database id at registration time)
+  is how `PasskeyLoginVerify` resolves identity afterward. This only
+  works because passkeys are registered with
+  `WithResidentKeyRequirement(preferred)` (`PasskeyRegisterOptions`) --
+  matching Acyn Wallet's own `residentKey: 'preferred'` setting.
+- **Emailed OTP** (`kernel/internal/auth/otp.go`) is the fallback for a
+  browser/device that can't do WebAuthn, or an account that never set up
+  a passkey at all -- same 6-digit code, 60s request cooldown, 5-attempt
+  cap, and salted-hash-not-plaintext storage as Acyn Wallet's
+  `otpService.ts`. `kernel/internal/mail` sends it over plain SMTP
+  (`SMTP_HOST` env var) or, if that's unset, just logs it to the
+  kernel's own stdout -- every local/dev run and CI job works with zero
+  mail-server setup.
+- `POST /auth/otp/request`'s response is identical whether or not the
+  email has an account, and only actually sends a code when it does --
+  this endpoint can never be used to probe which emails are registered.
+
 ## Trust boundary
 
 The kernel signs session JWTs with a single shared `JWT_SECRET`
@@ -160,18 +194,20 @@ token `events.go` already uses for the reverse direction, returning `{}`
 Every provider is wrapped in a small adapter
 (`packages/py-common/friday_common/integrations/*.py`) implementing one
 of a handful of category interfaces (`base.py`): `PaymentProvider`,
-`ChatProvider`, `CalendarProvider`, `WalletProvider`, `OnChainProvider`,
-`CustodyProvider`, `OnOffRampProvider`, `BaaSProvider`. An app's call site
-depends on the interface, not the vendor — CRM's won/lost Slack
-notification (`apps/crm/app/main.py`'s `_notify_slack`) and Invoicing's
-Stripe pay-with-card (`apps/invoicing/app/main.py`'s `pay_with_card`,
-`apps/invoicing/app/webhooks.py`'s `stripe_webhook`) are the two
-code-ready, real examples; every other listed provider is the same
-interface behind a documented stub. See `INTEGRATIONS.md` for the full
-provider list, which are code-ready vs. stubs, and the exact config shape
-each one expects — that file is also the instruction set a coding agent
-follows to finish a stub, so the pattern stays consistent no matter who
-(or what) extends it.
+`ChatProvider`, `CalendarProvider`, `WalletProvider`, `MarketDataProvider`,
+`OnChainProvider`, `CustodyProvider`, `OnOffRampProvider`, `BaaSProvider`.
+An app's call site depends on the interface, not the vendor — CRM's
+won/lost Slack notification (`apps/crm/app/main.py`'s `_notify_slack`),
+Invoicing's Stripe pay-with-card (`apps/invoicing/app/main.py`'s
+`pay_with_card`, `apps/invoicing/app/webhooks.py`'s `stripe_webhook`),
+and `apps/web3`'s two mini-apps (`AcynWalletProvider` behind the Treasury
+panel, `CoinGeckoProvider` behind the Market panel — see "The five
+pieces" above) are the code-ready, real examples; every other listed
+provider is the same interface behind a documented stub. See
+`INTEGRATIONS.md` for the full provider list, which are code-ready vs.
+stubs, and the exact config shape each one expects — that file is also
+the instruction set a coding agent follows to finish a stub, so the
+pattern stays consistent no matter who (or what) extends it.
 
 One webhook in this system breaks the "kernel is the only public entry
 point" rule on purpose: Stripe calls `apps/invoicing/app/webhooks.py`'s

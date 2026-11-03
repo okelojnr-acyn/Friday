@@ -21,6 +21,7 @@ from .base import (
     CalendarProvider,
     ChatProvider,
     CustodyProvider,
+    MarketDataProvider,
     OnChainProvider,
     OnOffRampProvider,
     PaymentProvider,
@@ -28,6 +29,7 @@ from .base import (
 )
 from .bridge import BridgeProvider
 from .calendly import CalendlyProvider
+from .coingecko import CoinGeckoProvider
 from .config import get_integration_config
 from .google_calendar import GoogleCalendarProvider
 from .paystack import PaystackProvider
@@ -45,8 +47,10 @@ __all__ = [
     "CalendarProvider",
     "CalendlyProvider",
     "ChatProvider",
+    "CoinGeckoProvider",
     "CustodyProvider",
     "GoogleCalendarProvider",
+    "MarketDataProvider",
     "OnChainProvider",
     "OnOffRampProvider",
     "PaymentProvider",

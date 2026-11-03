@@ -26,7 +26,10 @@ services:
       retries: 30
 
   kernel:
-    image: golang:1.23-alpine
+    # go.mod's `go` directive tracks whatever toolchain is actually
+    # installed on dev machines in this session; bump this tag to match
+    # if `go build` ever outgrows it.
+    image: golang:1.27-alpine
     working_dir: /src/kernel
     volumes:
       - ../kernel:/src/kernel
@@ -36,6 +39,10 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
       CORS_ORIGIN: http://localhost:5173
+      WEBAUTHN_RP_ID: localhost
+      WEBAUTHN_RP_NAME: Friday
+      # SMTP_HOST unset -- OTP codes log to this container's stdout
+      # instead of emailing, same dev-mode fallback as .env.example.
       APP_CRM_URL: http://crm:8001
       APP_INVOICING_URL: http://invoicing:8002
       APP_PROJECTS_URL: http://projects:8003

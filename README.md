@@ -6,9 +6,10 @@ wallet — on a shared kernel, with a documented pattern for connecting
 third-party tools (Stripe, Slack, Calendly, and more). See `PRD.md` for
 the product scope, `DESIGN.md` for the product philosophy,
 `ARCHITECTURE.md` for how the pieces fit together, `INTEGRATIONS.md` for
-connecting (or finishing) a third-party provider, and
+connecting (or finishing) a third-party provider,
 `docs/building-an-industry-site.md` for forking Friday toward one
-specific business or industry.
+specific business or industry, and `INSTALL.md` for adding Friday as the
+admin/business-ops layer of an existing, unrelated site.
 
 ## Quickstart
 
