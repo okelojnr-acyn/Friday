@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        app: [crm, invoicing, projects, inventory, web3, minions, fleets]
+        app: [crm, invoicing, projects, inventory, web3, accounting, minions, fleets]
     services:
       # Each app's conftest.py (friday_common/testing.py) migrates its
       # own "<app>_test" schema on this server at session start -- no

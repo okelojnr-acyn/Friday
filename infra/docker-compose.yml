@@ -48,6 +48,7 @@ services:
       APP_PROJECTS_URL: http://projects:8003
       APP_INVENTORY_URL: http://inventory:8004
       APP_WEB3_URL: http://web3:8005
+      APP_ACCOUNTING_URL: http://accounting:8006
       APP_MINIONS_URL: http://minions:8007
       APP_FLEETS_URL: http://fleets:8008
     ports:
@@ -167,6 +168,29 @@ services:
       CORS_ORIGINS: '["http://localhost:5173"]'
     ports:
       - "8005:8005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  accounting:
+    image: python:3.12-slim
+    working_dir: /src
+    volumes:
+      - ..:/src
+    command: >
+      sh -c "pip install -q -r apps/accounting/requirements.txt -r apps/accounting/requirements-dev.txt &&
+             python -m friday_common.migrate apps/accounting accounting &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8006 --app-dir apps/accounting"
+    environment:
+      SERVICE_NAME: friday-accounting
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
+      DB_SCHEMA: accounting
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      KERNEL_INTERNAL_URL: http://kernel:8080/internal
+      KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
+      CORS_ORIGINS: '["http://localhost:5173"]'
+    ports:
+      - "8006:8006"
     depends_on:
       postgres:
         condition: service_healthy
