@@ -180,6 +180,8 @@ async def create_invoice(
                 description=line.description,
                 quantity=line.quantity,
                 unit_price_cents=line.unit_price_cents,
+                discount_bp=line.discount_bp,
+                unit_cost_cents=line.unit_cost_cents,
             )
         )
     await session.commit()
@@ -368,35 +370,40 @@ async def record_pos_sale(
     for line in lines_in:
         qty = line.get("quantity", 1)
         unit_price = line.get("unit_price_cents", 0)
-        total_cents += int(qty * unit_price)
+        discount_bp = line.get("discount_bp", 0)
         product_id = line.get("product_id")
-        session.add(
-            InvoiceLine(
-                org_id=uuid.UUID(principal.org_id),
-                invoice_id=invoice.id,
-                description=line.get("description", "Item"),
-                quantity=qty,
-                unit_price_cents=unit_price,
-                product_id=uuid.UUID(product_id) if product_id else None,
-            )
+        invoice_line = InvoiceLine(
+            org_id=uuid.UUID(principal.org_id),
+            invoice_id=invoice.id,
+            description=line.get("description", "Item"),
+            quantity=qty,
+            unit_price_cents=unit_price,
+            discount_bp=discount_bp,
+            unit_cost_cents=line.get("unit_cost_cents"),
+            product_id=uuid.UUID(product_id) if product_id else None,
         )
+        session.add(invoice_line)
+        total_cents += invoice_line.total_cents
 
     # pos-engine's Cart.total_cents() (what the register actually charged,
-    # body["amount_cents"]) includes tax; the line items above don't carry
-    # a tax line of their own. Without reconciling the two, total_cents
-    # (sum of lines) undercounts what was paid and the invoice shows a
-    # negative balance on every taxed sale. Record the difference as its
-    # own line so the invoice ledger and the amount collected always agree.
+    # body["amount_cents"]) includes tax and any per-line discounts have
+    # already been applied above (InvoiceLine.total_cents accounts for
+    # discount_bp) -- but a POS-side rounding difference or a flat tax
+    # rate still needs reconciling against the line total. The sign tells
+    # us which: positive means tax was charged beyond the lines' total,
+    # negative means the lines (post-discount) still overstate what was
+    # actually collected. Recording it as its own line keeps the invoice
+    # ledger and the amount collected in exact agreement either way.
     charged_cents = body.get("amount_cents", total_cents)
-    tax_cents = charged_cents - total_cents
-    if tax_cents > 0:
+    adjustment_cents = charged_cents - total_cents
+    if adjustment_cents != 0:
         session.add(
             InvoiceLine(
                 org_id=uuid.UUID(principal.org_id),
                 invoice_id=invoice.id,
-                description="Tax",
+                description="Tax" if adjustment_cents > 0 else "Discount",
                 quantity=1,
-                unit_price_cents=tax_cents,
+                unit_price_cents=adjustment_cents,
             )
         )
         total_cents = charged_cents
@@ -416,7 +423,11 @@ async def record_pos_sale(
     # Lets Inventory auto-decrement stock for any line rung up from the
     # product catalog (product_id set client-side by the POS register --
     # see web/src/apps/pos/PosPage.tsx). Freeform/ad-hoc lines have no
-    # product_id and are skipped on the subscriber side.
+    # product_id and are skipped on the subscriber side. unit_cost_cents
+    # rides along unused by Inventory's own subscriber, but is what a
+    # future Accounting COGS webhook on this same event would post
+    # against -- see record_pos_sale's own line construction above for
+    # where this value comes from.
     await publish_event(
         "invoicing.pos_sale.recorded",
         principal.org_id,
@@ -426,6 +437,7 @@ async def record_pos_sale(
                 {
                     "product_id": line.get("product_id"),
                     "quantity": line.get("quantity", 1),
+                    "unit_cost_cents": line.get("unit_cost_cents"),
                 }
                 for line in lines_in
                 if line.get("product_id")
@@ -504,6 +516,8 @@ async def return_pos_sale(
                 description=f"Return: {line.description}",
                 quantity=-line.quantity,
                 unit_price_cents=line.unit_price_cents,
+                discount_bp=line.discount_bp,
+                unit_cost_cents=line.unit_cost_cents,
                 product_id=line.product_id,
             )
         )
@@ -529,7 +543,11 @@ async def return_pos_sale(
         {
             "invoice_number": refund.number,
             "lines": [
-                {"product_id": str(line.product_id), "quantity": float(line.quantity)}
+                {
+                    "product_id": str(line.product_id),
+                    "quantity": float(line.quantity),
+                    "unit_cost_cents": line.unit_cost_cents,
+                }
                 for line in refund.lines
                 if line.product_id
             ],
