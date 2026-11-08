@@ -31,6 +31,18 @@ class ChatProvider(ABC):
     async def notify(self, text: str) -> None: ...
 
 
+class EmailProvider(ABC):
+    """Resend, or anything else that can send a transactional email to a
+    customer -- an invoice being sent, a receipt, a meeting invite. Separate
+    from the kernel's own `mail` package (plain SMTP, used only for the
+    passwordless-login OTP) -- this is per-org, bring-your-own-credentials,
+    for apps emailing an org's *customers*, not the platform emailing its
+    own users."""
+
+    @abstractmethod
+    async def send(self, to: str, subject: str, html: str) -> dict: ...
+
+
 class CalendarProvider(ABC):
     """Calendly, Google Calendar -- booking links and calendar events."""
 

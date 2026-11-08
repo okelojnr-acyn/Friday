@@ -23,6 +23,7 @@ export type IconName =
   | "wallet"
   | "calendar"
   | "message-circle"
+  | "mail"
   | "credit-card"
   | "database"
   | "link-2"
@@ -210,6 +211,13 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
         <svg {...common}>
           <circle cx="8" cy="15" r="4" />
           <path d="M11 12l9-9M17 6l2 2M14 9l2 2" />
+        </svg>
+      );
+    case "mail":
+      return (
+        <svg {...common}>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <path d="M3 7l9 6 9-6" />
         </svg>
       );
     case "shield-check":

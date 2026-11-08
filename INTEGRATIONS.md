@@ -18,10 +18,11 @@ pattern instead of a bespoke integration per provider:
 3. An **adapter** (`packages/py-common/friday_common/integrations/*.py`)
    wraps that provider's actual API behind one of a handful of small
    interfaces (`base.py`): `PaymentProvider`, `ChatProvider`,
-   `CalendarProvider`, `WalletProvider`, `OnChainProvider`,
-   `CustodyProvider`, `OnOffRampProvider`, `BaaSProvider`. An app's call
-   site depends on the *interface*, not the vendor -- swapping Stripe for
-   Paystack in a deployment is a config change, not a code change.
+   `EmailProvider`, `CalendarProvider`, `WalletProvider`,
+   `OnChainProvider`, `CustodyProvider`, `OnOffRampProvider`,
+   `BaaSProvider`. An app's call site depends on the *interface*, not the
+   vendor -- swapping Stripe for Paystack in a deployment is a config
+   change, not a code change.
 
 Every provider below is one of two things:
 
@@ -89,6 +90,28 @@ Every provider below is one of two things:
   unconfigured, call `SlackProvider(config).notify(text)` inside a
   `try/except` so a notification failure never fails the request that
   triggered it.
+
+### Resend -- code-ready
+
+- Adapter: `friday_common/integrations/resend.py` (`ResendProvider`,
+  implementing the new `EmailProvider` interface).
+- Config: `api_key` (`re_...`, from https://resend.com/api-keys);
+  `from_email` is optional and defaults to Resend's own shared sending
+  domain (`onboarding@resend.dev`) so an org can send real email the
+  moment they paste a key, before verifying their own sending domain.
+- This is deliberately separate from the kernel's own `kernel/internal/
+  mail` package (plain SMTP, already works against Resend's SMTP relay
+  too -- see `.env.example`'s `SMTP_HOST` block). That one is the
+  *platform's* mail, used only for the passwordless-login OTP, and is
+  configured once per deployment, not per org. `ResendProvider` is for
+  apps emailing an org's *customers* -- bring-your-own-credentials, same
+  as Stripe or Slack, connected from Settings > Integrations like any
+  other provider.
+- Call site: `apps/invoicing/app/main.py`'s `_email_invoice`, fired from
+  `set_invoice_status` the moment an invoice first moves to "sent". Best
+  effort, same posture as `_notify_slack`: no connected Resend config, or
+  no email on the customer record, just means no email goes out -- it
+  never fails the status update itself.
 
 ## Scheduling
 

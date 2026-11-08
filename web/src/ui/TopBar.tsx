@@ -19,6 +19,12 @@ export function TopBar({ email, role, onLogout }: TopBarProps) {
         </Link>
       </div>
       <div className="topbar-right">
+        <a href="https://fridayhost.dev/app" title="Friday Host dashboard">
+          <Button variant="secondary" size="sm" className="btn-pill">
+            <Icon name="arrow-up-right" size={16} />
+            Friday Host
+          </Button>
+        </a>
         <Link to="/apps" title="Apps catalog">
           <Button variant="secondary" size="sm" className="btn-pill">
             <Icon name="apps" size={16} />

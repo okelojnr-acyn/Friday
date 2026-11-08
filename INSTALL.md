@@ -242,6 +242,19 @@ Whatever the target, the kernel needs real values for `JWT_SECRET` and
 `dev-only-change-me` defaults anywhere but localhost), and `CORS_ORIGIN`
 set to wherever `web/` actually ends up being served from.
 
+Also set `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_FROM` (see
+`.env.example`) before calling this deployed — with `SMTP_HOST` unset,
+the kernel's passwordless-login OTP codes just get logged to stdout
+instead of emailed, which is correct for local dev but means nobody can
+actually log in to a real deployment until these are set. Any SMTP relay
+works, including Resend's own SMTP endpoint (`smtp.resend.com`, user
+`resend`, password is a Resend API key) — no vendor-specific code on
+this path. That's separate from the per-org Resend *integration*
+(Settings > Integrations > Resend, see `INTEGRATIONS.md#resend`), which
+is for apps emailing an org's own customers (e.g. invoicing emailing an
+invoice) with that org's own Resend account, not the platform's login
+mail.
+
 ## Step 5 — Database
 
 Ask: **"Where's your database, or where do you want one?"** Friday needs

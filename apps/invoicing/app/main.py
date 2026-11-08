@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -13,7 +14,7 @@ from friday_common import (
     publish_event,
     resource,
 )
-from friday_common.integrations import StripeProvider
+from friday_common.integrations import ResendProvider, StripeProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -119,6 +120,35 @@ resource(
 )
 
 app = create_app("friday-invoicing")
+logger = logging.getLogger("friday.invoicing")
+
+
+async def _email_invoice(org_id: str, inv: Invoice, session: AsyncSession) -> None:
+    """Best-effort: an org that hasn't connected Resend (the common case
+    today), or whose customer has no email on file, just gets no email --
+    same posture as crm/app/main.py's _notify_slack. A missing/
+    misconfigured provider must never fail the status update that
+    triggered this."""
+    if inv.customer_id is None:
+        return
+    customer = await session.get(Customer, inv.customer_id)
+    if customer is None or not customer.email:
+        return
+    config = await get_integration_config(org_id, "resend")
+    if not config.get("api_key"):
+        return
+    total = sum(line.total_cents + line.tax_cents for line in inv.lines)
+    html = (
+        f"<p>Hi {customer.name},</p>"
+        f"<p>Invoice <strong>{inv.number}</strong> for "
+        f"<strong>{total / 100:.2f} {inv.currency}</strong> is ready."
+    )
+    if inv.due_at is not None:
+        html += f"<p>Due {inv.due_at:%Y-%m-%d}.</p>"
+    try:
+        await ResendProvider(config).send(customer.email, f"Invoice {inv.number}", html)
+    except Exception as exc:  # noqa: BLE001 -- see docstring, this must never propagate
+        logger.warning("resend invoice email failed: %s", exc)
 
 
 def _advance(dt: datetime, interval: str) -> datetime:
@@ -273,10 +303,13 @@ async def set_invoice_status(
     inv = await _get_invoice(session, principal, invoice_id)
     inv.status = body.status
     inv.updated_at = datetime.now(UTC)
-    if body.status == "sent" and inv.issued_at is None:
+    newly_sent = body.status == "sent" and inv.issued_at is None
+    if newly_sent:
         inv.issued_at = inv.updated_at
     await session.commit()
     await session.refresh(inv, attribute_names=["lines", "payments"])
+    if newly_sent:
+        await _email_invoice(principal.org_id, inv, session)
     return InvoiceOut.from_model(inv)
 
 

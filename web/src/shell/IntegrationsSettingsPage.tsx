@@ -53,6 +53,18 @@ const PROVIDERS: ProviderDescriptor[] = [
     fields: [{ key: "webhook_url", label: "Incoming webhook URL", placeholder: "https://hooks.slack.com/..." }],
   },
   {
+    key: "resend",
+    label: "Resend",
+    icon: "mail",
+    category: "Notifications",
+    codeReady: true,
+    docAnchor: "resend",
+    fields: [
+      { key: "api_key", label: "API key", secret: true, placeholder: "re_..." },
+      { key: "from_email", label: "From address (optional)", placeholder: "Acme <billing@acme.com>" },
+    ],
+  },
+  {
     key: "acyn_wallet",
     label: "Acyn Wallet",
     icon: "wallet",

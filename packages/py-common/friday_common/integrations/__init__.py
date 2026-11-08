@@ -21,6 +21,7 @@ from .base import (
     CalendarProvider,
     ChatProvider,
     CustodyProvider,
+    EmailProvider,
     MarketDataProvider,
     OnChainProvider,
     OnOffRampProvider,
@@ -34,6 +35,7 @@ from .config import get_integration_config
 from .google_calendar import GoogleCalendarProvider
 from .paystack import PaystackProvider
 from .pesapal import PesapalProvider
+from .resend import ResendProvider
 from .slack import SlackProvider
 from .stripe import StripeProvider
 from .turnkey import TurnkeyProvider
@@ -49,6 +51,7 @@ __all__ = [
     "ChatProvider",
     "CoinGeckoProvider",
     "CustodyProvider",
+    "EmailProvider",
     "GoogleCalendarProvider",
     "MarketDataProvider",
     "OnChainProvider",
@@ -56,6 +59,7 @@ __all__ = [
     "PaymentProvider",
     "PaystackProvider",
     "PesapalProvider",
+    "ResendProvider",
     "SlackProvider",
     "StripeProvider",
     "TurnkeyProvider",
