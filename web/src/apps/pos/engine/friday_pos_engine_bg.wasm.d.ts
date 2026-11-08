@@ -1,0 +1,30 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_poscart_free: (a: number, b: number) => void;
+export const __wbg_posofflinequeue_free: (a: number, b: number) => void;
+export const poscart_add_line: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: number, h: number, i: bigint) => void;
+export const poscart_checkout_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+export const poscart_clear: (a: number) => void;
+export const poscart_lines_json: (a: number) => [number, number];
+export const poscart_new: (a: bigint) => number;
+export const poscart_remove_line: (a: number, b: number) => number;
+export const poscart_set_line_discount_bp: (a: number, b: number, c: bigint) => number;
+export const poscart_subtotal_cents: (a: number) => bigint;
+export const poscart_tax_cents: (a: number) => bigint;
+export const poscart_total_cents: (a: number) => bigint;
+export const posofflinequeue_enqueue_json: (a: number, b: number, c: number) => [number, number];
+export const posofflinequeue_len: (a: number) => number;
+export const posofflinequeue_mark_synced: (a: number, b: number, c: number) => void;
+export const posofflinequeue_new: () => number;
+export const posofflinequeue_pending_json: (a: number) => [number, number];
+export const posofflinequeue_restore_json: (a: number, b: number) => number;
+export const posofflinequeue_to_json: (a: number) => [number, number];
+export const __wbindgen_exn_store: (a: number) => void;
+export const __externref_table_alloc: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_start: () => void;

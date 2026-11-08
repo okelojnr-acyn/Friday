@@ -64,7 +64,9 @@ uvicorn app.main:app --reload --port 8001   # 8002 invoicing, 8003 projects, 800
 cd pos-engine
 cargo test
 wasm-pack build --target web --out-dir ../web/src/apps/pos/engine --out-name friday_pos_engine
-# outputs into web/src/apps/pos/engine (gitignored), imported by web/src/apps/pos/PosPage.tsx
+# outputs into web/src/apps/pos/engine (committed, since Vercel's build has no Rust
+# toolchain), imported by web/src/apps/pos/PosPage.tsx. Rebuild and recommit the output
+# whenever pos-engine/'s source changes.
 ```
 
 **Web (TypeScript/React)**

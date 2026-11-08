@@ -1,0 +1,17 @@
+{
+  "name": "friday-pos-engine",
+  "type": "module",
+  "description": "Cart, pricing, tax, and offline-sale queue for the POS register. Compiles native (tests, any backend) and to WASM (the browser register screen in web/).",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "friday_pos_engine_bg.wasm",
+    "friday_pos_engine.js",
+    "friday_pos_engine.d.ts"
+  ],
+  "main": "friday_pos_engine.js",
+  "types": "friday_pos_engine.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

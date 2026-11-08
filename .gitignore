@@ -24,7 +24,10 @@ venv/
 # --- rust ---
 pos-engine/target/
 pos-engine/pkg/
-web/src/apps/pos/engine/
+# web/src/apps/pos/engine/ is committed on purpose: Vercel's build has no
+# Rust toolchain, so the wasm-pack output must be checked in. Rebuild with
+# `wasm-pack build --target web --out-dir ../web/src/apps/pos/engine --out-name friday_pos_engine`
+# from pos-engine/ and recommit whenever that crate's source changes.
 
 # --- node / web ---
 web/node_modules/
