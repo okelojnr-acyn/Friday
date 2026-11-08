@@ -9,6 +9,7 @@ package mail
 import (
 	"fmt"
 	"log"
+	"net/mail"
 	"net/smtp"
 	"os"
 )
@@ -50,5 +51,16 @@ func (m *Mailer) Send(to, subject, body string) error {
 	if m.user != "" {
 		auth = smtp.PlainAuth("", m.user, m.pass, m.host)
 	}
-	return smtp.SendMail(addr, auth, m.from, []string{to}, []byte(msg))
+	// The SMTP envelope sender (RFC 5321 MAIL FROM) must be a bare
+	// address -- unlike the message's own "From:" header (RFC 5322),
+	// it can't carry a "Display Name <addr>" wrapper. Passing m.from
+	// (which does have one, e.g. "Friday <no-reply@...>") straight
+	// through here makes the relay reject the command with no error
+	// surfaced anywhere the caller could see, since Register's handler
+	// intentionally doesn't fail signup over a mail error.
+	envelopeFrom := m.from
+	if parsed, err := mail.ParseAddress(m.from); err == nil {
+		envelopeFrom = parsed.Address
+	}
+	return smtp.SendMail(addr, auth, envelopeFrom, []string{to}, []byte(msg))
 }
