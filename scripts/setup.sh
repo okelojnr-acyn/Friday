@@ -24,7 +24,7 @@ fi
 
 echo "==> apps (Python)"
 if command -v pip >/dev/null 2>&1; then
-    for app in crm invoicing projects inventory web3; do
+    for app in crm invoicing projects inventory web3 accounting minions fleets; do
         echo "  -- apps/$app"
         pip install -q -r "apps/$app/requirements.txt" -r "apps/$app/requirements-dev.txt"
     done
