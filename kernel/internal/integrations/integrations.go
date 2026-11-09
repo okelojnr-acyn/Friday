@@ -21,6 +21,15 @@ import (
 type Handlers struct {
 	Pool          *pgxpool.Pool
 	InternalToken string
+	// JWTSecret and PublicURL are only used by the Google OAuth flow
+	// (google_oauth.go) -- JWTSecret signs/verifies the state param
+	// (same secret as session JWTs, different claims shape), PublicURL
+	// builds the redirect_uri Google requires to match exactly between
+	// the authorize and token-exchange steps. CORSOrigin is where the
+	// callback redirects the browser back to when the flow finishes.
+	JWTSecret  string
+	PublicURL  string
+	CORSOrigin string
 }
 
 type credentialView struct {

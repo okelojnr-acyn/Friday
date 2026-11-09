@@ -17,3 +17,11 @@ export const setIntegration = (provider: string, config: Record<string, unknown>
   api.put<IntegrationCredential>(`/orgs/integrations/${provider}`, config);
 
 export const deleteIntegration = (provider: string) => api.del<void>(`/orgs/integrations/${provider}`);
+
+/** Kicks off the Google Calendar consent redirect -- requires
+ * client_id/client_secret to already be saved via `setIntegration`
+ * first (kernel/internal/integrations/google_oauth.go's `GoogleOAuthStart`
+ * 400s otherwise). Returns the URL to navigate the browser to; the
+ * kernel itself handles the callback and redirects back here. */
+export const startGoogleCalendarOAuth = () =>
+  api.post<{ authorize_url: string }>("/orgs/integrations/google_calendar/oauth/start");

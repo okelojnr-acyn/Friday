@@ -35,6 +35,7 @@ func main() {
 	addr := ":" + envOr("PORT", "8080")
 	migrationsDir := envOr("MIGRATIONS_DIR", "kernel/migrations")
 	corsOrigin := envOr("CORS_ORIGIN", "http://localhost:5173")
+	kernelPublicURL := envOr("KERNEL_PUBLIC_URL", "http://localhost:"+envOr("PORT", "8080"))
 	webauthnRPID := envOr("WEBAUTHN_RP_ID", "localhost")
 	webauthnRPName := envOr("WEBAUTHN_RP_NAME", "Friday")
 
@@ -96,12 +97,22 @@ func main() {
 	mux.Handle("PATCH /orgs/members/{user_id}/role", requireAuth(http.HandlerFunc(members.SetRole)))
 	mux.Handle("DELETE /orgs/members/{user_id}", requireAuth(http.HandlerFunc(members.Remove)))
 
-	integrationHandlers := &integrations.Handlers{Pool: pool, InternalToken: eventsToken}
+	integrationHandlers := &integrations.Handlers{
+		Pool:          pool,
+		InternalToken: eventsToken,
+		JWTSecret:     jwtSecret,
+		PublicURL:     kernelPublicURL,
+		CORSOrigin:    corsOrigin,
+	}
 	mux.Handle("GET /orgs/integrations", requireAuth(http.HandlerFunc(integrationHandlers.List)))
 	mux.Handle("GET /orgs/integrations/{provider}", requireAuth(http.HandlerFunc(integrationHandlers.Get)))
 	mux.Handle("PUT /orgs/integrations/{provider}", requireAuth(http.HandlerFunc(integrationHandlers.Set)))
 	mux.Handle("DELETE /orgs/integrations/{provider}", requireAuth(http.HandlerFunc(integrationHandlers.Delete)))
 	mux.HandleFunc("GET /internal/integrations/{org_id}/{provider}", integrationHandlers.GetInternal)
+	mux.Handle("POST /orgs/integrations/google_calendar/oauth/start", requireAuth(http.HandlerFunc(integrationHandlers.GoogleOAuthStart)))
+	// Not behind requireAuth -- Google's redirect back to this URL carries
+	// no Authorization header; see google_oauth.go's oauthStateClaims doc.
+	mux.HandleFunc("GET /orgs/integrations/google_calendar/oauth/callback", integrationHandlers.GoogleOAuthCallback)
 
 	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(apps, eventsToken))
 

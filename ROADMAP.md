@@ -45,44 +45,41 @@ exercises them.
   discover that OTP logins silently no-op into stdout until it's set.
   Clarified that's separate from the new per-org Resend integration.
 
+**Later the same day — Google Calendar OAuth2 (roadmap item #1, done)**:
+`GoogleCalendarProvider` is no longer a stub. Added the consent/callback
+flow that was the actual gap (`kernel/internal/integrations/google_oauth.go`:
+`GoogleOAuthStart`/`GoogleOAuthCallback`, new `POST .../oauth/start` +
+`GET .../oauth/callback` routes in `kernel/cmd/kernel/main.go`, the
+callback deliberately outside `requireAuth` since no Authorization
+header survives Google's redirect — a signed `state` JWT, reusing the
+existing session `JWT_SECRET` with its own claims shape, stands in for
+auth there instead). New `KERNEL_PUBLIC_URL` env var so the kernel knows
+its own externally-reachable URL to build `redirect_uri` identically in
+both the authorize and token-exchange steps (documented in
+`.env.example` and `INSTALL.md`). Frontend: `IntegrationsSettingsPage.tsx`
+got a real "Connect with Google" button (`oauth: true` on that
+provider's descriptor) instead of a manual `refresh_token` field, plus a
+banner reading the `?google_calendar=connected|error` query param the
+callback redirects back with. `google_calendar.py`'s `create_event` is
+now real too — plain `httpx`, same posture as `stripe.py`, refreshes an
+access token from the stored `refresh_token` on every call. Build-verified
+(`go build`/`go vet`, `tsc --noEmit` + `vite build`, `ruff check`) but
+**not yet exercised against a real Google Cloud OAuth client** — that's
+the one thing to do first next session before trusting this live.
+
 ---
 
 ## Next up, in order
 
-### 1. Google Calendar OAuth2 — genuinely greenfield
+### 1. Minions meeting scheduling — unblocked (Google Calendar OAuth2 done)
 
-Confirmed via a repo-wide grep this session: **zero OAuth2 code exists
-anywhere in Friday today.** `friday_common/integrations/google_calendar.py`
-is a stub whose own docstring already says this — the adapter is the
-*last* piece, not the first. Needed, roughly in build order:
+Google Calendar OAuth2 (previously item #1 here) shipped this session —
+see the status snapshot above. `GoogleCalendarProvider.create_event` now
+actually works end-to-end once an org connects, so this item is
+unblocked but **not yet verified against a real Google Cloud OAuth
+client** — do that first if this is picked up before anyone else has.
 
-1. A "Connect Google Calendar" UI distinct from every other provider's
-   simple paste-a-key form (`IntegrationsSettingsPage.tsx`'s `PROVIDERS`
-   entry already lists `client_id`/`client_secret`/`refresh_token` as
-   config fields, but nothing drives the OAuth consent redirect that
-   actually produces a `refresh_token` today — a user has no way to get
-   one).
-2. An authorization-redirect endpoint + callback route. Needs a home —
-   almost certainly a new route in Friday's Go kernel (`kernel/internal/...`),
-   since that's the only piece with a stable public URL today
-   (`friday-api.fridayhost.dev`) and already owns `core.integration_credentials`.
-3. State/CSRF protection on the redirect (standard OAuth2 concern, not
-   Google-specific).
-4. Token exchange + refresh-token storage into
-   `core.integration_credentials` via the kernel's existing integrations
-   endpoints (`kernel/internal/integrations`) — no new storage mechanism
-   needed, just a new way to populate it besides "paste into a form."
-5. Only then: finish `GoogleCalendarProvider.create_event` for real
-   (the actual Calendar API call is the easy part — see `stripe.py` for
-   the "plain httpx, no vendor SDK" shape every code-ready adapter uses).
-
-This needs its own design/plan pass before writing code — don't start
-mid-session on something this size without one, same rule every other
-nontrivial feature in Friday Host's own `ROADMAP.md` follows.
-
-### 2. Minions meeting scheduling — depends on #1
-
-Confirmed this session: Minions has **zero** task/calendar/meeting
+Confirmed last session: Minions has **zero** task/calendar/meeting
 concept today — only `employee`, `expense_claim`, `payroll_run`
 resources exist (`apps/minions/app/main.py`). `web/src/minions/MyTasksPage.tsx`
 is a thin read of **Projects'** `task` resource filtered client-side by
@@ -95,9 +92,11 @@ does "easy meeting scheduling" become a new Minions-owned resource
 (e.g. `meeting`, calling `GoogleCalendarProvider.create_event` on
 create), or does it extend the existing cross-app pattern `MyTasksPage`
 already uses (read/write into Projects' `task` with a calendar-event
-side effect)? Either is viable; neither has been decided yet.
+side effect)? Either is viable; neither has been decided yet — needs its
+own design pass before code, same rule as every other nontrivial feature
+here.
 
-### 3. Enterprise-grade invoicing/checkout breadth
+### 2. Enterprise-grade invoicing/checkout breadth
 
 Part of the user's standing "functional as a real CRM" ask. Mirrors
 Friday Host's own `ROADMAP.md` Increment 6 item 2 (same gap, the other
@@ -113,12 +112,9 @@ frontends and don't need this pass. Not started.
 
 ## Open decisions / things to confirm before they block something
 
-- Where exactly the Google Calendar OAuth callback route lives (kernel
-  vs. a new small Go package) — pick this as part of #1's design pass,
-  not ad hoc mid-implementation.
 - Whether Minions meeting scheduling is a new resource or extends the
-  cross-app pattern (see #2 above) — same, resolve as part of its own
-  design pass.
+  cross-app pattern (see #1 above) — resolve as part of its own design
+  pass before writing code.
 
 ## Session rules (apply across both Friday and Friday Host)
 

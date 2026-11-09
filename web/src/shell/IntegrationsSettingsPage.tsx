@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { ApiError } from "../lib/api";
-import { deleteIntegration, getIntegration, listIntegrations, setIntegration } from "../lib/integrations";
+import {
+  deleteIntegration,
+  getIntegration,
+  listIntegrations,
+  setIntegration,
+  startGoogleCalendarOAuth,
+} from "../lib/integrations";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
@@ -23,6 +30,11 @@ interface ProviderDescriptor {
   codeReady: boolean;
   docAnchor: string;
   fields: ProviderField[];
+  // True only for google_calendar today -- renders a "Connect with
+  // Google" button (kernel/internal/integrations/google_oauth.go) that
+  // turns a saved client_id/client_secret into a refresh_token, instead
+  // of expecting the admin to paste one in by hand.
+  oauth?: boolean;
 }
 
 // One row per provider INTEGRATIONS.md documents. `codeReady` providers
@@ -101,12 +113,14 @@ const PROVIDERS: ProviderDescriptor[] = [
     label: "Google Calendar",
     icon: "calendar",
     category: "Scheduling",
-    codeReady: false,
+    codeReady: true,
     docAnchor: "google-calendar",
+    oauth: true,
+    // No refresh_token field -- that's what "Connect with Google"
+    // produces, pasting one in by hand isn't a thing here.
     fields: [
       { key: "client_id", label: "Client ID" },
       { key: "client_secret", label: "Client secret", secret: true },
-      { key: "refresh_token", label: "Refresh token", secret: true },
     ],
   },
   {
@@ -197,6 +211,7 @@ function ProviderCard({
   const [rawConfig, setRawConfig] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function openEditor() {
@@ -244,6 +259,26 @@ function ProviderCard({
     }
   }
 
+  // Requires client_id/client_secret to already be saved (Save must
+  // happen first) -- the kernel 400s GoogleOAuthStart otherwise, same
+  // check mirrored here so the button reads as disabled instead of
+  // bouncing the admin off to Google only to fail server-side.
+  const canConnectGoogle = Boolean(values.client_id?.trim() && values.client_secret?.trim());
+  const googleConnected = Boolean(rawConfig.refresh_token);
+
+  async function connectGoogle() {
+    setConnecting(true);
+    setError(null);
+    try {
+      await save();
+      const { authorize_url } = await startGoogleCalendarOAuth();
+      window.location.href = authorize_url;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not start Google connect");
+      setConnecting(false);
+    }
+  }
+
   return (
     <Card style={{ marginBottom: 12 }}>
       <div className="page-header" style={{ marginBottom: editing ? 12 : 0 }}>
@@ -284,15 +319,32 @@ function ProviderCard({
                 </FieldWrap>
               ))}
             </div>
+            {provider.oauth ? (
+              <div className="field-label" style={{ marginTop: 10 }}>
+                {googleConnected
+                  ? "Connected to a Google Calendar account."
+                  : "Save the client ID/secret above, then connect to get a refresh token."}
+              </div>
+            ) : null}
             <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
               <Button size="sm" variant="primary" onClick={save} disabled={saving}>
                 {saving ? "Saving..." : "Save"}
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={saving}>
+              {provider.oauth ? (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={connectGoogle}
+                  disabled={saving || connecting || !canConnectGoogle}
+                >
+                  {connecting ? "Connecting..." : googleConnected ? "Reconnect with Google" : "Connect with Google"}
+                </Button>
+              ) : null}
+              <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={saving || connecting}>
                 Cancel
               </Button>
               {connected ? (
-                <Button size="sm" variant="danger" onClick={disconnect} disabled={saving}>
+                <Button size="sm" variant="danger" onClick={disconnect} disabled={saving || connecting}>
                   Disconnect
                 </Button>
               ) : null}
@@ -315,6 +367,7 @@ export function IntegrationsSettingsPage() {
   const { session } = useAuth();
   const [connected, setConnected] = useState<Set<string> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const canManage = session?.role === "owner" || session?.role === "admin";
 
@@ -326,6 +379,18 @@ export function IntegrationsSettingsPage() {
 
   useEffect(load, []);
 
+  // Where kernel/internal/integrations/google_oauth.go's Callback lands
+  // the browser back after the Google consent redirect finishes. Read
+  // once, then strip it so refreshing the page doesn't re-show it.
+  const googleCalendarResult = searchParams.get("google_calendar");
+  useEffect(() => {
+    if (!googleCalendarResult) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("google_calendar");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleCalendarResult]);
+
   if (!connected) return <div className="page spinner">Loading...</div>;
 
   return (
@@ -333,6 +398,16 @@ export function IntegrationsSettingsPage() {
       <div className="page-header">
         <h1 className="page-title">Integrations</h1>
       </div>
+      {googleCalendarResult === "connected" ? (
+        <div style={{ marginBottom: 16 }}>
+          <Badge tone="success">Google Calendar connected</Badge>
+        </div>
+      ) : null}
+      {googleCalendarResult === "error" ? (
+        <div className="error-banner" style={{ marginBottom: 16 }}>
+          Could not connect Google Calendar -- check the client ID/secret and try again.
+        </div>
+      ) : null}
       {error ? <div className="error-banner" style={{ marginBottom: 16 }}>{error}</div> : null}
       <p className="field-label" style={{ marginBottom: 16 }}>
         Connect a provider with the API key or webhook URL it gives you -- see INTEGRATIONS.md for what each one

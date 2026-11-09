@@ -124,14 +124,27 @@ Every provider below is one of two things:
   stub's docstring flags that `create_event` needs a different shape
   than a literal event POST before you implement it.
 
-### Google Calendar -- stub
+### Google Calendar -- code-ready
 
 - Adapter: `friday_common/integrations/google_calendar.py`
   (`GoogleCalendarProvider`).
-- Config: `client_id`, `client_secret`, `refresh_token`.
-- Needs OAuth2, not a static key -- there's no consent-screen/callback
-  route in the web shell yet. That's the first thing to build here, not
-  just the adapter.
+- Config: `client_id`, `client_secret`, `refresh_token`. Unlike every
+  other provider in this doc, `refresh_token` is never pasted in by
+  hand -- it's obtained through a real OAuth2 consent flow.
+- To connect: in Google Cloud Console, create an OAuth client (any
+  project), enable the Calendar API, add
+  `{KERNEL_PUBLIC_URL}/orgs/integrations/google_calendar/oauth/callback`
+  as an Authorized redirect URI (this is the kernel's own callback, not
+  per-org -- see `.env.example`'s `KERNEL_PUBLIC_URL`), then in Settings
+  -> Integrations -> Google Calendar, paste that client's `client_id`/
+  `client_secret`, Save, then click **Connect with Google** and complete
+  the consent screen. The kernel
+  (`kernel/internal/integrations/google_oauth.go`) handles the redirect,
+  code exchange, and storing the resulting `refresh_token` -- nothing to
+  paste manually.
+- If a deployed instance's `KERNEL_PUBLIC_URL` is ever wrong, the
+  redirect_uri sent to Google won't match what's registered in Cloud
+  Console and the consent flow fails at Google's end, not silently.
 
 ## BaaS
 

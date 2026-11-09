@@ -255,6 +255,14 @@ is for apps emailing an org's own customers (e.g. invoicing emailing an
 invoice) with that org's own Resend account, not the platform's login
 mail.
 
+Also set `KERNEL_PUBLIC_URL` to the kernel's real externally-reachable
+URL (e.g. `https://friday-api.fridayhost.dev`) -- the default
+(`http://localhost:8080`) only works for local dev. It's used to build
+the `redirect_uri` for the Google Calendar OAuth flow
+(`INTEGRATIONS.md#google-calendar`); getting it wrong doesn't break
+anything until an org admin tries to connect Google Calendar, at which
+point it fails at Google's end with a redirect_uri mismatch.
+
 ## Step 5 — Database
 
 Ask: **"Where's your database, or where do you want one?"** Friday needs
