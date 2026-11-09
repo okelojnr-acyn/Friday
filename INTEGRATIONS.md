@@ -93,7 +93,10 @@ Every provider below is one of two things:
   must be routed straight to the invoicing service bypassing the kernel,
   the same way `/external/webhooks/stripe` already has to be (see that
   section's own deployment note) -- `/external/webhooks/pesapal` needs
-  the identical treatment.
+  the identical treatment. On Friday Host, this is already-built, not a
+  gap: expose the `invoicing` tenant container directly via Friday
+  Host's own `POST /servers/{id}/expose` (see `INSTALL.md`'s Pesapal
+  callout for the tradeoff that comes with doing so).
 - Checkout is deliberately online-only: unlike cash/card, there's no
   offline-queue path for a Pesapal sale (pos-engine's `OfflineQueue` is
   cash/card only) -- the register shows a waiting state until the IPN

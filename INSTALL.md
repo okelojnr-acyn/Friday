@@ -271,6 +271,20 @@ service, bypassing the kernel -- the identical deployment-level routing
 `/external/webhooks/stripe` already needs (see `INTEGRATIONS.md#stripe`'s
 own deployment note and `INTEGRATIONS.md#pesapal`).
 
+**On Friday Host specifically**: this is an existing, already-built
+capability, not a new routing rule to invent -- `POST
+/servers/{id}/expose` (Friday Host's own tenant-ingress API) exposes any
+tenant container to a real public hostname via Caddy, the same
+mechanism that already gives Friday's own kernel
+`friday-api.fridayhost.dev`. Since `invoicing` runs as its own tenant
+container (`friday-invoicing`), expose *that* container directly to get
+a hostname for it, then set `APP_PUBLIC_URL` and Stripe's/Pesapal's
+webhook URLs to it. One side effect worth knowing: that hostname then
+reaches every other route `invoicing` has too (Caddy's exposure is
+whole-hostname-to-container, not path-scoped), losing Friday Host's own
+per-IP rate limiting on that surface -- not an auth bypass (each app
+independently verifies the Friday JWT itself), just worth being aware of.
+
 ## Step 5 — Database
 
 Ask: **"Where's your database, or where do you want one?"** Friday needs
