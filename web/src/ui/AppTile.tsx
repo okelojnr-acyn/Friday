@@ -6,6 +6,11 @@ interface AppTileProps {
   icon: string;
   label: string;
   description?: string;
+  // True for a separate HTML entry (e.g. pos.html) rather than a route
+  // within this SPA -- React Router's Link can't navigate across
+  // document/bundle boundaries, so this needs a real browser navigation
+  // instead of a client-side route change.
+  external?: boolean;
 }
 
 const KNOWN_ICONS = new Set(["target", "receipt", "kanban", "box"]);
@@ -22,19 +27,31 @@ const ICON_COLOR: Record<string, string> = {
   "app-window": "var(--accent)",
 };
 
-export function AppTile({ to, icon, label }: AppTileProps) {
+export function AppTile({ to, icon, label, external }: AppTileProps) {
   const iconName = (KNOWN_ICONS.has(icon) ? icon : "app-window") as
     | "target"
     | "receipt"
     | "kanban"
     | "box"
     | "app-window";
-  return (
-    <Link to={to} className="app-tile" title={label}>
+  const content = (
+    <>
       <span className="app-tile-icon" style={{ color: ICON_COLOR[iconName] }}>
         <Icon name={iconName} size={20} />
       </span>
       <span className="app-tile-label">{label}</span>
+    </>
+  );
+  if (external) {
+    return (
+      <a href={to} className="app-tile" title={label}>
+        {content}
+      </a>
+    );
+  }
+  return (
+    <Link to={to} className="app-tile" title={label}>
+      {content}
     </Link>
   );
 }

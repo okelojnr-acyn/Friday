@@ -181,7 +181,9 @@ export function DashboardPage() {
             label={a.label}
           />
         ))}
-        {installed.has("invoicing") ? <AppTile to="/pos" icon="receipt" label="Point of Sale" /> : null}
+        {installed.has("invoicing") ? (
+          <AppTile to="/pos.html" icon="receipt" label="Point of Sale" external />
+        ) : null}
       </div>
 
       <div className="dashboard-section-title">Overview</div>

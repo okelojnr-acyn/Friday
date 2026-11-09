@@ -60,8 +60,12 @@ interface AuthContextValue {
    * decides which account, no email prompt at all. */
   loginWithPasskey: () => Promise<void>;
   /** Adds a passkey to the *current* session's account (call right
-   * after signup, or later from a settings screen). */
-  addPasskey: () => Promise<void>;
+   * after signup, or later from a settings screen). `platformOnly`
+   * constrains the registration to a real fingerprint/Face ID (not a
+   * security key) -- used by POS clock-in registration
+   * (web/src/apps/pos/PosClockIn.tsx); omit for the general "add a
+   * passkey to my account" flow, which stays unconstrained. */
+  addPasskey: (opts?: { platformOnly?: boolean }) => Promise<void>;
   logout: () => void;
 }
 
@@ -134,20 +138,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     applyAuthResponse(resp);
   }, [applyAuthResponse]);
 
-  const addPasskey = useCallback(async () => {
-    if (!session) throw new Error("addPasskey requires an active session");
-    const authHeader = { Authorization: `Bearer ${session.token}` };
-    const { session_id, publicKey } = await kernelPost<{
-      session_id: string;
-      publicKey: PublicKeyCredentialCreationOptionsJSON;
-    }>("/auth/passkey/register-options", undefined, authHeader);
-    const responseJSON = await startRegistration({ optionsJSON: publicKey });
-    await kernelFetch(`/auth/passkey/register-verify?session_id=${session_id}`, {
-      method: "POST",
-      headers: authHeader,
-      body: JSON.stringify(responseJSON),
-    });
-  }, [session]);
+  const addPasskey = useCallback(
+    async (opts?: { platformOnly?: boolean }) => {
+      if (!session) throw new Error("addPasskey requires an active session");
+      const authHeader = { Authorization: `Bearer ${session.token}` };
+      const query = opts?.platformOnly ? "?purpose=pos" : "";
+      const { session_id, publicKey } = await kernelPost<{
+        session_id: string;
+        publicKey: PublicKeyCredentialCreationOptionsJSON;
+      }>(`/auth/passkey/register-options${query}`, undefined, authHeader);
+      const responseJSON = await startRegistration({ optionsJSON: publicKey });
+      await kernelFetch(`/auth/passkey/register-verify?session_id=${session_id}`, {
+        method: "POST",
+        headers: authHeader,
+        body: JSON.stringify(responseJSON),
+      });
+    },
+    [session],
+  );
 
   const logout = useCallback(() => {
     clearSession();

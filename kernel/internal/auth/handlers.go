@@ -321,6 +321,16 @@ func (h *Handlers) PasskeyLoginVerify(w http.ResponseWriter, r *http.Request) {
 // WithResidentKeyRequirement is what makes the resulting passkey
 // discoverable -- required for PasskeyLoginOptions' usernameless flow
 // to be able to find it at all.
+//
+// `?purpose=pos` additionally constrains AuthenticatorAttachment to
+// "platform" -- a real fingerprint/Face ID, not a roaming security key
+// -- for the POS clock-in registration flow specifically
+// (web/src/apps/pos/PosClockIn.tsx). This is a registration-time hint
+// only: WebAuthn has no way to cryptographically enforce "platform-only"
+// on a later assertion, so it's the practical mechanism, not a hard
+// guarantee. The general "add a passkey to my account" flow (no
+// purpose param) stays unconstrained -- an admin signing in from their
+// laptop may legitimately want a security key.
 func (h *Handlers) PasskeyRegisterOptions(w http.ResponseWriter, r *http.Request) {
 	claims, ok := FromContext(r.Context())
 	if !ok {
@@ -334,10 +344,15 @@ func (h *Handlers) PasskeyRegisterOptions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	creation, session, err := h.WebAuthn.BeginRegistration(
-		user,
-		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementPreferred),
-	)
+	registrationOpt := webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementPreferred)
+	if r.URL.Query().Get("purpose") == "pos" {
+		registrationOpt = webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
+			AuthenticatorAttachment: protocol.Platform,
+			ResidentKey:             protocol.ResidentKeyRequirementPreferred,
+			UserVerification:        protocol.VerificationRequired,
+		})
+	}
+	creation, session, err := h.WebAuthn.BeginRegistration(user, registrationOpt)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "could not start passkey registration: "+err.Error())
 		return

@@ -8,7 +8,11 @@ import { VitePWA } from "vite-plugin-pwa";
 // Rather than rely on however the plugin happens to behave (which
 // differs between `vite dev` and `vite build`), this strips every
 // auto-injected manifest link unconditionally and re-adds exactly one,
-// by hand, only for minions.html -- deterministic in both modes.
+// by hand, only for minions.html -- deterministic in both modes. Also
+// hand-adds POS's own manifest link to pos.html -- that one is a static
+// file (public/pos-manifest.webmanifest), not VitePWA-generated at all
+// (see the VitePWA call below for why: a second instance isn't safe),
+// so there's nothing to strip for it, only to add.
 // Registered after VitePWA in the plugins array below: both plugins'
 // transformIndexHtml hooks use order "post", and hooks with equal order
 // run in plugins-array position, so this one needs to run second to
@@ -21,8 +25,16 @@ function manageManifestLink(): Plugin {
       order: "post",
       handler(html, ctx) {
         const stripped = html.replace(/<link rel="manifest"[^>]*>\s*/g, "");
-        if (!ctx.filename.endsWith("minions.html")) return stripped;
-        return stripped.replace("</head>", '    <link rel="manifest" href="/manifest.webmanifest" />\n  </head>');
+        if (ctx.filename.endsWith("minions.html")) {
+          return stripped.replace("</head>", '    <link rel="manifest" href="/manifest.webmanifest" />\n  </head>');
+        }
+        if (ctx.filename.endsWith("pos.html")) {
+          return stripped.replace(
+            "</head>",
+            '    <link rel="manifest" href="/pos-manifest.webmanifest" />\n  </head>',
+          );
+        }
+        return stripped;
       },
     },
   };
@@ -47,6 +59,17 @@ export default defineConfig({
     // control every page on that origin, Minions or not. That's the one
     // real tradeoff of shipping Minions as a second entry in this same
     // package rather than a fully separate project.
+    //
+    // POS (pos.html/pos-main.tsx) deliberately does NOT get a second
+    // VitePWA() instance here -- confirmed by reading the plugin's own
+    // source (node_modules/vite-plugin-pwa/dist/chunk-*.js) that
+    // `virtual:pwa-register` is one fixed global module name with no
+    // per-instance scoping, so a second instance would race this one
+    // over which wins that import, silently registering the wrong
+    // service worker for whichever page imports it. POS instead has a
+    // hand-written public/pos-sw.js + public/pos-manifest.webmanifest,
+    // registered with an explicit narrow scope (see pos-main.tsx) --
+    // avoids the collision entirely rather than hoping it doesn't happen.
     VitePWA({
       injectRegister: null,
       registerType: "autoUpdate",
@@ -72,6 +95,7 @@ export default defineConfig({
       input: {
         main: "index.html",
         minions: "minions.html",
+        pos: "pos.html",
       },
     },
   },

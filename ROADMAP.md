@@ -121,40 +121,96 @@ minion/staff member. Both are fixed now:
   and import cleanly. Run `pytest` for real in `apps/invoicing` and
   `apps/minions` first thing next session before trusting this live.
 
+**Later the same day — webhook-routing correction, then POS offline
+install + biometric clock-in shipped.** The "neither Stripe's nor
+Pesapal's external webhook has deployment routing" gap noted above
+turned out to be wrong — written before actually reading Friday Host's
+`api/internal/ingress/handlers.go`. `POST /servers/{id}/expose` already
+exposes *any* tenant container (not just a kernel) to a real public
+hostname; since `invoicing` runs as its own tenant container, it's
+already eligible. No code to build, just corrected deployment docs
+(`INSTALL.md`/`INTEGRATIONS.md` here, and Friday Host's own `ROADMAP.md`).
+
+Then the other half of "make POS production-level": offline install +
+biometric cashier clock-in. Confirmed before building anything: the hard
+pieces already existed, disconnected — `pos-engine`'s offline sale queue,
+and the kernel's discoverable WebAuthn passkey login
+(`loginWithPasskey`/`addPasskey` in `web/src/lib/auth.tsx`). Three design
+forks resolved with the user first: **shared register device** (not
+personal devices), **POS gets its own installable mini-app** (not the
+whole main shell), **platform authenticators only**.
+
+- **POS is now its own mini-app** — `web/pos.html` +
+  `web/src/pos-main.tsx` + `web/src/apps/pos/PosApp.tsx`, mirroring
+  Minions' existing pattern exactly. The old ungated `/pos` route inside
+  the main shell (`App.tsx`) is gone — reachable only via the dashboard
+  tile's external link to `/pos.html` now, same way Minions isn't a
+  route inside the main shell either.
+- **Biometric clock-in, not per-sale re-verification** —
+  `web/src/apps/pos/PosClockIn.tsx` gates the register behind a scan.
+  Reuses `loginWithPasskey()` completely unchanged: on a shared device,
+  a fingerprint scan has to *identify* who's using it right now, not
+  just confirm a session that's already there, and the existing
+  discoverable ceremony already does exactly that — it overwrites the
+  active session with a fresh JWT for whoever scanned in, so every POS
+  request afterward (including last session's `cashier_user_id`
+  stamping) is already correctly attributed with zero backend changes.
+  "Clocked in" is in-memory only, reset on every page load, deliberately
+  — walking up to the register always demands a fresh scan.
+- **Platform-only, registration-time only** —
+  `kernel/internal/auth/handlers.go`'s `PasskeyRegisterOptions` gained
+  `?purpose=pos`, constraining `AuthenticatorAttachment` to `platform`
+  (verified against the real go-webauthn v0.18.2 API via `go doc`, not
+  guessed) for POS's own fingerprint registration specifically — the
+  general "add a passkey to my account" flow is untouched. Documented
+  as what it actually is: a registration-time hint, not something
+  WebAuthn can cryptographically enforce on every later assertion.
+- **A second `VitePWA()` instance for POS was tried and rejected** —
+  confirmed by reading the plugin's own source
+  (`node_modules/vite-plugin-pwa/dist/chunk-*.js`) that
+  `virtual:pwa-register` is one fixed global module name with no
+  per-instance scoping, so a second instance would race Minions'
+  existing one over which wins that import — silently registering the
+  *wrong* service worker is worse than a build error. POS instead has a
+  hand-written `public/pos-sw.js` + `public/pos-manifest.webmanifest`,
+  registered with an explicit `scope: "/pos.html"` so it can never
+  collide with the main shell's or Minions'. Verified in the actual
+  build output (`dist/pos.html` carries the right manifest link,
+  `dist/index.html` carries none, `dist/minions.html` unchanged).
+- **⚠️ Not verified — real hardware, not a code question**: whether a
+  shared tablet with multiple cashiers each enrolling their own
+  fingerprint actually lets WebAuthn's discoverable login pick the
+  right one per scan. iOS/Android both support multiple platform
+  passkeys per device in principle; this needs a real 10-minute spike on
+  actual target hardware before trusting the shared-device model for
+  real. If it doesn't hold, the code is unaffected — one enrolled slot
+  per device instead of per-person, a rollout concern, not a rewrite.
+- No browser-automation tool was connected this session and Docker
+  still wouldn't start, so this was verified by `tsc --noEmit`,
+  `vite build` (inspected the actual `dist/` output by hand), `go
+  build`/`go vet`, and careful manual tracing — **never actually
+  exercised in a running browser with a real passkey**. Do that, plus
+  the hardware spike above, before trusting this live.
+- **Shift open/close has no frontend UI at all**, found while scoping
+  this (the backend's always had it) — explicitly out of scope for this
+  pass, noted as a separate fast-follow, not silently dropped.
+
 ---
 
 ## Next up, in order
 
-### 1. Run the new tests for real
+### 1. Verify everything for real, not just statically
 
-Docker wouldn't start this session (see above) — the Pesapal/cashier-
-identity work above was verified by syntax/lint/collection and careful
-manual tracing (which already caught and fixed two real pre-existing
-test regressions the refactor would have silently caused — see
-`test_pos_sales.py`/`test_pos_returns.py`'s `app.events.publish_event`
-monkeypatch fix), but no test has actually executed against a live DB
-yet. Get Postgres up and run both suites before building on top of this.
+Two sessions' worth of work now sits unverified against anything live:
+Postgres-backed tests (`pytest` in `apps/invoicing`/`apps/minions`,
+blocked by this machine's Docker Desktop not starting), the Pesapal
+sandbox flow, and — new this session — the actual clock-in flow in a
+real browser with a real passkey, plus the hardware spike on whether a
+shared device correctly distinguishes multiple enrolled fingerprints
+(see above). Do all of this before building further on top of either
+phase; the risk compounds the longer it stacks unverified.
 
-### 2. POS offline install + biometric cashier verification
-
-The other half of "make POS production-level" the user asked for,
-deliberately deferred this session to keep the Pesapal/identity work
-reviewable on its own. Confirmed while auditing: the hard pieces already
-exist, just disconnected — `pos-engine`'s Rust/WASM layer already has a
-real offline sale queue (`OfflineQueue`), and the kernel already has a
-real WebAuthn passkey system (`kernel/internal/auth/webauthn.go`), just
-wired only to login, not constrained to platform/biometric authenticators,
-and with no mid-session "verify this cashier" gate. The PWA manifest/
-service-worker scaffolding (`web/vite.config.ts`'s `VitePWA` config) is
-also wired exclusively to the separate Minions mini-app (`minions.html`)
-— the main shell hosting `PosPage.tsx` registers no service worker at
-all today. Needs its own design pass: likely (a) extend `VitePWA`'s
-manifest to cover `index.html`, (b) add a WebAuthn re-auth step scoped
-to opening a shift or completing a sale, (c) decide whether to constrain
-that specific flow to `AuthenticatorAttachment: "platform"` (real
-fingerprint/Face ID) vs. leaving it open to security keys too.
-
-### 3. Close the COGS no-op
+### 2. Close the COGS no-op
 
 `apps/accounting`'s `pos_sale_cogs` webhook has never posted a real
 entry — `unit_cost_cents` is documented as always `None` in the event
@@ -166,7 +222,7 @@ revenue posts correctly, cost of goods never does. Likely a small fix
 (thread the already-captured value through), confirm scope before
 starting.
 
-### 4. Decide the fate of the island apps
+### 3. Decide the fate of the island apps
 
 `projects`, `fleets`, and `web3` publish nothing, subscribe to nothing,
 and nothing else references their data (confirmed by a repo-wide grep
@@ -176,7 +232,7 @@ complaint. Needs a product decision, not just code: which of these
 should actually integrate with the rest (and how), vs. staying
 legitimately independent for now.
 
-### 5. Self-serve data import
+### 4. Self-serve data import
 
 There's a one-off dev script
 (`scripts/host-data-import-template.py`) but nothing in-product for an
@@ -184,7 +240,7 @@ org to bring in an Excel sheet or connect an external DB/spreadsheet for
 inventory or CRM data — raised explicitly by the user ("we can't connect
 it to excel or database that we do have"). Not scoped yet.
 
-### 6. Minions meeting scheduling — unblocked (Google Calendar OAuth2 done)
+### 5. Minions meeting scheduling — unblocked (Google Calendar OAuth2 done)
 
 `GoogleCalendarProvider.create_event` now actually works end-to-end once
 an org connects (still **not yet verified against a real Google Cloud
@@ -201,7 +257,7 @@ Minions-owned resource (e.g. `meeting`, calling
 existing cross-app pattern `MyTasksPage` already uses? Needs its own
 design pass before code.
 
-### 7. Enterprise-grade invoicing/checkout breadth (generic frontend)
+### 6. Enterprise-grade invoicing/checkout breadth (generic frontend)
 
 Mirrors Friday Host's own `ROADMAP.md` Increment 6 item 2: `crm`,
 `fleets`, and `projects` have **no custom frontend at all**, rendering
@@ -213,14 +269,17 @@ FormView}.tsx` pattern. Not started.
 ## Open decisions / things to confirm before they block something
 
 - Whether Minions meeting scheduling is a new resource or extends the
-  cross-app pattern (see #6 above) — resolve as part of its own design
+  cross-app pattern (see #5 above) — resolve as part of its own design
   pass before writing code.
-- Whether POS's biometric cashier gate (item #2) should be constrained
-  to platform authenticators specifically, or left open to any WebAuthn
-  credential — resolve as part of that design pass.
-- Which of `projects`/`fleets`/`web3` (item #4) should actually
+- ~~Whether POS's biometric cashier gate should be constrained to
+  platform authenticators~~ — **decided and shipped**: platform-only,
+  registration-time only (see the status snapshot above).
+- Which of `projects`/`fleets`/`web3` (item #3) should actually
   integrate with the rest of the system — a product decision, not a
   technical one.
+- Whether the shared-register-device model for POS clock-in actually
+  holds on real hardware (multiple enrolled fingerprints, one device) —
+  unverified, see item #1 above.
 
 ## Session rules (apply across both Friday and Friday Host)
 
