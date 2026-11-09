@@ -51,6 +51,9 @@ resource(
             FieldSpec("name", "Name", "text", required=True),
             FieldSpec("description", "Description", "textarea", list_visible=False),
             FieldSpec("status", "Status", "select", options=PROJECT_STATUSES, required=True),
+            FieldSpec(
+                "opportunity_id", "Won opportunity", "reference", reference="crm.opportunity", list_visible=False
+            ),
             FieldSpec("created_at", "Created", "datetime", form_visible=False),
         ),
     )
@@ -93,6 +96,7 @@ resource(
             FieldSpec("status", "Status", "select", options=TICKET_STATUSES, required=True),
             FieldSpec("priority", "Priority", "select", options=TICKET_PRIORITIES, required=True),
             FieldSpec("requester_email", "Requester", "email"),
+            FieldSpec("customer_id", "Customer", "reference", reference="invoicing.customer", list_visible=False),
             FieldSpec("due_at", "Due", "date"),
             FieldSpec("description", "Description", "textarea", list_visible=False),
         ),

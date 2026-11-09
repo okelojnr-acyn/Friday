@@ -8,12 +8,14 @@ class ProjectCreate(BaseModel):
     name: str = Field(min_length=1)
     description: str = ""
     status: str = "active"
+    opportunity_id: uuid.UUID | None = None
 
 
 class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     status: str | None = None
+    opportunity_id: uuid.UUID | None = None
 
 
 class ProjectOut(BaseModel):
@@ -22,6 +24,7 @@ class ProjectOut(BaseModel):
     name: str
     description: str
     status: str
+    opportunity_id: uuid.UUID | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -69,6 +72,7 @@ class TicketCreate(BaseModel):
     status: str = "open"
     priority: str = "medium"
     requester_email: str = ""
+    customer_id: uuid.UUID | None = None
     due_at: datetime | None = None
 
 
@@ -78,6 +82,7 @@ class TicketUpdate(BaseModel):
     status: str | None = None
     priority: str | None = None
     requester_email: str | None = None
+    customer_id: uuid.UUID | None = None
     due_at: datetime | None = None
 
 
@@ -89,6 +94,7 @@ class TicketOut(BaseModel):
     status: str
     priority: str
     requester_email: str
+    customer_id: uuid.UUID | None
     due_at: datetime | None
     created_at: datetime
     updated_at: datetime

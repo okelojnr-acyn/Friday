@@ -25,6 +25,12 @@ class Project(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    # crm.opportunities.id -- by-id-only, no FK across schemas (same
+    # convention as minions.employees.user_id), so a won deal can become
+    # a project without this app taking a hard dependency on crm's
+    # schema. Optional: plenty of projects start with no sales history
+    # at all (an internal initiative, a free pilot).
+    opportunity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -56,6 +62,12 @@ class Ticket(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
     priority: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
     requester_email: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # invoicing.customers.id -- same by-id-only convention as
+    # Project.opportunity_id above. Optional: plenty of real support
+    # requests come in before whoever's asking is a billed customer yet
+    # (or never becomes one), so requester_email stays the one field
+    # that's always there regardless.
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
