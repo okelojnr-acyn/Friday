@@ -344,11 +344,22 @@ func (h *Handlers) PasskeyRegisterOptions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	registrationOpt := webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementPreferred)
+	// Required, not Preferred, in both branches below -- login
+	// (PasskeyLoginOptions/Verify, this doc comment's own "required
+	// for... to be able to find it at all") is always the discoverable/
+	// usernameless ceremony, which can only ever see a resident
+	// credential. Preferred let the authenticator/OS create a
+	// non-resident one anyway, which registered fine but could then
+	// never actually be found during login -- including via POS's own
+	// "Scan to clock in," the exact bug PosClockIn.tsx's "New cashier?
+	// Set up your fingerprint" flow was supposed to prevent a second
+	// trip to the register for.
+	registrationOpt := webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired)
 	if r.URL.Query().Get("purpose") == "pos" {
 		registrationOpt = webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
 			AuthenticatorAttachment: protocol.Platform,
-			ResidentKey:             protocol.ResidentKeyRequirementPreferred,
+			ResidentKey:             protocol.ResidentKeyRequirementRequired,
+			RequireResidentKey:      protocol.ResidentKeyRequired(),
 			UserVerification:        protocol.VerificationRequired,
 		})
 	}
