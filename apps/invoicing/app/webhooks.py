@@ -6,10 +6,11 @@
   Invoicing's coupling to the rest of the system -- it knows about CRM's
   event shape, nothing else does.
 - `external_router` (`/external/webhooks/*`): from the public internet
-  (Stripe), which can't carry a Friday JWT or the kernel token. See
-  `stripe_webhook`'s own doc comment for the trust model this uses
-  instead, and INTEGRATIONS.md#stripe for the deployment-level routing
-  this needs (the kernel's gateway requires auth on every `/api/{app}/*`
+  (Stripe, Pesapal), which can't carry a Friday JWT or the kernel token.
+  See `stripe_webhook`'s and `pesapal_webhook`'s own doc comments for the
+  (different) trust models each uses instead, and
+  INTEGRATIONS.md#stripe/#pesapal for the deployment-level routing this
+  needs (the kernel's gateway requires auth on every `/api/{app}/*`
   route, so exposing this path means routing it to the invoicing service
   directly, bypassing the kernel for this one path).
 """
@@ -18,14 +19,14 @@ import json
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from friday_common import get_integration_config, require_kernel_token, set_org_context
 from friday_common.db import get_session
-from friday_common.integrations import StripeProvider
+from friday_common.integrations import PesapalProvider, StripeProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .events import invoice_lines_payload, publish_invoice_paid
+from .events import invoice_lines_payload, publish_invoice_paid, publish_pos_sale_recorded
 from .models import Customer, Invoice, InvoiceLine, Payment
 
 router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
@@ -152,4 +153,74 @@ async def stripe_webhook(request: Request, session: AsyncSession = Depends(get_s
     if newly_paid:
         await session.refresh(inv, attribute_names=["lines", "payments"])
         await publish_invoice_paid(org_id, inv, paid, invoice_lines_payload(inv))
+    return {"ok": True}
+
+
+@external_router.get("/pesapal")
+async def pesapal_webhook(
+    order_tracking_id: str = Query(alias="OrderTrackingId"),
+    order_merchant_reference: str = Query(alias="OrderMerchantReference"),
+    session: AsyncSession = Depends(get_session),
+):
+    """Pesapal calls this directly (registered once per process via
+    PesapalProvider's RegisterIPN, see pay_with_pesapal in main.py) --
+    same "no Friday JWT or kernel token" trust model as stripe_webhook,
+    but Pesapal's version of "don't trust the callback" is stronger: the
+    query params here are used only to know *which* order to re-query,
+    never as the actual payment status. The real status always comes
+    from a fresh GetTransactionStatus call using the opaque
+    order_tracking_id Pesapal itself issued.
+
+    org_id rides along in order_merchant_reference ("{org_id}:{invoice_id}",
+    set by pay_with_pesapal) for the same chicken-and-egg reason
+    stripe_webhook's PaymentIntent metadata carries org_id: nothing
+    identifies which org's config to check until the reference is
+    parsed."""
+    try:
+        org_id, invoice_id = order_merchant_reference.split(":", 1)
+    except ValueError:
+        raise HTTPException(400, "malformed merchant reference")
+
+    config = await get_integration_config(org_id, "pesapal")
+    if not config.get("consumer_key"):
+        raise HTTPException(400, "pesapal not configured for this org")
+
+    await set_org_context(session, org_id)
+    invoice = await session.get(Invoice, uuid.UUID(invoice_id))
+    if invoice is None or str(invoice.org_id) != org_id:
+        raise HTTPException(404, "invoice not found")
+    if invoice.status != "pending":
+        return {"ok": True}  # already resolved -- IPN delivery can repeat
+
+    status = await PesapalProvider(config).get_transaction_status(order_tracking_id)
+    now = datetime.now(UTC)
+
+    if status == "COMPLETED":
+        await session.refresh(invoice, attribute_names=["lines"])
+        # The reconciling Tax/Discount line _apply_pos_sale_lines (main.py)
+        # already added makes this sum exactly equal the amount Pesapal
+        # actually collected -- same invariant record_pos_sale relies on.
+        charged_cents = sum(line.total_cents for line in invoice.lines)
+        session.add(
+            Payment(
+                org_id=uuid.UUID(org_id),
+                invoice_id=invoice.id,
+                amount_cents=charged_cents,
+                method="pesapal",
+                received_at=now,
+            )
+        )
+        invoice.status = "paid"
+        invoice.updated_at = now
+        await session.commit()
+        await session.refresh(invoice, attribute_names=["lines", "payments"])
+        await publish_pos_sale_recorded(org_id, invoice, charged_cents)
+        await publish_invoice_paid(org_id, invoice, charged_cents, invoice_lines_payload(invoice))
+    elif status in ("FAILED", "INVALID"):
+        invoice.status = "void"
+        invoice.updated_at = now
+        await session.commit()
+    # else ("PENDING", "REVERSED", or anything unrecognized): leave as
+    # "pending" -- Pesapal may call the IPN again as the status changes.
+
     return {"ok": True}

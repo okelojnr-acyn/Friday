@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import init, { PosCart, PosOfflineQueue } from "./engine/friday_pos_engine";
 import { api, ApiError } from "../../lib/api";
 import { fetchProductCatalog, type Product } from "../../lib/inventory";
+import { pollPosSaleStatus, startPesapalPosPayment } from "../../lib/pos";
 import { useBarcodeScanner } from "../../lib/useBarcodeScanner";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Field";
@@ -73,6 +74,16 @@ export function PosPage() {
   const [showReturns, setShowReturns] = useState(false);
   const [showSplit, setShowSplit] = useState(false);
   const [splitCashInput, setSplitCashInput] = useState("");
+
+  // Pesapal is real async money movement, not something pos-engine's
+  // offline queue can speculatively record -- null means idle, "starting"
+  // is the brief window before a redirect_url comes back, "pending" is
+  // waiting on the customer + Pesapal's IPN, "paid"/"void" are terminal
+  // (see getPosSaleStatus's poll below).
+  const [pesapalFlow, setPesapalFlow] = useState<{
+    invoiceId: string;
+    status: "starting" | "pending" | "paid" | "void";
+  } | null>(null);
 
   useEffect(() => {
     init().then(() => {
@@ -289,6 +300,65 @@ export function PosPage() {
     }
   }
 
+  async function payWithPesapal() {
+    const cart = cartRef.current;
+    if (!cart || lines.length === 0 || pesapalFlow?.status === "starting" || pesapalFlow?.status === "pending") return;
+
+    setError(null);
+    let saleJson: string;
+    try {
+      // No payments array -- Pesapal is a single tender, built the same
+      // way a plain cash/card sale is, just with method="pesapal" so the
+      // backend never mistakes this for an already-paid sale.
+      saleJson = cart.checkout_json("USD", "pesapal", Date.now());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not build sale");
+      return;
+    }
+    const sale: Sale = JSON.parse(saleJson);
+
+    // Deliberately not touching the cart/offline queue yet -- unlike
+    // checkout(), this can fail or be abandoned before any money moves,
+    // and there's nothing to "save locally and sync later" about a
+    // mobile-money charge that needs the customer online right now.
+    setPesapalFlow({ invoiceId: "", status: "starting" });
+    try {
+      const { invoice_id, redirect_url } = await startPesapalPosPayment(sale);
+      setPesapalFlow({ invoiceId: invoice_id, status: "pending" });
+      window.open(redirect_url, "_blank", "noopener");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not start Pesapal checkout");
+      setPesapalFlow(null);
+    }
+  }
+
+  // Polls while a Pesapal payment is in flight -- the only way to know
+  // what happened is pesapal_webhook (apps/invoicing/app/webhooks.py)
+  // confirming it server-side; there's nothing to optimistically assume
+  // here the way cash/card can.
+  useEffect(() => {
+    if (!pesapalFlow || pesapalFlow.status !== "pending") return;
+    const interval = setInterval(async () => {
+      try {
+        const result = await pollPosSaleStatus(pesapalFlow.invoiceId);
+        if (result.status === "paid") {
+          cartRef.current?.clear();
+          setSelected(null);
+          setBuffer("");
+          refreshCart();
+          setPesapalFlow((cur) => (cur ? { ...cur, status: "paid" } : cur));
+        } else if (result.status === "void") {
+          setPesapalFlow((cur) => (cur ? { ...cur, status: "void" } : cur));
+        }
+      } catch {
+        // Transient poll failure -- try again next tick, same posture as
+        // checkout()'s offline-sync retry.
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pesapalFlow?.invoiceId, pesapalFlow?.status]);
+
   async function confirmSplit() {
     const cashCents = Math.round(Number.parseFloat(splitCashInput || "0") * 100);
     if (!Number.isFinite(cashCents) || cashCents <= 0 || cashCents >= totals.total) return;
@@ -376,6 +446,24 @@ export function PosPage() {
           </div>
         ) : null}
 
+        {pesapalFlow ? (
+          <div className="card card-padded" style={{ marginBottom: 8 }}>
+            <div className="field-label" style={{ marginBottom: 8 }}>
+              {pesapalFlow.status === "starting" ? "Starting Pesapal checkout..." : null}
+              {pesapalFlow.status === "pending"
+                ? "Waiting for the customer to complete payment on Pesapal..."
+                : null}
+              {pesapalFlow.status === "paid" ? "Payment received." : null}
+              {pesapalFlow.status === "void" ? "Payment failed or was cancelled." : null}
+            </div>
+            {pesapalFlow.status === "paid" || pesapalFlow.status === "void" ? (
+              <Button size="sm" variant="secondary" onClick={() => setPesapalFlow(null)}>
+                Dismiss
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+
         {showSplit ? (
           <div className="card card-padded" style={{ marginBottom: 8 }}>
             <div className="field-label" style={{ marginBottom: 8 }}>
@@ -417,6 +505,13 @@ export function PosPage() {
             onClick={() => setShowSplit((s) => !s)}
           >
             Split
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={lines.length === 0 || pesapalFlow?.status === "starting" || pesapalFlow?.status === "pending"}
+            onClick={payWithPesapal}
+          >
+            Mobile Money
           </Button>
         </div>
       </div>

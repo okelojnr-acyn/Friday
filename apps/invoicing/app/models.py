@@ -11,8 +11,14 @@ class Base(DeclarativeBase):
     pass
 
 
+# "pending" (a POS sale submitted to a real payment gateway but not yet
+# confirmed -- see pay_with_pesapal/pesapal_webhook in main.py/webhooks.py)
+# is a real value the DB's CHECK constraint allows (0007_pos_identity.sql)
+# but is deliberately NOT listed here: it's an internal transient state
+# set only by that one code path, never something set_invoice_status
+# should let a user pick from the manual dropdown.
 INVOICE_STATUSES = ("draft", "sent", "paid", "void")
-PAYMENT_METHODS = ("cash", "card", "pos", "bank_transfer", "refund", "other")
+PAYMENT_METHODS = ("cash", "card", "pos", "bank_transfer", "refund", "pesapal", "other")
 RECURRING_INTERVALS = ("", "weekly", "monthly", "yearly")
 POS_SHIFT_STATUSES = ("open", "closed")
 
@@ -56,6 +62,14 @@ class Invoice(Base):
     # lines into a fresh draft invoice once `next_recurrence_at` passes.
     recurring_interval: Mapped[str] = mapped_column(String(16), nullable=False, default="")
     next_recurrence_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Who rang this up -- set by record_pos_sale/return_pos_sale/
+    # pay_with_pesapal from Principal.user_id/email. NULL for manual/
+    # recurring invoices, which have no single "cashier". user_id is the
+    # reliable match (see apps/minions's _resolve_my_employee for the
+    # same user_id-then-email pattern used to resolve this back to an
+    # Employee); email rides along for display even if that lookup fails.
+    cashier_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cashier_email: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -149,3 +163,10 @@ class PosShift(Base):
     closing_count_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     expected_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    # Who opened the drawer -- set by open_pos_shift from
+    # Principal.user_id/email. Accountability for this specific shift's
+    # cash float; individual sales carry their own cashier identity on
+    # Invoice (see cashier_user_id above) independently of who opened
+    # the shift they happened during.
+    opened_by_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    opened_by_email: Mapped[str | None] = mapped_column(Text, nullable=True)

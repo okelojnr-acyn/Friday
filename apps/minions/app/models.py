@@ -115,3 +115,23 @@ class PayrollLine(Base):
     external_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     payroll_run: Mapped["PayrollRun"] = relationship(back_populates="lines")
+
+
+class EmployeeSale(Base):
+    """One row per POS sale attributed to an employee -- populated by the
+    /internal/webhooks/pos-sale subscriber (see main.py), never written
+    directly. employee_name is snapshotted at write time, same reasoning
+    as PayrollLine.employee_name: this is a historical record, not a live
+    view, so a later name change on Employee shouldn't rewrite it."""
+
+    __tablename__ = "employee_sales"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=False
+    )
+    employee_name: Mapped[str] = mapped_column(Text, nullable=False)
+    invoice_number: Mapped[str] = mapped_column(Text, nullable=False)
+    amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

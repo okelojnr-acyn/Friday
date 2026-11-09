@@ -7,6 +7,13 @@ async def test_open_shift(client):
     assert body["closed_at"] is None
 
 
+async def test_open_shift_stamps_who_opened_it(client, principal):
+    resp = await client.post("/pos/shifts/open", json={"opening_float_cents": 0})
+    body = resp.json()
+    assert body["opened_by_user_id"] == principal.user_id
+    assert body["opened_by_email"] == principal.email
+
+
 async def test_get_current_shift_404s_when_none_open(client):
     resp = await client.get("/pos/shifts/current")
     assert resp.status_code == 404

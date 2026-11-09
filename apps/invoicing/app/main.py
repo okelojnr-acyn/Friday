@@ -2,6 +2,7 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from friday_common import (
     FieldSpec,
@@ -11,14 +12,14 @@ from friday_common import (
     get_current_principal,
     get_integration_config,
     get_org_session,
-    publish_event,
+    get_settings,
     resource,
 )
-from friday_common.integrations import ResendProvider, StripeProvider
+from friday_common.integrations import PesapalProvider, ResendProvider, StripeProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .events import invoice_lines_payload, publish_invoice_paid
+from .events import invoice_lines_payload, publish_invoice_paid, publish_pos_sale_recorded
 from .models import (
     INVOICE_STATUSES,
     POS_SHIFT_STATUSES,
@@ -38,6 +39,8 @@ from .schemas import (
     InvoiceStatusUpdate,
     PaymentCreate,
     PayWithCardOut,
+    PayWithPesapalOut,
+    PosSaleStatusOut,
     PosShiftClose,
     PosShiftOpen,
     PosShiftOut,
@@ -435,35 +438,15 @@ async def generate_recurring_invoices(
     return [InvoiceOut.from_model(inv) for inv in created]
 
 
-@pos_router.post("/sales", status_code=201)
-async def record_pos_sale(
-    body: dict,
-    principal: Principal = Depends(get_current_principal),
-    session: AsyncSession = Depends(get_org_session),
-):
-    """Where the Rust POS engine's offline sync queue lands once a device
-    is back online. A POS sale becomes an already-paid invoice with
-    source='pos' -- same ledger, no separate "sales" table to reconcile
-    against invoicing later."""
-    now = datetime.now(UTC)
-    lines_in = body.get("lines", [])
-    if not lines_in:
-        raise HTTPException(422, "sale must have at least one line")
-
-    invoice = Invoice(
-        org_id=uuid.UUID(principal.org_id),
-        number=f"POS-{now:%Y%m%d}-{uuid.uuid4().hex[:6].upper()}",
-        status="paid",
-        currency=body.get("currency", "USD"),
-        source="pos",
-        source_ref=body.get("client_sale_id"),
-        issued_at=now,
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(invoice)
-    await session.flush()
-
+async def _apply_pos_sale_lines(
+    session: AsyncSession, principal: Principal, invoice: Invoice, lines_in: list[dict], body: dict
+) -> int:
+    """Builds InvoiceLine rows for a POS sale and reconciles pos-engine's
+    charged total against the lines' own total. Shared by record_pos_sale
+    (cash/card, already-paid) and pay_with_pesapal (status="pending" until
+    the gateway confirms) -- both build identical line/tax-adjustment data
+    from the same sale payload shape, only what happens to Payment rows
+    afterward differs."""
     total_cents = 0
     for line in lines_in:
         qty = line.get("quantity", 1)
@@ -504,7 +487,41 @@ async def record_pos_sale(
                 unit_price_cents=adjustment_cents,
             )
         )
-        total_cents = charged_cents
+    return charged_cents
+
+
+@pos_router.post("/sales", status_code=201)
+async def record_pos_sale(
+    body: dict,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Where the Rust POS engine's offline sync queue lands once a device
+    is back online. A POS sale becomes an already-paid invoice with
+    source='pos' -- same ledger, no separate "sales" table to reconcile
+    against invoicing later."""
+    now = datetime.now(UTC)
+    lines_in = body.get("lines", [])
+    if not lines_in:
+        raise HTTPException(422, "sale must have at least one line")
+
+    invoice = Invoice(
+        org_id=uuid.UUID(principal.org_id),
+        number=f"POS-{now:%Y%m%d}-{uuid.uuid4().hex[:6].upper()}",
+        status="paid",
+        currency=body.get("currency", "USD"),
+        source="pos",
+        source_ref=body.get("client_sale_id"),
+        cashier_user_id=principal.user_id,
+        cashier_email=principal.email,
+        issued_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(invoice)
+    await session.flush()
+
+    charged_cents = await _apply_pos_sale_lines(session, principal, invoice, lines_in, body)
 
     # Split tender (see pos-engine's Sale.payments): one Payment row per
     # tender instead of one for the whole charged_cents. Falls back to
@@ -542,34 +559,102 @@ async def record_pos_sale(
     await session.refresh(invoice, attribute_names=["lines", "payments"])
 
     # Lets Inventory auto-decrement stock for any line rung up from the
-    # product catalog (product_id set client-side by the POS register --
-    # see web/src/apps/pos/PosPage.tsx). Freeform/ad-hoc lines have no
-    # product_id and are skipped on the subscriber side. unit_cost_cents
-    # rides along unused by Inventory's own subscriber, but is what a
-    # future Accounting COGS webhook on this same event would post
-    # against -- see record_pos_sale's own line construction above for
-    # where this value comes from.
-    await publish_event(
-        "invoicing.pos_sale.recorded",
-        principal.org_id,
-        {
-            "invoice_number": invoice.number,
-            "lines": [
-                {
-                    "product_id": line.get("product_id"),
-                    "quantity": line.get("quantity", 1),
-                    "unit_cost_cents": line.get("unit_cost_cents"),
-                }
-                for line in lines_in
-                if line.get("product_id")
-            ],
-        },
-    )
+    # product catalog, and Minions attribute the sale to an employee (see
+    # publish_pos_sale_recorded's own doc comment).
+    await publish_pos_sale_recorded(principal.org_id, invoice, charged_cents)
     # A POS sale is created already-paid, so this is always a "newly
     # paid" transition -- no status check needed, unlike record_payment.
     await publish_invoice_paid(principal.org_id, invoice, charged_cents, invoice_lines_payload(invoice))
 
     return InvoiceOut.from_model(invoice)
+
+
+@pos_router.post("/sales/pay-with-pesapal", response_model=PayWithPesapalOut, status_code=201)
+async def pay_with_pesapal(
+    body: dict,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Starts a real Pesapal checkout for a POS sale -- unlike
+    record_pos_sale (cash/card-today, always already-paid), this creates
+    the invoice with status="pending" and no Payment row yet: no money
+    has moved, and won't until pesapal_webhook (webhooks.py) confirms it
+    via Pesapal's own GetTransactionStatus, the only place that marks this
+    paid. Deliberately online-only -- there's no offline-queue path for
+    this the way cash/card have through pos-engine's OfflineQueue; the
+    frontend can't optimistically clear the cart the way it does for
+    those."""
+    now = datetime.now(UTC)
+    lines_in = body.get("lines", [])
+    if not lines_in:
+        raise HTTPException(422, "sale must have at least one line")
+
+    config = await get_integration_config(principal.org_id, "pesapal")
+    if not config.get("consumer_key"):
+        raise HTTPException(400, "Pesapal is not connected -- add a consumer key/secret in Settings > Integrations")
+
+    settings = get_settings()
+    if not settings.app_public_url:
+        raise HTTPException(
+            500, "APP_PUBLIC_URL is not configured for this service -- Pesapal needs a real callback URL"
+        )
+
+    invoice = Invoice(
+        org_id=uuid.UUID(principal.org_id),
+        number=f"POS-{now:%Y%m%d}-{uuid.uuid4().hex[:6].upper()}",
+        status="pending",
+        currency=body.get("currency", "USD"),
+        source="pos",
+        source_ref=body.get("client_sale_id"),
+        cashier_user_id=principal.user_id,
+        cashier_email=principal.email,
+        issued_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(invoice)
+    await session.flush()
+
+    charged_cents = await _apply_pos_sale_lines(session, principal, invoice, lines_in, body)
+    await session.commit()
+
+    # org_id rides along in the merchant_reference, not just invoice_id,
+    # for the same reason Stripe's PaymentIntent metadata carries org_id:
+    # pesapal_webhook has no Friday JWT to resolve org_id from otherwise,
+    # and needs it before it can even open an org-scoped DB session.
+    callback_url = f"{settings.app_public_url.rstrip('/')}/external/webhooks/pesapal"
+    try:
+        intent = await PesapalProvider(config).create_payment_intent(
+            charged_cents,
+            invoice.currency,
+            {
+                "merchant_reference": f"{principal.org_id}:{invoice.id}",
+                "callback_url": callback_url,
+                "description": f"POS sale {invoice.number}",
+                "email": principal.email,
+            },
+        )
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        invoice.status = "void"
+        await session.commit()
+        raise HTTPException(502, f"Could not start Pesapal checkout: {exc}") from exc
+
+    return PayWithPesapalOut(invoice_id=invoice.id, redirect_url=intent["redirect_url"])
+
+
+@pos_router.get("/sales/{invoice_id}/status", response_model=PosSaleStatusOut)
+async def get_pos_sale_status(
+    invoice_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Lightweight poll target for the frontend while a Pesapal payment is
+    in flight -- the register shows a waiting state until this flips from
+    "pending" to "paid" (or "void" on failure)."""
+    invoice = await session.get(Invoice, invoice_id)
+    if invoice is None or str(invoice.org_id) != principal.org_id:
+        raise HTTPException(404, "sale not found")
+    return PosSaleStatusOut(invoice_id=invoice.id, status=invoice.status)
 
 
 async def _get_pos_sale(session: AsyncSession, principal: Principal, number: str) -> Invoice:
@@ -623,6 +708,8 @@ async def return_pos_sale(
         currency=original.currency,
         source="pos",
         source_ref=original.number,
+        cashier_user_id=principal.user_id,
+        cashier_email=principal.email,
         issued_at=now,
         created_at=now,
         updated_at=now,
@@ -661,22 +748,7 @@ async def return_pos_sale(
     await session.commit()
     await session.refresh(refund, attribute_names=["lines", "payments"])
 
-    await publish_event(
-        "invoicing.pos_sale.recorded",
-        principal.org_id,
-        {
-            "invoice_number": refund.number,
-            "lines": [
-                {
-                    "product_id": str(line.product_id),
-                    "quantity": float(line.quantity),
-                    "unit_cost_cents": line.unit_cost_cents,
-                }
-                for line in refund.lines
-                if line.product_id
-            ],
-        },
-    )
+    await publish_pos_sale_recorded(principal.org_id, refund, refund_total_cents)
     # Negative paid_amount_cents -- Accounting's invoice-paid webhook
     # mirrors the debit/credit sides for a negative amount so the ledger
     # itself never carries a negative entry.
@@ -795,6 +867,8 @@ async def open_pos_shift(
         opened_at=datetime.now(UTC),
         opening_float_cents=body.opening_float_cents,
         status="open",
+        opened_by_user_id=principal.user_id,
+        opened_by_email=principal.email,
     )
     session.add(shift)
     await session.commit()

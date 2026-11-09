@@ -263,6 +263,14 @@ the `redirect_uri` for the Google Calendar OAuth flow
 anything until an org admin tries to connect Google Calendar, at which
 point it fails at Google's end with a redirect_uri mismatch.
 
+If this deployment will take real Pesapal payments on POS, also set
+`APP_PUBLIC_URL` on the **invoicing** service specifically to its own
+real externally-reachable URL, and make sure
+`/external/webhooks/pesapal` is routed straight to the invoicing
+service, bypassing the kernel -- the identical deployment-level routing
+`/external/webhooks/stripe` already needs (see `INTEGRATIONS.md#stripe`'s
+own deployment note and `INTEGRATIONS.md#pesapal`).
+
 ## Step 5 — Database
 
 Ask: **"Where's your database, or where do you want one?"** Friday needs

@@ -24,6 +24,29 @@ async def test_pos_sale_becomes_an_already_paid_invoice(client):
     assert body["balance_cents"] == 0
 
 
+async def test_pos_sale_stamps_cashier_identity_from_principal(client, principal):
+    resp = await client.post(
+        "/pos/sales",
+        json={"lines": [{"description": "Coffee", "quantity": 1, "unit_price_cents": 300}], "amount_cents": 300},
+    )
+    body = resp.json()
+    assert body["cashier_user_id"] == principal.user_id
+    assert body["cashier_email"] == principal.email
+
+
+async def test_pos_return_stamps_cashier_identity_of_whoever_processed_it(client):
+    sale = (
+        await client.post(
+            "/pos/sales",
+            json={"lines": [{"description": "Coffee", "quantity": 1, "unit_price_cents": 300}], "amount_cents": 300},
+        )
+    ).json()
+
+    refund = (await client.post(f"/pos/sales/{sale['number']}/return")).json()
+    assert refund["cashier_user_id"] is not None
+    assert refund["cashier_email"] is not None
+
+
 async def test_pos_sale_tax_reconciles_against_charged_amount(client):
     """Regression test: pos-engine's Cart.total_cents() (what the
     register actually charged) includes tax, but the raw line items
@@ -51,13 +74,18 @@ async def test_pos_sale_tax_reconciles_against_charged_amount(client):
 
 
 async def test_pos_sale_publishes_pos_sale_recorded_only_for_catalog_lines(client, monkeypatch):
-    captured = {}
+    captured = []
 
     async def fake_publish_event(event_type, org_id, payload):
-        captured["type"] = event_type
-        captured["payload"] = payload
+        captured.append((event_type, payload))
 
-    monkeypatch.setattr("app.main.publish_event", fake_publish_event)
+    # record_pos_sale publishes both invoicing.pos_sale.recorded
+    # (publish_pos_sale_recorded) and invoicing.invoice.paid
+    # (publish_invoice_paid) -- both now call this one underlying
+    # publish_event in app/events.py (main.py no longer imports
+    # publish_event directly at all since that refactor), so capture
+    # every call and pick out the one this test actually cares about.
+    monkeypatch.setattr("app.events.publish_event", fake_publish_event)
 
     product_id = str(uuid.uuid4())
     await client.post(
@@ -71,8 +99,9 @@ async def test_pos_sale_publishes_pos_sale_recorded_only_for_catalog_lines(clien
         },
     )
 
-    assert captured["type"] == "invoicing.pos_sale.recorded"
-    assert captured["payload"]["lines"] == [{"product_id": product_id, "quantity": 1, "unit_cost_cents": None}]
+    sale_events = [payload for event_type, payload in captured if event_type == "invoicing.pos_sale.recorded"]
+    assert len(sale_events) == 1
+    assert sale_events[0]["lines"] == [{"product_id": product_id, "quantity": 1.0, "unit_cost_cents": None}]
 
 
 async def test_pos_sale_discounted_line_does_not_show_a_false_balance(client):

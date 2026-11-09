@@ -69,13 +69,35 @@ Every provider below is one of two things:
   three concrete differences (auth header style, endpoint paths, webhook
   signature scheme).
 
-### Pesapal -- stub
+### Pesapal -- code-ready
 
 - Adapter: `friday_common/integrations/pesapal.py` (`PesapalProvider`).
-- Config: `consumer_key`, `consumer_secret`.
-- OAuth-token-based, not a static secret key -- the stub's docstring
-  covers the token exchange and the one piece of real logic it still
-  needs (caching the short-lived bearer token).
+- Config: `consumer_key`, `consumer_secret` (from a Pesapal merchant
+  account's API settings).
+- Call site: POS checkout only, not invoices -- `apps/invoicing/app/
+  main.py`'s `pay_with_pesapal` (`POST /pos/sales/pay-with-pesapal`,
+  wired to the "Mobile Money" button in `web/src/apps/pos/PosPage.tsx`)
+  starts a hosted Pesapal order and returns a `redirect_url`; the actual
+  "mark this sale paid" side effect happens in
+  `apps/invoicing/app/webhooks.py`'s `pesapal_webhook`, once Pesapal's
+  IPN callback lands *and* a fresh `GetTransactionStatus` call confirms
+  it -- same "the webhook is the only thing that moves money
+  server-side" posture as Stripe's `pay_with_card`, just with an extra
+  verification step since Pesapal's IPN body is never trusted on its own.
+- **Deployment note**: unlike Stripe (where the webhook URL is typed
+  into the Stripe Dashboard by hand), Pesapal's callback URL is
+  registered by the adapter itself at runtime (`RegisterIPN`), which
+  means this service needs to know its own externally-reachable URL --
+  set `APP_PUBLIC_URL` (see `.env.example`) on the **invoicing**
+  service's deployment specifically (no other app needs this). That URL
+  must be routed straight to the invoicing service bypassing the kernel,
+  the same way `/external/webhooks/stripe` already has to be (see that
+  section's own deployment note) -- `/external/webhooks/pesapal` needs
+  the identical treatment.
+- Checkout is deliberately online-only: unlike cash/card, there's no
+  offline-queue path for a Pesapal sale (pos-engine's `OfflineQueue` is
+  cash/card only) -- the register shows a waiting state until the IPN
+  confirms, it doesn't optimistically clear the cart first.
 
 ## Notifications
 

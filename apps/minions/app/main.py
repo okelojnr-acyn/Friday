@@ -10,9 +10,12 @@ from friday_common import (
     get_current_principal,
     get_integration_config,
     get_org_session,
+    get_session,
     publish_event,
+    require_kernel_token,
     require_role,
     resource,
+    set_org_context,
 )
 from friday_common.integrations import AcynWalletProvider
 from sqlalchemy import select
@@ -25,6 +28,7 @@ from .models import (
     PAYOUT_METHODS,
     PAYROLL_RUN_STATUSES,
     Employee,
+    EmployeeSale,
     ExpenseClaim,
     PayrollLine,
     PayrollRun,
@@ -32,6 +36,7 @@ from .models import (
 from .schemas import (
     EmployeeCreate,
     EmployeeOut,
+    EmployeeSaleOut,
     ExpenseClaimCreate,
     ExpenseClaimOut,
     ExpenseClaimStatusUpdate,
@@ -104,6 +109,24 @@ resource(
     )
 )
 
+resource(
+    ResourceSpec(
+        name="employee_sale",
+        app="minions",
+        label="Employee Sale",
+        label_plural="Employee Sales",
+        views=("list",),
+        search_fields=("employee_name", "invoice_number"),
+        fields=(
+            FieldSpec("employee_id", "Employee", "reference", reference="minions.employee", form_visible=False),
+            FieldSpec("employee_name", "Employee name", "text", form_visible=False),
+            FieldSpec("invoice_number", "Sale", "text", form_visible=False),
+            FieldSpec("amount_cents", "Amount", "currency", form_visible=False),
+            FieldSpec("created_at", "When", "datetime", form_visible=False),
+        ),
+    )
+)
+
 app = create_app("friday-minions")
 
 
@@ -138,6 +161,32 @@ async def _resolve_my_employee(session: AsyncSession, principal: Principal) -> E
     return employee
 
 
+async def _resolve_employee_by_identity(
+    session: AsyncSession, org_id: uuid.UUID, user_id: str | None, email: str | None
+) -> Employee | None:
+    """Same two-step lookup as _resolve_my_employee (user_id, falling back
+    to email, claiming by backfilling user_id on an email match) --
+    but for resolving someone else's identity from an event payload
+    (invoicing.pos_sale.recorded's cashier_user_id/cashier_email) rather
+    than the current caller's own Principal. Returns None instead of
+    404ing: not every cashier is a provisioned employee (an owner ringing
+    up a one-off sale, say), and a webhook has no one to report an error
+    to anyway."""
+    if user_id:
+        rows = await session.execute(select(Employee).where(Employee.org_id == org_id, Employee.user_id == user_id))
+        employee = rows.scalars().first()
+        if employee is not None:
+            return employee
+
+    if not email:
+        return None
+    rows = await session.execute(select(Employee).where(Employee.org_id == org_id, Employee.email == email))
+    employee = rows.scalars().first()
+    if employee is not None and user_id and not employee.user_id:
+        employee.user_id = user_id
+    return employee
+
+
 async def _provider(principal: Principal) -> AcynWalletProvider:
     config = await get_integration_config(principal.org_id, "acyn_wallet")
     if not config.get("api_key"):
@@ -149,6 +198,60 @@ employees_router = APIRouter(prefix="/employees", tags=["employees"])
 me_router = APIRouter(prefix="/me", tags=["me"])
 expense_claims_router = APIRouter(prefix="/expense_claims", tags=["expense-claims"])
 payroll_router = APIRouter(prefix="/payroll_runs", tags=["payroll"])
+employee_sales_router = APIRouter(prefix="/employee_sales", tags=["employee-sales"])
+webhooks_router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
+
+
+@employee_sales_router.get("", response_model=list[EmployeeSaleOut])
+async def list_employee_sales(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(
+        select(EmployeeSale).where(EmployeeSale.org_id == _org(principal)).order_by(EmployeeSale.created_at.desc())
+    )
+    return rows.scalars().all()
+
+
+@webhooks_router.post("/pos-sale", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_session)):
+    """Subscribed to invoicing.pos_sale.recorded (see
+    kernel/internal/gateway/events.go) -- attributes the sale to whichever
+    employee rang it up, same event apps/inventory's pos_sale_recorded and
+    apps/accounting's pos_sale_cogs already subscribe to for stock/COGS.
+    Silently skipped if the cashier isn't a provisioned employee, or the
+    sale carries no cashier identity at all (pre-existing sales recorded
+    before this feature shipped, or return_pos_sale predating it)."""
+    payload = body.get("payload", {})
+    org_id = uuid.UUID(body["org_id"])
+    await set_org_context(session, str(org_id))
+
+    invoice_number = payload.get("invoice_number") or ""
+    if not invoice_number:
+        return
+    existing = await session.execute(
+        select(EmployeeSale.id).where(EmployeeSale.org_id == org_id, EmployeeSale.invoice_number == invoice_number)
+    )
+    if existing.first() is not None:
+        return  # already recorded -- event delivery is at-least-once
+
+    employee = await _resolve_employee_by_identity(
+        session, org_id, payload.get("cashier_user_id"), payload.get("cashier_email")
+    )
+    if employee is None:
+        return
+
+    session.add(
+        EmployeeSale(
+            org_id=org_id,
+            employee_id=employee.id,
+            employee_name=employee.name,
+            invoice_number=invoice_number,
+            amount_cents=payload.get("amount_cents", 0),
+            created_at=datetime.now(UTC),
+        )
+    )
+    await session.commit()
 
 
 @employees_router.get("", response_model=list[EmployeeOut])
@@ -540,3 +643,5 @@ app.include_router(employees_router)
 app.include_router(me_router)
 app.include_router(expense_claims_router)
 app.include_router(payroll_router)
+app.include_router(employee_sales_router)
+app.include_router(webhooks_router)

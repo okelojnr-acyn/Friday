@@ -137,7 +137,7 @@ const PROVIDERS: ProviderDescriptor[] = [
     label: "Pesapal",
     icon: "credit-card",
     category: "Payments",
-    codeReady: false,
+    codeReady: true,
     docAnchor: "pesapal",
     fields: [
       { key: "consumer_key", label: "Consumer key" },

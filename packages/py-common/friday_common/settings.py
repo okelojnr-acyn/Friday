@@ -31,6 +31,17 @@ class FridaySettings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # This service's own externally-reachable base URL -- empty by
+    # default since almost nothing needs it (every other app is always
+    # addressed *from* the kernel, never needs to know its own public
+    # address). The one exception: Pesapal's RegisterIPN call
+    # (friday_common.integrations.pesapal) has to hand Pesapal a real
+    # callback URL up front, the same "bypasses the kernel, routed
+    # straight to this service" path /external/webhooks/stripe already
+    # uses -- see apps/invoicing/app/main.py's pay_with_pesapal. Only the
+    # invoicing service's deployment needs to set this.
+    app_public_url: str = ""
+
 
 @lru_cache
 def get_settings() -> FridaySettings:

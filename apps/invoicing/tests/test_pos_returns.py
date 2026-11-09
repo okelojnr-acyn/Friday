@@ -54,7 +54,10 @@ async def test_return_pos_sale_restocks_via_existing_inventory_webhook(client, m
     async def fake_publish_event(event_type, org_id, payload):
         captured.append((event_type, payload))
 
-    monkeypatch.setattr("app.main.publish_event", fake_publish_event)
+    # Both pos_sale.recorded and invoice.paid now go through this one
+    # underlying publish_event in app/events.py -- filter to the event
+    # this test actually cares about rather than assuming count.
+    monkeypatch.setattr("app.events.publish_event", fake_publish_event)
 
     sale = (
         await client.post(
@@ -67,14 +70,13 @@ async def test_return_pos_sale_restocks_via_existing_inventory_webhook(client, m
             },
         )
     ).json()
-    captured.clear()  # drop the sale's own publish, only the return's matters here
+    captured.clear()  # drop the sale's own publishes, only the return's matters here
 
     await client.post(f"/pos/sales/{sale['number']}/return")
 
-    assert len(captured) == 1
-    event_type, payload = captured[0]
-    assert event_type == "invoicing.pos_sale.recorded"
-    assert payload["lines"] == [{"product_id": product_id, "quantity": -3.0, "unit_cost_cents": None}]
+    sale_events = [payload for event_type, payload in captured if event_type == "invoicing.pos_sale.recorded"]
+    assert len(sale_events) == 1
+    assert sale_events[0]["lines"] == [{"product_id": product_id, "quantity": -3.0, "unit_cost_cents": None}]
 
 
 async def test_return_pos_sale_carries_discount_and_cost_through_to_refund_line(client):

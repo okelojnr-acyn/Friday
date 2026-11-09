@@ -62,6 +62,16 @@ class PayWithCardOut(BaseModel):
     publishable_key: str
 
 
+class PayWithPesapalOut(BaseModel):
+    invoice_id: uuid.UUID
+    redirect_url: str
+
+
+class PosSaleStatusOut(BaseModel):
+    invoice_id: uuid.UUID
+    status: str
+
+
 class PaymentCreate(BaseModel):
     amount_cents: int = Field(gt=0)
     method: str = "other"
@@ -93,6 +103,8 @@ class PosShiftOut(BaseModel):
     closing_count_cents: int | None
     expected_cents: int | None
     status: str
+    opened_by_user_id: str | None
+    opened_by_email: str | None
 
     model_config = {"from_attributes": True}
 
@@ -106,6 +118,8 @@ class InvoiceOut(BaseModel):
     currency: str
     source: str
     source_ref: str | None
+    cashier_user_id: str | None
+    cashier_email: str | None
     due_at: datetime | None
     recurring_interval: str
     next_recurrence_at: datetime | None
@@ -136,6 +150,8 @@ class InvoiceOut(BaseModel):
             currency=inv.currency,
             source=inv.source,
             source_ref=inv.source_ref,
+            cashier_user_id=inv.cashier_user_id,
+            cashier_email=inv.cashier_email,
             due_at=inv.due_at,
             recurring_interval=inv.recurring_interval,
             next_recurrence_at=inv.next_recurrence_at,

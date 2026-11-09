@@ -54,6 +54,18 @@ class ExpenseClaimStatusUpdate(BaseModel):
     status: str
 
 
+class EmployeeSaleOut(BaseModel):
+    id: uuid.UUID
+    org_id: uuid.UUID
+    employee_id: uuid.UUID
+    employee_name: str
+    invoice_number: str
+    amount_cents: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class ExpenseClaimOut(BaseModel):
     id: uuid.UUID
     org_id: uuid.UUID

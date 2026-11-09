@@ -1,13 +1,12 @@
-"""Publishes invoicing.invoice.paid -- the event Accounting (see
-kernel/internal/gateway/events.go) subscribes to in order to post a
-cash-basis journal entry (Dr Cash / Cr Revenue / Cr Tax Payable) the
-moment an invoice is actually paid.
+"""Publishes invoicing.invoice.paid and invoicing.pos_sale.recorded --
+events Accounting/Inventory/Minions (see kernel/internal/gateway/events.go)
+subscribe to.
 
 A standalone module, not part of main.py, because this needs to be
 called from both main.py (record_payment, record_pos_sale,
-return_pos_sale) and webhooks.py (the Stripe webhook) -- and main.py
-already imports webhooks.py's routers, so webhooks.py importing back
-from main.py would be circular.
+return_pos_sale, pay_with_pesapal) and webhooks.py (the Stripe/Pesapal
+webhooks) -- and main.py already imports webhooks.py's routers, so
+webhooks.py importing back from main.py would be circular.
 """
 
 from __future__ import annotations
@@ -33,6 +32,39 @@ def invoice_lines_payload(inv: Invoice) -> list[dict]:
         }
         for line in inv.lines
     ]
+
+
+async def publish_pos_sale_recorded(org_id: str, inv: Invoice, charged_cents: int) -> None:
+    """Shared by record_pos_sale, return_pos_sale, and pay_with_pesapal's
+    webhook confirmation -- previously built inline at each call site
+    (slightly differently: record_pos_sale read raw client-supplied
+    lines, return_pos_sale read committed InvoiceLine rows), which is how
+    cashier identity would have had to be threaded through three times.
+    Building it once from `inv.lines` (always committed/refreshed by the
+    time any caller publishes) fixes that drift as a side effect, not
+    just avoids repeating it. Lets Inventory auto-decrement stock and
+    Minions attribute the sale to an employee, both via product_id/
+    cashier_user_id -- freeform/ad-hoc lines with no product_id are
+    skipped on the subscriber side, same as before."""
+    await publish_event(
+        "invoicing.pos_sale.recorded",
+        org_id,
+        {
+            "invoice_number": inv.number,
+            "amount_cents": charged_cents,
+            "cashier_user_id": inv.cashier_user_id,
+            "cashier_email": inv.cashier_email,
+            "lines": [
+                {
+                    "product_id": str(line.product_id),
+                    "quantity": float(line.quantity),
+                    "unit_cost_cents": line.unit_cost_cents,
+                }
+                for line in inv.lines
+                if line.product_id
+            ],
+        },
+    )
 
 
 async def publish_invoice_paid(org_id: str, inv: Invoice, paid_amount_cents: int, lines_payload: list[dict]) -> None:
