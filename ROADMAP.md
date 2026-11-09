@@ -199,16 +199,30 @@ whole main shell), **platform authenticators only**.
 
 ## Next up, in order
 
-### 1. Verify everything for real, not just statically
+### 1. Verify everything for real, not just statically — partially done
 
-Two sessions' worth of work now sits unverified against anything live:
-Postgres-backed tests (`pytest` in `apps/invoicing`/`apps/minions`,
-blocked by this machine's Docker Desktop not starting), the Pesapal
-sandbox flow, and — new this session — the actual clock-in flow in a
-real browser with a real passkey, plus the hardware spike on whether a
-shared device correctly distinguishes multiple enrolled fingerprints
-(see above). Do all of this before building further on top of either
-phase; the risk compounds the longer it stacks unverified.
+Attempted at the start of the next session: a real browser test (via
+claude-in-chrome) found and fixed a genuine bug — visiting `/pos.html`
+directly rewrote the URL to `/` via `PosApp`'s own wildcard route,
+harmless until the next reload silently served the main shell instead
+of POS. Fixed (`web/src/pos-main.tsx`, adaptive `basename`). Confirmed
+clean console, correct routing, and graceful failure with no backend
+running. **Minions has the identical latent bug** (same unmodified
+`BrowserRouter` pattern, never hit because nobody's tested visiting
+`minions.html` directly outside its intended subdomain) — flagged, not
+fixed, out of this session's scope.
+
+Still blocked, **not a code problem either time**: Docker Desktop still
+won't start on this machine (the only sanctioned local Postgres) — no
+`pytest` run, no real WebAuthn register/login ceremony exercised end to
+end, no Pesapal sandbox flow confirmed. A native Postgres instance
+exists on this machine but belongs to other, unrelated work — not
+something to repurpose or guess credentials into. The shared-device
+multi-fingerprint hardware spike remains entirely undone — it needs
+physical device access, which no amount of software debugging
+substitutes for. Get Docker working (or any real Postgres this project
+actually owns) and get hands on a real tablet before trusting either
+phase live.
 
 ### 2. Close the COGS no-op
 
