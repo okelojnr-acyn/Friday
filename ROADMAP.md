@@ -199,7 +199,7 @@ whole main shell), **platform authenticators only**.
 
 ## Next up, in order
 
-### 1. Verify everything for real, not just statically — partially done
+### 1. Verify everything for real, not just statically — done, as far as software alone can take it
 
 Attempted at the start of the next session: a real browser test (via
 claude-in-chrome) found and fixed a genuine bug — visiting `/pos.html`
@@ -207,10 +207,12 @@ directly rewrote the URL to `/` via `PosApp`'s own wildcard route,
 harmless until the next reload silently served the main shell instead
 of POS. Fixed (`web/src/pos-main.tsx`, adaptive `basename`). Confirmed
 clean console, correct routing, and graceful failure with no backend
-running. **Minions has the identical latent bug** (same unmodified
+running. **Minions had the identical latent bug** (same unmodified
 `BrowserRouter` pattern, never hit because nobody's tested visiting
-`minions.html` directly outside its intended subdomain) — flagged, not
-fixed, out of this session's scope.
+`minions.html` directly outside its intended subdomain) — flagged this
+session, fixed next (`web/src/minions-main.tsx`, same adaptive
+`basename`), confirmed in a real browser: stays at `/minions.html`, no
+redirect.
 
 **Later still — Docker Desktop recovered (user did a factory reset) and
 `pytest` finally ran for real.** Worth the wait: it caught two genuine
@@ -237,15 +239,35 @@ bugs neither static checking nor manual tracing had surfaced.
 - **Both suites now fully green for real**: 72/72 `apps/invoicing`,
   31/31 `apps/minions`.
 
-Still unverified, **not a code problem, needs different resources**:
-no real WebAuthn register/login ceremony exercised in an actual browser
-with a real passkey (claude-in-chrome confirmed the UI renders and fails
-gracefully with no backend, but never got a live backend to complete the
-ceremony against), no Pesapal sandbox flow confirmed against the real
-API, and the shared-device multi-fingerprint hardware spike remains
-entirely undone — needs physical device access. Minions' identical
-latent routing bug (see above) also still needs its own fix, out of
-scope here.
+**Later still — the real WebAuthn ceremony test, with the full stack
+actually running together for the first time.** Postgres (Docker,
+trust-auth container), the kernel, and the web dev server were all
+brought up together and exercised for real via claude-in-chrome:
+
+- **Real signup end to end**: created a real org, the kernel logged a
+  genuine OTP to its own stdout (no SMTP configured), entered it, got a
+  real session. Confirms the entire kernel auth stack (JWT issuance,
+  org creation, OTP flow, CORS, frontend-kernel wiring) works for real,
+  not just in tests.
+- **The WebAuthn ceremony itself genuinely can't be completed from
+  here** — confirmed, not assumed. Clicking "Set up a passkey" correctly
+  called `register-options`, got a real challenge back from the kernel,
+  and invoked the browser's real `navigator.credentials.create()` — it
+  didn't hang or error out before that point. It resolved a few seconds
+  later to "Could not set up a passkey": this automated Chrome
+  environment has no platform authenticator available, so the ceremony
+  fails cleanly without ever reaching a biometric prompt. This is as far
+  as software alone can verify the chain; completing a real
+  registration (and the shared-device multi-fingerprint question) needs
+  an actual device with a real sensor.
+- **The dashboard and the POS clock-in gate both confirmed working for
+  real** against the live backend: all 8 apps render, the "Point of
+  Sale" tile correctly does a real cross-document navigation to
+  `/pos.html` (not a broken SPA route), POS correctly shares the main
+  shell's session (no separate login needed) while still demanding a
+  fresh clock-in scan on that page load — exactly the designed
+  behavior. The `pos-main.tsx` basename fix held too: no reversion to
+  the redirect-to-"/" bug.
 
 ### 2. Close the COGS no-op
 
