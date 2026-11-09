@@ -212,17 +212,40 @@ running. **Minions has the identical latent bug** (same unmodified
 `minions.html` directly outside its intended subdomain) — flagged, not
 fixed, out of this session's scope.
 
-Still blocked, **not a code problem either time**: Docker Desktop still
-won't start on this machine (the only sanctioned local Postgres) — no
-`pytest` run, no real WebAuthn register/login ceremony exercised end to
-end, no Pesapal sandbox flow confirmed. A native Postgres instance
-exists on this machine but belongs to other, unrelated work — not
-something to repurpose or guess credentials into. The shared-device
-multi-fingerprint hardware spike remains entirely undone — it needs
-physical device access, which no amount of software debugging
-substitutes for. Get Docker working (or any real Postgres this project
-actually owns) and get hands on a real tablet before trusting either
-phase live.
+**Later still — Docker Desktop recovered (user did a factory reset) and
+`pytest` finally ran for real.** Worth the wait: it caught two genuine
+bugs neither static checking nor manual tracing had surfaced.
+
+- **`payments_method_check` rejected every real Pesapal payment.**
+  `0007_pos_identity.sql`/`models.py` added `"pesapal"` to the Python-side
+  `PAYMENT_METHODS` tuple but never widened the matching DB-level CHECK
+  constraint — `pesapal_webhook`'s own `Payment` insert violated it on
+  every confirmed payment. New
+  `apps/invoicing/migrations/0008_pesapal_payment_method.sql` (same
+  drop+add pattern `0003_pos_returns.sql` already used to add
+  `"refund"`). This is exactly the kind of bug that only a real
+  migrated database, not syntax/lint checks, can catch — and exactly
+  why "verified by tracing" was never a substitute for "verified by
+  running."
+- **Three new `employee_sales` tests were silently testing nothing.**
+  `POST /employees` is `require_role("admin")`-gated; the tests' default
+  `principal` fixture is `role="member"`, so every employee-creation
+  call 403'd — making every downstream assertion about "does the sale
+  get attributed correctly" meaningless (there was never an employee to
+  attribute to). Fixed to use the same `_as_admin` helper
+  `test_employees.py`/`test_payroll.py` already established.
+- **Both suites now fully green for real**: 72/72 `apps/invoicing`,
+  31/31 `apps/minions`.
+
+Still unverified, **not a code problem, needs different resources**:
+no real WebAuthn register/login ceremony exercised in an actual browser
+with a real passkey (claude-in-chrome confirmed the UI renders and fails
+gracefully with no backend, but never got a live backend to complete the
+ceremony against), no Pesapal sandbox flow confirmed against the real
+API, and the shared-device multi-fingerprint hardware spike remains
+entirely undone — needs physical device access. Minions' identical
+latent routing bug (see above) also still needs its own fix, out of
+scope here.
 
 ### 2. Close the COGS no-op
 

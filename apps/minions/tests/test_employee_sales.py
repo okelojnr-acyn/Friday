@@ -4,6 +4,21 @@ employee rang it up. Mirrors apps/inventory/tests/test_webhooks.py's
 pattern for the same event, just for a different subscriber.
 """
 
+from friday_common.testing import make_principal
+
+
+def _as_admin(as_principal, principal):
+    # POST /employees is require_role("admin") -- same helper
+    # test_employees.py/test_payroll.py already use, needed here too
+    # since the default `principal` fixture is role="member" and would
+    # 403 on every employee-creation call below (caught by actually
+    # running this suite against a real DB: every assertion downstream
+    # of a silently-403'd creation failed in a way that looked like a
+    # pos-sale-attribution bug but was really just a missing admin
+    # principal in the test itself).
+    admin = make_principal(org_id=principal.org_id, role="admin")
+    as_principal(admin)
+
 
 def _event(org_id: str, invoice_number: str, cashier_user_id: str | None, cashier_email: str | None, cents: int):
     return {
@@ -18,8 +33,10 @@ def _event(org_id: str, invoice_number: str, cashier_user_id: str | None, cashie
     }
 
 
-async def test_pos_sale_recorded_attributes_sale_by_cashier_user_id(client, kernel_auth_header, principal):
+async def test_pos_sale_recorded_attributes_sale_by_cashier_user_id(client, as_principal, kernel_auth_header, principal):
+    _as_admin(as_principal, principal)
     await client.post("/employees", json={"name": "Alex", "email": principal.email})
+    as_principal(principal)  # back to the cashier whose own employee row this is
     # Backfills Employee.user_id = principal.user_id via
     # _resolve_my_employee's claim-by-email logic (same self-service path
     # /me/wallet always uses) -- so the webhook's lookup below hits the
@@ -39,7 +56,8 @@ async def test_pos_sale_recorded_attributes_sale_by_cashier_user_id(client, kern
     assert sales[0]["amount_cents"] == 1000
 
 
-async def test_pos_sale_recorded_falls_back_to_email_and_claims_user_id(client, kernel_auth_header, principal):
+async def test_pos_sale_recorded_falls_back_to_email_and_claims_user_id(client, as_principal, kernel_auth_header, principal):
+    _as_admin(as_principal, principal)
     employee = (
         await client.post("/employees", json={"name": "Jess", "email": "jess@example.com"})
     ).json()
@@ -67,7 +85,8 @@ async def test_pos_sale_recorded_skipped_when_cashier_is_not_a_provisioned_emplo
     assert (await client.get("/employee_sales")).json() == []
 
 
-async def test_pos_sale_recorded_is_idempotent_on_replay(client, kernel_auth_header, principal):
+async def test_pos_sale_recorded_is_idempotent_on_replay(client, as_principal, kernel_auth_header, principal):
+    _as_admin(as_principal, principal)
     await client.post("/employees", json={"name": "Alex", "email": principal.email})
     event = _event(principal.org_id, "POS-3", principal.user_id, principal.email, 500)
 
