@@ -20,7 +20,7 @@ interface FormViewProps {
   onSaved: (record: RecordRow) => void;
 }
 
-function initialValues(spec: ResourceSpec, record?: RecordRow): Record<string, unknown> {
+export function initialValues(spec: ResourceSpec, record?: RecordRow): Record<string, unknown> {
   const values: Record<string, unknown> = {};
   for (const field of spec.fields) {
     if (!field.formVisible) continue;
@@ -48,7 +48,7 @@ function initialValues(spec: ResourceSpec, record?: RecordRow): Record<string, u
   return values;
 }
 
-function toWireBody(spec: ResourceSpec, values: Record<string, unknown>): Record<string, unknown> {
+export function toWireBody(spec: ResourceSpec, values: Record<string, unknown>): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   for (const field of spec.fields) {
     if (!field.formVisible) continue;

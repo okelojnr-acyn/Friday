@@ -11,6 +11,7 @@ import { KanbanView } from "../ui/resource/KanbanView";
 import { FormView } from "../ui/resource/FormView";
 import { CUSTOM_CREATE_SCREENS } from "./customCreateScreens";
 import { BulkAddProductsPanel } from "../apps/inventory/BulkAddProductsPanel";
+import { ImportCsvPanel } from "../ui/resource/ImportCsvPanel";
 
 export function ResourcePage() {
   const { app = "", resource = "" } = useParams();
@@ -21,6 +22,7 @@ export function ResourcePage() {
   const [view, setView] = useState<ViewKind | null>(null);
   const [editing, setEditing] = useState<RecordRow | "new" | null>(null);
   const [bulkAdding, setBulkAdding] = useState(false);
+  const [importingCsv, setImportingCsv] = useState(false);
 
   useEffect(() => {
     setSchema(null);
@@ -142,6 +144,9 @@ export function ResourcePage() {
               <Icon name="barcode" size={14} /> Bulk add
             </Button>
           ) : null}
+          <Button variant="secondary" size="sm" className="btn-pill" onClick={() => setImportingCsv(true)}>
+            <Icon name="upload" size={14} /> Import CSV
+          </Button>
           <Button variant="primary" size="sm" className="btn-pill" onClick={() => setEditing("new")}>
             <Icon name="plus" size={14} /> New
           </Button>
@@ -176,6 +181,15 @@ export function ResourcePage() {
 
       {bulkAdding ? (
         <BulkAddProductsPanel onClose={() => setBulkAdding(false)} onSaved={handleBulkSaved} />
+      ) : null}
+
+      {importingCsv ? (
+        <ImportCsvPanel
+          spec={spec}
+          app={app}
+          onClose={() => setImportingCsv(false)}
+          onImported={handleBulkSaved}
+        />
       ) : null}
     </div>
   );

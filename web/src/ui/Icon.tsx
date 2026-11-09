@@ -33,7 +33,8 @@ export type IconName =
   | "percent"
   | "ledger"
   | "users"
-  | "truck";
+  | "truck"
+  | "upload";
 
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = {
@@ -267,6 +268,13 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
           <path d="M14 10h4l3 3v3h-7z" />
           <circle cx="7" cy="18" r="1.6" />
           <circle cx="17.5" cy="18" r="1.6" />
+        </svg>
+      );
+    case "upload":
+      return (
+        <svg {...common}>
+          <path d="M12 16V4M7 9l5-5 5 5" />
+          <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
         </svg>
       );
     case "app-window":
