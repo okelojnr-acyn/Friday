@@ -49,6 +49,17 @@ class CalendarProvider(ABC):
     @abstractmethod
     async def create_event(self, title: str, start_iso: str, end_iso: str, attendees: list[str]) -> dict: ...
 
+    @abstractmethod
+    async def update_event(self, event_id: str, title: str, start_iso: str, end_iso: str, attendees: list[str]) -> dict:
+        """Reschedule/retitle/re-invite an event create_event already made."""
+
+    @abstractmethod
+    async def delete_event(self, event_id: str) -> None:
+        """Cancel an event create_event already made -- callers use this
+        when the thing that scheduled it (e.g. Minions' Meeting) is
+        itself deleted, so a canceled meeting doesn't leave a stale
+        invite sitting on every attendee's real calendar."""
+
 
 class WalletProvider(ABC):
     """A custodial business wallet -- Acyn Wallet's Partner API shape

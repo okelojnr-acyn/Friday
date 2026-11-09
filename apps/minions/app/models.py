@@ -135,3 +135,43 @@ class EmployeeSale(Base):
     invoice_number: Mapped[str] = mapped_column(Text, nullable=False)
     amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+MEETING_SYNC_STATUSES = ("pending", "synced", "error")
+
+
+class Meeting(Base):
+    """A scheduled meeting, synced to the org's connected Google Calendar
+    (friday_common.integrations.GoogleCalendarProvider) the moment it's
+    created or rescheduled. A resource of its own, not a Projects Task
+    with calendar fields bolted on: a Task is one due date + one
+    assignee shaped for kanban work-tracking, while a meeting is a time
+    *range* with potentially several attendees -- different enough
+    shapes that forcing one into the other would warp Task for every
+    other caller of it.
+
+    sync_status/sync_error are deliberately visible, not swallowed: an
+    org that hasn't connected Google Calendar yet (or whose token
+    expired) can still schedule a meeting -- it just stays 'pending'/
+    'error' with a reason shown, the same "don't block the record on an
+    optional integration" posture as ExpenseClaim's own payout step."""
+
+    __tablename__ = "meetings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Comma-separated -- same free-text-email convention as
+    # projects.tasks.assignee_email, just more than one of them. No
+    # separate attendees table for a v1 with no per-attendee RSVP state
+    # to track yet.
+    attendee_emails: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_by_email: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    calendar_event_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    calendar_link: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    sync_status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    sync_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

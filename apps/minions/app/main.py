@@ -17,19 +17,21 @@ from friday_common import (
     resource,
     set_org_context,
 )
-from friday_common.integrations import AcynWalletProvider
+from friday_common.integrations import AcynWalletProvider, GoogleCalendarProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     EMPLOYEE_STATUSES,
     EXPENSE_CLAIM_STATUSES,
+    MEETING_SYNC_STATUSES,
     PAY_FREQUENCIES,
     PAYOUT_METHODS,
     PAYROLL_RUN_STATUSES,
     Employee,
     EmployeeSale,
     ExpenseClaim,
+    Meeting,
     PayrollLine,
     PayrollRun,
 )
@@ -40,6 +42,9 @@ from .schemas import (
     ExpenseClaimCreate,
     ExpenseClaimOut,
     ExpenseClaimStatusUpdate,
+    MeetingCreate,
+    MeetingOut,
+    MeetingUpdate,
     MyPayrollLineOut,
     PayrollRunCreate,
     PayrollRunOut,
@@ -127,6 +132,28 @@ resource(
     )
 )
 
+resource(
+    ResourceSpec(
+        name="meeting",
+        app="minions",
+        label="Meeting",
+        label_plural="Meetings",
+        views=("list", "form"),
+        search_fields=("title",),
+        fields=(
+            FieldSpec("title", "Title", "text", required=True),
+            FieldSpec("starts_at", "Starts", "datetime", required=True),
+            FieldSpec("ends_at", "Ends", "datetime", required=True),
+            FieldSpec("attendee_emails", "Attendees (comma-separated)", "text"),
+            FieldSpec("created_by_email", "Scheduled by", "email", form_visible=False),
+            FieldSpec("sync_status", "Calendar sync", "select", options=MEETING_SYNC_STATUSES, form_visible=False),
+            FieldSpec("sync_error", "Sync error", "text", form_visible=False, list_visible=False),
+            FieldSpec("calendar_link", "Calendar link", "text", form_visible=False, list_visible=False),
+            FieldSpec("created_at", "Created", "datetime", form_visible=False),
+        ),
+    )
+)
+
 app = create_app("friday-minions")
 
 
@@ -194,11 +221,60 @@ async def _provider(principal: Principal) -> AcynWalletProvider:
     return AcynWalletProvider(config)
 
 
+async def _calendar_provider(org_id: str) -> GoogleCalendarProvider | None:
+    """None, not an exception -- Calendar sync is optional (see
+    Meeting's own doc comment), so a missing/incomplete config just
+    means "stays pending", the same way Employee.wallet_address being
+    unset means a payroll line stays 'blocked' rather than erroring the
+    whole run."""
+    config = await get_integration_config(org_id, "google_calendar")
+    if not (config.get("client_id") and config.get("client_secret") and config.get("refresh_token")):
+        return None
+    return GoogleCalendarProvider(config)
+
+
+def _attendee_list(attendee_emails: str) -> list[str]:
+    return [e.strip() for e in attendee_emails.split(",") if e.strip()]
+
+
+async def _sync_meeting_to_calendar(meeting: Meeting) -> None:
+    """Best-effort: create (or update, if already synced once) the
+    Google Calendar event for meeting, mutating its sync_status/
+    calendar_event_id/calendar_link/sync_error fields in place. Never
+    raises -- a Calendar outage or a disconnected integration shouldn't
+    turn into a 500 on what is, from the caller's point of view, a
+    successful meeting create/update; the result is just visible on the
+    record instead (same posture as ExpenseClaim's payout step)."""
+    provider = await _calendar_provider(str(meeting.org_id))
+    if provider is None:
+        meeting.sync_status = "pending"
+        meeting.sync_error = "Google Calendar is not connected -- add it in Settings > Integrations"
+        return
+    try:
+        attendees = _attendee_list(meeting.attendee_emails)
+        if meeting.calendar_event_id:
+            event = await provider.update_event(
+                meeting.calendar_event_id, meeting.title, meeting.starts_at.isoformat(), meeting.ends_at.isoformat(), attendees
+            )
+        else:
+            event = await provider.create_event(
+                meeting.title, meeting.starts_at.isoformat(), meeting.ends_at.isoformat(), attendees
+            )
+        meeting.calendar_event_id = event.get("id", meeting.calendar_event_id)
+        meeting.calendar_link = event.get("htmlLink", meeting.calendar_link)
+        meeting.sync_status = "synced"
+        meeting.sync_error = ""
+    except Exception as exc:  # noqa: BLE001 -- any failure here just means "stays unsynced", see doc comment
+        meeting.sync_status = "error"
+        meeting.sync_error = str(exc)[:500]
+
+
 employees_router = APIRouter(prefix="/employees", tags=["employees"])
 me_router = APIRouter(prefix="/me", tags=["me"])
 expense_claims_router = APIRouter(prefix="/expense_claims", tags=["expense-claims"])
 payroll_router = APIRouter(prefix="/payroll_runs", tags=["payroll"])
 employee_sales_router = APIRouter(prefix="/employee_sales", tags=["employee-sales"])
+meetings_router = APIRouter(prefix="/meetings", tags=["meetings"])
 webhooks_router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
 
 
@@ -211,6 +287,84 @@ async def list_employee_sales(
         select(EmployeeSale).where(EmployeeSale.org_id == _org(principal)).order_by(EmployeeSale.created_at.desc())
     )
     return rows.scalars().all()
+
+
+@meetings_router.get("", response_model=list[MeetingOut])
+async def list_meetings(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(select(Meeting).where(Meeting.org_id == _org(principal)).order_by(Meeting.starts_at))
+    return rows.scalars().all()
+
+
+@meetings_router.post("", response_model=MeetingOut, status_code=201)
+async def create_meeting(
+    body: MeetingCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    if body.ends_at <= body.starts_at:
+        raise HTTPException(422, "ends_at must be after starts_at")
+    now = datetime.now(UTC)
+    meeting = Meeting(
+        org_id=_org(principal),
+        created_by_email=principal.email,
+        created_at=now,
+        updated_at=now,
+        **body.model_dump(),
+    )
+    await _sync_meeting_to_calendar(meeting)
+    session.add(meeting)
+    await session.commit()
+    await session.refresh(meeting)
+    return meeting
+
+
+@meetings_router.patch("/{meeting_id}", response_model=MeetingOut)
+async def update_meeting(
+    meeting_id: uuid.UUID,
+    body: MeetingUpdate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    meeting = await session.get(Meeting, meeting_id)
+    if meeting is None or str(meeting.org_id) != principal.org_id:
+        raise HTTPException(404, "meeting not found")
+    changes = body.model_dump(exclude_unset=True)
+    for field_name, value in changes.items():
+        setattr(meeting, field_name, value)
+    if meeting.ends_at <= meeting.starts_at:
+        raise HTTPException(422, "ends_at must be after starts_at")
+    # Only re-sync if something Calendar actually cares about changed --
+    # an org that hasn't connected Calendar yet shouldn't get a fresh
+    # "not connected" error stamped on every unrelated edit.
+    if changes.keys() & {"title", "starts_at", "ends_at", "attendee_emails"}:
+        await _sync_meeting_to_calendar(meeting)
+    meeting.updated_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(meeting)
+    return meeting
+
+
+@meetings_router.delete("/{meeting_id}", status_code=204)
+async def delete_meeting(
+    meeting_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    meeting = await session.get(Meeting, meeting_id)
+    if meeting is None or str(meeting.org_id) != principal.org_id:
+        raise HTTPException(404, "meeting not found")
+    if meeting.calendar_event_id:
+        provider = await _calendar_provider(str(meeting.org_id))
+        if provider is not None:
+            try:
+                await provider.delete_event(meeting.calendar_event_id)
+            except Exception:  # noqa: BLE001 -- deleting our own record shouldn't hinge on Google's API being up
+                pass
+    await session.delete(meeting)
+    await session.commit()
 
 
 @webhooks_router.post("/pos-sale", dependencies=[Depends(require_kernel_token)], status_code=204)
@@ -644,4 +798,5 @@ app.include_router(me_router)
 app.include_router(expense_claims_router)
 app.include_router(payroll_router)
 app.include_router(employee_sales_router)
+app.include_router(meetings_router)
 app.include_router(webhooks_router)

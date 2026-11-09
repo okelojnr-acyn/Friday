@@ -58,3 +58,34 @@ class GoogleCalendarProvider(CalendarProvider):
             )
             resp.raise_for_status()
             return resp.json()
+
+    async def update_event(self, event_id: str, title: str, start_iso: str, end_iso: str, attendees: list[str]) -> dict:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            access_token = await self._access_token(client)
+            resp = await client.patch(
+                f"{GOOGLE_EVENTS_URL}/{event_id}",
+                headers={"Authorization": f"Bearer {access_token}"},
+                json={
+                    "summary": title,
+                    "start": {"dateTime": start_iso},
+                    "end": {"dateTime": end_iso},
+                    "attendees": [{"email": email} for email in attendees],
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def delete_event(self, event_id: str) -> None:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            access_token = await self._access_token(client)
+            resp = await client.delete(
+                f"{GOOGLE_EVENTS_URL}/{event_id}",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            # Google returns 410 Gone for an event already deleted on its
+            # side (e.g. an attendee or the organizer removed it directly
+            # in Google Calendar) -- treat that the same as success rather
+            # than failing a delete that, from this app's perspective,
+            # already got what it wanted.
+            if resp.status_code != 410:
+                resp.raise_for_status()

@@ -170,6 +170,12 @@ Every provider below is one of two things:
 - If a deployed instance's `KERNEL_PUBLIC_URL` is ever wrong, the
   redirect_uri sent to Google won't match what's registered in Cloud
   Console and the consent flow fails at Google's end, not silently.
+- Consumed by: Minions' `meeting` resource (`apps/minions/app/main.py`'s
+  `_sync_meeting_to_calendar`) -- scheduling a meeting there creates a
+  real event on the org's connected calendar; editing its
+  title/time/attendees patches that same event; deleting the meeting
+  cancels it. `create_event`/`update_event`/`delete_event` are all
+  implemented now, not just `create_event`.
 
 ## BaaS
 

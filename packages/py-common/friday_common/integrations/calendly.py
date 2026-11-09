@@ -25,3 +25,13 @@ class CalendlyProvider(CalendarProvider):
         raise NotImplementedError(
             "Calendly adapter is a stub -- see INTEGRATIONS.md#calendly and this file's docstring"
         )
+
+    async def update_event(self, event_id: str, title: str, start_iso: str, end_iso: str, attendees: list[str]) -> dict:
+        raise NotImplementedError(
+            "Calendly adapter is a stub -- see INTEGRATIONS.md#calendly and this file's docstring"
+        )
+
+    async def delete_event(self, event_id: str) -> None:
+        raise NotImplementedError(
+            "Calendly adapter is a stub -- see INTEGRATIONS.md#calendly and this file's docstring"
+        )

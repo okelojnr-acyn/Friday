@@ -145,3 +145,35 @@ class MyPayrollLineOut(BaseModel):
     gross_amount_cents: int
     currency: str
     line_status: str
+
+
+class MeetingCreate(BaseModel):
+    title: str = Field(min_length=1)
+    starts_at: datetime
+    ends_at: datetime
+    attendee_emails: str = ""
+
+
+class MeetingUpdate(BaseModel):
+    title: str | None = None
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    attendee_emails: str | None = None
+
+
+class MeetingOut(BaseModel):
+    id: uuid.UUID
+    org_id: uuid.UUID
+    title: str
+    starts_at: datetime
+    ends_at: datetime
+    attendee_emails: str
+    created_by_email: str
+    calendar_event_id: str
+    calendar_link: str
+    sync_status: str
+    sync_error: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
