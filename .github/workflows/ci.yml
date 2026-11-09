@@ -88,3 +88,21 @@ jobs:
         run: npx tsc --noEmit
       - working-directory: web
         run: npm run build
+
+  notify-release:
+    # Only once every other job has actually passed on main -- this marks
+    # the commit as the recommended Friday version for every Friday
+    # Host-managed tenant's update check, so a build/test failure must
+    # never let a broken commit get marked. See friday-cloud-labs'
+    # api/internal/fridayupdate (CreateReleaseFromCI) for what receives
+    # this and FRIDAY_RELEASE_CI_TOKEN's own docs for the auth model.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [kernel, apps, pos-engine, web]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark this commit as the recommended Friday release
+        run: |
+          curl -sf -X POST https://api.fridayhost.dev/friday-releases/ci \
+            -H "Authorization: Bearer ${{ secrets.FRIDAY_RELEASE_CI_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"commit_sha\":\"${{ github.sha }}\"}"
