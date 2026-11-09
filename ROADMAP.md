@@ -269,17 +269,27 @@ brought up together and exercised for real via claude-in-chrome:
   behavior. The `pos-main.tsx` basename fix held too: no reversion to
   the redirect-to-"/" bug.
 
-### 2. Close the COGS no-op
+### ~~2. Close the COGS no-op~~ — not actually broken, corrected 2026-11-09
 
-`apps/accounting`'s `pos_sale_cogs` webhook has never posted a real
-entry — `unit_cost_cents` is documented as always `None` in the event
-payload (`invoicing.pos_sale.recorded`'s construction in
-`apps/invoicing/app/events.py`), even though `InvoiceLine.unit_cost_cents`
-itself is already populated when a POS line is rung up from the product
-catalog. Margin/profit reporting is silently wrong today as a result —
-revenue posts correctly, cost of goods never does. Likely a small fix
-(thread the already-captured value through), confirm scope before
-starting.
+This was wrong, carried forward from an earlier audit that conflated
+two different functions. `apps/invoicing/app/events.py`'s
+`invoice_lines_payload` does hardcode `unit_cost_cents: None` — but
+that function feeds `invoicing.invoice.paid`, which accounting's
+`invoice_paid` handler never reads `.lines`/`unit_cost_cents` from at
+all (it only posts Cash/Revenue/Tax from top-level amounts). The
+function that actually feeds the COGS webhook
+(`publish_pos_sale_recorded`, same file) has always threaded the real
+value through from committed `InvoiceLine` rows — and `pos-engine`'s
+own `LineItem.unit_cost_cents` (`pos-engine/src/cart.rs`) was
+purpose-built for exactly this, carrying it from the product catalog
+through the whole chain to the event. Confirmed with a real test run
+this session, not just by reading the code: all 13 of
+`apps/accounting/tests/test_webhooks.py`'s tests pass against a live
+DB, including `test_pos_sale_cogs_posts_for_lines_with_a_known_cost`,
+the return-reversal case, and idempotency. If margin reporting looks
+wrong in practice, the actual cause is almost certainly that an org
+hasn't set a real `cost_cents` on its products (defaults to 0, so
+there's genuinely no cost to post) — not a code gap.
 
 ### 3. Decide the fate of the island apps
 
