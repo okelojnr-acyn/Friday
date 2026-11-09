@@ -56,6 +56,19 @@ interface AuthContextValue {
    * creating a brand new org (see kernel/internal/auth/invites.go's
    * AcceptInvite). */
   acceptInvite: (email: string, code: string, fullName: string) => Promise<void>;
+  /** POS clock-in's own "email me a code" -- unlike requestLoginCode,
+   * this is honest about whether the email is actually known (an
+   * existing account, or one an admin already invited), since the
+   * silent-either-way response that's right for a public login page
+   * just reads as "the email never arrived" at a shared register
+   * device. See kernel/internal/auth/invites.go's PosRequestCode. */
+  requestPosCode: (email: string) => Promise<void>;
+  /** Completes requestPosCode -- logs in an existing account, or joins
+   * the org an admin already invited this email into (never creates a
+   * new org/business, unlike verifyCode's signup branch). fullName is
+   * only used the first time, joining a brand new account. See
+   * PosVerifyCode. */
+  verifyPosCode: (email: string, code: string, fullName: string) => Promise<void>;
   /** Usernameless passkey login -- the browser's own passkey picker
    * decides which account, no email prompt at all. */
   loginWithPasskey: () => Promise<void>;
@@ -125,6 +138,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applyAuthResponse],
   );
 
+  const requestPosCode = useCallback(async (email: string) => {
+    await kernelPost("/auth/pos/code", { email });
+  }, []);
+
+  const verifyPosCode = useCallback(
+    async (email: string, code: string, fullName: string) => {
+      const resp = await kernelPost<AuthResponse>("/auth/pos/verify", { email, code, full_name: fullName });
+      applyAuthResponse(resp);
+    },
+    [applyAuthResponse],
+  );
+
   const loginWithPasskey = useCallback(async () => {
     const { session_id, publicKey } = await kernelPost<{
       session_id: string;
@@ -170,11 +195,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       requestLoginCode,
       verifyCode,
       acceptInvite,
+      requestPosCode,
+      verifyPosCode,
       loginWithPasskey,
       addPasskey,
       logout,
     }),
-    [session, ready, startSignup, requestLoginCode, verifyCode, acceptInvite, loginWithPasskey, addPasskey, logout],
+    [
+      session,
+      ready,
+      startSignup,
+      requestLoginCode,
+      verifyCode,
+      acceptInvite,
+      requestPosCode,
+      verifyPosCode,
+      loginWithPasskey,
+      addPasskey,
+      logout,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

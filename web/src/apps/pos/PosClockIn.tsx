@@ -82,9 +82,10 @@ function PosClockInGate() {
  * reliable signal to branch on automatically; asking is simpler and
  * more honest than guessing. */
 function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
-  const { loginWithPasskey, requestLoginCode, verifyCode, addPasskey } = useAuth();
+  const { loginWithPasskey, requestPosCode, verifyPosCode, addPasskey } = useAuth();
   const [mode, setMode] = useState<"scan" | "new-email" | "new-code">("scan");
   const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -107,9 +108,11 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
     setError(null);
     setSubmitting(true);
     try {
-      await requestLoginCode(email);
+      await requestPosCode(email);
       setMode("new-code");
     } catch (err) {
+      // A 404 here means the honest thing: no account, and no pending
+      // admin invite either -- see PosRequestCode's own doc comment.
       setError(err instanceof ApiError ? err.message : "Could not send a code");
     } finally {
       setSubmitting(false);
@@ -121,7 +124,7 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
     setError(null);
     setSubmitting(true);
     try {
-      await verifyCode(email, code);
+      await verifyPosCode(email, code, fullName);
       await addPasskey({ platformOnly: true });
       onClockedIn();
     } catch (err) {
@@ -161,9 +164,15 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
             <FieldWrap label="Your email" required>
               <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
             </FieldWrap>
+            <FieldWrap label="Your name (if this is your first time)">
+              <Input value={fullName} onChange={(e) => setFullName(e.target.value)} />
+            </FieldWrap>
             <Button type="submit" variant="primary" disabled={submitting}>
               {submitting ? "Sending..." : "Email me a code"}
             </Button>
+            <p className="field-label">
+              Only works for an email your admin has already added to the team.
+            </p>
             <p className="field-label">
               <a href="#" onClick={(e) => (e.preventDefault(), setMode("scan"))}>
                 Back to scan

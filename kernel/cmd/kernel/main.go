@@ -81,6 +81,12 @@ func main() {
 	mux.HandleFunc("POST /auth/otp/request", authHandlers.OtpRequest)
 	mux.HandleFunc("POST /auth/otp/verify", authHandlers.OtpVerify)
 	mux.HandleFunc("POST /auth/invites/accept", authHandlers.AcceptInvite)
+	// POS clock-in device: logs in an existing account or joins an
+	// admin-invited one, same honest-vs-silent tradeoff call noted on
+	// PosRequestCode itself. Never reaches completeSignup -- see
+	// PosVerifyCode's own doc comment for why.
+	mux.HandleFunc("POST /auth/pos/code", authHandlers.PosRequestCode)
+	mux.HandleFunc("POST /auth/pos/verify", authHandlers.PosVerifyCode)
 	mux.HandleFunc("POST /auth/passkey/login-options", authHandlers.PasskeyLoginOptions)
 	mux.HandleFunc("POST /auth/passkey/login-verify", authHandlers.PasskeyLoginVerify)
 	mux.Handle("POST /auth/passkey/register-options", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterOptions)))
