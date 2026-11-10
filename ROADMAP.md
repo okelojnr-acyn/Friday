@@ -298,6 +298,57 @@ This is the flow every SME judges a business suite on.
   Pesapal, and show up correctly in P&L and AR aging — in the live
   tenant, with real records.
 
+**Progress 2026-11-10 (same day the plan was written)**
+
+P0 — done in code, CI green, live after "Confirm update":
+- Apps `GET /health` (real query + schema check; `/healthz` stays
+  liveness), kernel `GET /health` aggregating kernel DB + every app,
+  `scripts/smoke.sh <kernel-url>` (`35c9b46`).
+- Error screens: network/CORS failures now surface as
+  `ApiError(0, "Can't reach the Friday server (path) — network or CORS
+  problem")` instead of every page's generic "Could not load …"
+  (`fd696e7`). Root cause of "CRM pipeline isn't starting" / empty
+  Invoicing that day: crm + invoicing still allowed only an old Vercel
+  origin via their own `CORS_ORIGINS`; the kernel now owns CORS for
+  every route and strips app-sent headers (gateway test).
+- **Still open for P0**: Friday Host's `runUpdate` should call
+  `/health` after each recreate and roll back on failure (Friday Host
+  Increment 6.5 item 2) — the endpoint it needs now exists.
+
+P1 — first slice shipped (`090b0d3` backend, `5ced396` web):
+- **Bug fixed**: payments were settled against the *pre-tax* subtotal
+  (record_payment, pay_with_card, Stripe webhook) — a taxed invoice was
+  marked paid / card-charged without its tax. `Invoice.grand_total_cents`
+  is now the single definition. Regression test.
+- Quotes (`kind='quote'` in the invoices table, `0009_quotes.sql`):
+  create, send, decline, **convert to invoice** (identical lines,
+  linked both ways). Invoice/quote endpoints isolated from each other.
+- Per-line **tax %** in the create screen (was missing entirely).
+- **Record payment** (full/partial; bank transfer, cash, card, other
+  e.g. M-Pesa) from the invoice form.
+- **AR aging** (`GET /reports/ar-aging`, per customer per currency) and
+  `/invoicing` now lands on a Receivables page; `is_overdue` /
+  `days_overdue` on every invoice.
+
+P1 — **blockers found, not yet done**:
+1. **Accounting never receives invoice events in production.** Apps
+   publish to the kernel via `KERNEL_INTERNAL_URL=http://kernel:8080`,
+   which doesn't resolve under gVisor (Friday Host Critical #3 /
+   Increment 6.5 item 5). So "paid → journal entry → P&L" works in CI
+   and not live. Fix that before calling any accounting integration done.
+2. Accounting is cash-basis: it only hears `invoicing.invoice.paid`
+   (fully paid). Partial payments and issued-but-unpaid invoices never
+   reach the books, so the balance sheet has no Accounts Receivable.
+   Decision needed: accrual posting (on "sent": Dr AR / Cr Revenue /
+   Cr Tax Payable; on each payment: Dr Cash / Cr AR) — recommended,
+   it's what makes AR aging and the balance sheet agree.
+3. Still to build: quote from a CRM deal (button on the opportunity
+   form → `/quotes` with `opportunity_id`, the field already exists);
+   overdue reminder emails (needs a scheduler — none exists, same gap
+   as recurring invoices' `generate-recurring` endpoint which nothing
+   calls on a timer); PDF invoices/quotes; per-org default currency and
+   tax rate (P4 setup wizard).
+
 **P2 — Roles, approvals, audit (what makes it "enterprise" to a buyer)**
 - Per-app permissions on top of the 4 org roles (e.g. sales can't see
   accounting); approval rules (discount > X%, expense claim > Y,
