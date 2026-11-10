@@ -33,6 +33,44 @@ app needs a real `GET /health` (today they 404 on it) so Friday Host's
 planned blue/green update (its Increment 6.5) can health-check before
 swapping.
 
+### Update 2026-11-10 ~15:00 UTC — why the apps "opened then crashed"
+
+Once routing and the kernel/app `JWT_SECRET` mismatch were fixed on
+the Friday Host side, the next layer showed: **every app's every DB
+query had been failing in production since these apps were deployed**.
+`TypeError: connect() got an unexpected keyword argument 'sslmode'` —
+Friday Host's tenant `DATABASE_URL` is libpq-style (`?sslmode=require`)
+and points at PgBouncer in **transaction** pooling mode; SQLAlchemy's
+asyncpg dialect passed `sslmode` straight into `asyncpg.connect()`.
+Migrations (raw `asyncpg.connect(dsn)`, which does understand
+`sslmode`) worked, which is why startup logs looked healthy. Earlier
+"verified live" checks only ever saw kernel `401`s, never a real query.
+
+Fixed in `packages/py-common/friday_common/db.py` (`a8be626`,
+`d493ebe`, CI green across all 8 apps):
+- `engine_args()`: `sslmode` → asyncpg `ssl`; prepared-statement
+  caches off with unique names (SQLAlchemy's PgBouncer recipe).
+- `_pin_per_transaction()`: `search_path` + `app.current_org_id`
+  re-applied transaction-locally on **every** `after_begin`. A
+  session-level `SET` leaks across apps on pooled server connections;
+  a one-time `SET LOCAL` dies at the first mid-request commit (CI
+  caught that: `relation "wallets" does not exist`).
+- `migrate.py` uses `SET LOCAL` for the same leak reason.
+- Regression test: `apps/crm/tests/test_db_engine_args.py`.
+
+**Passkeys — "Can't reach Google Password Manager"** (Friday + POS):
+no registration request ever reached the kernel (no log lines), so it
+fails inside Chrome before submit — Chrome defaulted to saving the
+passkey into Google Password Manager and couldn't. `b5056bb` adds the
+WebAuthn L3 `hints: ["client-device"]` to registration so Chrome
+prefers Windows Hello / the device's own lock screen. On **Android**
+the device authenticator *is* Google Password Manager, so there the
+fix is device-side (Google account signed in, Play Services up to
+date, screen lock set). Not yet confirmed fixed — needs a real retry.
+
+**Not live until Friday Host "Confirm update" is clicked for all 9
+servers** (release `b5056bb` was auto-marked by CI).
+
 ---
 
 ## Status snapshot — 2026-11-09
@@ -221,7 +259,82 @@ whole main shell), **platform authenticators only**.
 
 ---
 
-## Next up, in order
+## Product increments toward "SME-ready" (written 2026-11-10, supersedes the order below)
+
+User feedback after the first time the apps actually rendered with a
+live backend: *"the apps have no enterprise/SME-ready features, their
+pipelines and user flows are extremely basic."* Fair — most apps are
+CRUD-over-a-schema through the generic `ListView`/`KanbanView`/
+`FormView`. The bar below is "a 5–50 person business can run a normal
+week on it without a spreadsheet on the side." Order is by what an SME
+hits first, and each increment ends with a **real-data browser
+walkthrough on the live tenant**, not a static build check (the lesson
+of 2026-11-10: nothing had ever executed a real query in production).
+
+**P0 — Reliability floor (before any feature work)**
+1. `GET /health` on every app that runs `SELECT 1` through the real
+   engine — a DB-level check, so a broken `DATABASE_URL` fails loudly
+   at deploy instead of as "no records" in the UI.
+2. A production smoke script: log in, hit one list endpoint per app
+   through the kernel, expect `200`. Run after every Friday Host
+   update (feeds Friday Host Increment 6.5's install-level update).
+3. Error states in every custom page (CRM pipeline, accounting
+   reports, POS) distinguish "empty" from "failed" the way
+   `ResourcePage` already does.
+
+**P1 — Quote-to-cash, end to end (CRM → Invoicing → Accounting)**
+This is the flow every SME judges a business suite on.
+- CRM: lead → qualified → deal stages configurable per org; owner
+  assignment; next-activity reminders; quote document from a deal
+  (line items from Inventory products, tax, discount, validity date).
+- Invoicing: quote → invoice in one click; partial payments; credit
+  notes; recurring invoices UI (the backend already has recurrence);
+  overdue status + automatic reminder emails via the existing Resend
+  integration; PDF with org branding; KES + multi-currency display.
+- Accounting: every invoice/payment/credit note posts journal entries
+  automatically (invoice-paid webhook exists — extend to issue, credit,
+  partial); VAT/tax report; AR aging report.
+- **Done when**: a deal can be won, quoted, invoiced, part-paid via
+  Pesapal, and show up correctly in P&L and AR aging — in the live
+  tenant, with real records.
+
+**P2 — Roles, approvals, audit (what makes it "enterprise" to a buyer)**
+- Per-app permissions on top of the 4 org roles (e.g. sales can't see
+  accounting); approval rules (discount > X%, expense claim > Y,
+  payroll run) using one shared approvals component instead of
+  per-app logic.
+- Audit log: who changed what, when — one `core.audit_events` table
+  written by the kernel gateway for every mutating call. Also feeds
+  Friday Host's "recent activity" (today synthesized from `created_at`).
+- Data export (CSV per resource — import already exists) and
+  org-level backup/download.
+
+**P3 — Operations apps get real workflows**
+- Inventory: reorder points + low-stock alerts, purchase orders →
+  goods received → stock moves, multi-location.
+- POS: shift open/close with cash count, receipts (print/SMS/email),
+  refunds, offline queue status visible to the cashier.
+- Projects/Helpdesk: SLA timers on tickets, time tracking that flows
+  into invoicing (billable hours → invoice lines).
+- Fleets: custom dashboard (status grid, cost per vehicle), service
+  reminders by mileage/date.
+- Minions: leave requests + approvals (uses P2), payslips.
+
+**P4 — Onboarding & polish**
+- First-run setup wizard per org (currency, tax rates, chart of
+  accounts template, invite team, import data).
+- Notifications center (in-app) alongside email/Slack.
+- Mobile-first pass on POS/Minions (the two apps used standing up).
+
+**Cross-cutting design rule**: invest in the generic renderer first
+(saved filters/views, bulk actions, column chooser, inline status
+changes, related-records panels) — every app inherits it — and build
+custom pages only where the view is an aggregation or a guided flow
+(dashboards, quote builder, POS, setup wizard).
+
+---
+
+## Next up, in order (pre-2026-11-10 list, kept for history)
 
 ### 1. Verify everything for real, not just statically — done, as far as software alone can take it
 
