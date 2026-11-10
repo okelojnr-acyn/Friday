@@ -32,7 +32,9 @@ async def run_migrations(dsn: str, schema: str, migrations_dir: Path) -> list[st
                 continue
             sql = f.read_text(encoding="utf-8")
             async with conn.transaction():
-                await conn.execute(f'SET search_path TO "{schema}", public')
+                # LOCAL: behind PgBouncer transaction pooling a plain SET
+                # would outlive this transaction on the shared server conn.
+                await conn.execute(f'SET LOCAL search_path TO "{schema}", public')
                 await conn.execute(sql)
                 await conn.execute(
                     f'INSERT INTO "{schema}".schema_migrations (filename) VALUES ($1)', f.name

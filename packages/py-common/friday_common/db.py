@@ -1,18 +1,64 @@
 from collections.abc import AsyncIterator
 from functools import lru_cache
+from uuid import uuid4
 
 from fastapi import Depends
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import URL, make_url, text
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from .auth import Principal, get_current_principal
 from .settings import FridaySettings, get_settings
 
 
+def engine_args(database_url: str) -> tuple[URL, dict]:
+    """Adapt a libpq-style DATABASE_URL for SQLAlchemy's asyncpg dialect.
+
+    Friday Host hands out `...?sslmode=require` URLs pointing at PgBouncer
+    in *transaction* pooling mode. Two things break with that, both found
+    live on 2026-11-10 (every app query 500'd while migrations -- which
+    use asyncpg.connect directly -- worked fine):
+
+    - asyncpg's connect() has no `sslmode` kwarg (it's `ssl`), and the
+      SQLAlchemy dialect passes URL query params straight through, so
+      every connection raised `TypeError: ... 'sslmode'`.
+    - asyncpg's named prepared-statement cache doesn't survive
+      transaction pooling (the next transaction may land on a different
+      server connection). Disabled per SQLAlchemy's documented PgBouncer
+      recipe, with unique statement names so concurrent ones can't clash.
+    """
+    url = make_url(database_url)
+    query = dict(url.query)
+    connect_args: dict = {
+        "statement_cache_size": 0,
+        "prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__",
+    }
+    sslmode = query.pop("sslmode", None)
+    if sslmode:
+        connect_args["ssl"] = sslmode  # asyncpg accepts libpq mode names
+    query["prepared_statement_cache_size"] = "0"
+    return url.set(query=query), connect_args
+
+
 @lru_cache
 def make_engine() -> AsyncEngine:
     settings = get_settings()
-    return create_async_engine(settings.database_url, pool_pre_ping=True)
+    url, connect_args = engine_args(settings.database_url)
+    return create_async_engine(url, pool_pre_ping=True, connect_args=connect_args)
+
+
+async def _set_search_path(session: AsyncSession, schema: str) -> None:
+    # Transaction-scoped (is_local=true), like set_org_context: a plain
+    # session-level SET would stick to the pooled PgBouncer server
+    # connection and leak into whichever app's transaction uses it next.
+    await session.execute(
+        text("SELECT set_config('search_path', :sp, true)"),
+        {"sp": f'"{schema}", public'},
+    )
 
 
 def _session_factory(settings: FridaySettings | None = None) -> async_sessionmaker[AsyncSession]:
@@ -30,7 +76,7 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     session_factory = _session_factory(settings)
     async with session_factory() as session:
         if settings.db_schema != "public":
-            await session.execute(text(f'SET search_path TO "{settings.db_schema}", public'))
+            await _set_search_path(session, settings.db_schema)
         yield session
 
 
@@ -48,7 +94,7 @@ async def get_org_session(
     session_factory = _session_factory(settings)
     async with session_factory() as session:
         if settings.db_schema != "public":
-            await session.execute(text(f'SET search_path TO "{settings.db_schema}", public'))
+            await _set_search_path(session, settings.db_schema)
         await set_org_context(session, principal.org_id)
         yield session
 
