@@ -373,7 +373,16 @@ func (h *Handlers) PasskeyRegisterOptions(w http.ResponseWriter, r *http.Request
 			UserVerification:        protocol.VerificationRequired,
 		})
 	}
-	creation, session, err := h.WebAuthn.BeginRegistration(user, registrationOpt)
+	// "client-device" hint (WebAuthn L3, honored by Chrome 128+): prefer
+	// the device's own authenticator (Windows Hello, macOS/iOS, Android
+	// screen lock) over a cloud password manager. Reported 2026-11-10:
+	// Chrome defaulted to saving into Google Password Manager and failed
+	// with "Can't reach Google Password Manager" on both the general and
+	// POS flows. A hint only -- browsers that ignore it behave as before.
+	hintOpt := webauthn.WithPublicKeyCredentialHints([]protocol.PublicKeyCredentialHints{
+		protocol.PublicKeyCredentialHintClientDevice,
+	})
+	creation, session, err := h.WebAuthn.BeginRegistration(user, registrationOpt, hintOpt)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "could not start passkey registration: "+err.Error())
 		return
