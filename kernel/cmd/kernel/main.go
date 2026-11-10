@@ -120,6 +120,7 @@ func main() {
 	mux.HandleFunc("GET /orgs/integrations/google_calendar/oauth/callback", integrationHandlers.GoogleOAuthCallback)
 
 	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(apps, eventsToken))
+	mux.Handle("GET /health", gateway.HealthHandler(apps, pool, nil))
 
 	for _, app := range apps {
 		proxy, err := gateway.NewAppProxy(app)
