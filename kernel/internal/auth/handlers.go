@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -281,6 +282,7 @@ func (h *Handlers) PasskeyLoginVerify(w http.ResponseWriter, r *http.Request) {
 
 	session, err := consumeWebauthnChallenge(ctx, h.Pool, sessionID, "login")
 	if err != nil {
+		log.Printf("passkey login: consume challenge: %v", err)
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
@@ -291,13 +293,20 @@ func (h *Handlers) PasskeyLoginVerify(w http.ResponseWriter, r *http.Request) {
 		if err := h.Pool.QueryRow(ctx,
 			`SELECT email, full_name FROM core.users WHERE id = $1::uuid`, userID,
 		).Scan(&email, &fullName); err != nil {
+			log.Printf("passkey login: resolve userHandle %q: %v", userID, err)
 			return nil, errors.New("unknown credential")
 		}
 		return loadWebauthnUser(ctx, h.Pool, userID, email, fullName)
 	}
 
+	// Logged in full, not just a generic "could not be verified" --
+	// this is the one error this codebase previously had zero
+	// visibility into: a real report of "works once, then every
+	// subsequent login fails" had no server-side evidence to diagnose
+	// from, only the client's own generic message.
 	user, cred, err := h.WebAuthn.FinishPasskeyLogin(resolveUser, *session, r)
 	if err != nil {
+		log.Printf("passkey login: FinishPasskeyLogin: %v", err)
 		writeError(w, http.StatusUnauthorized, "passkey authentication could not be verified")
 		return
 	}
@@ -307,6 +316,7 @@ func (h *Handlers) PasskeyLoginVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := updateWebauthnSignCount(ctx, h.Pool, cred.ID, cred.Authenticator.SignCount); err != nil {
+		log.Printf("passkey login: update sign count: %v", err)
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
