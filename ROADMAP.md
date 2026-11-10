@@ -14,18 +14,30 @@ for the dogfood-deployment history (what's live, which servers, which
 DNS/Vercel steps happened). This file stays scoped to Friday's own
 product code.
 
+**Read `friday-cloud-labs/ROADMAP.md`'s "NEXT SESSION — START HERE"
+section (top of that file, added 2026-11-10) before this one** if
+you're picking up fresh — it's the cross-repo handoff covering both
+products together (critical bugs ranked by what blocks a real paying
+customer, what's stale, the actual path to launch). This file has the
+Friday-specific detail underneath it.
+
 ---
 
 ## Status snapshot — 2026-11-09
 
-**Deployed today**: kernel + crm + invoicing run as real tenant
-containers on Friday Host (`friday-kernel`/`friday-crm`/`friday-invoicing`),
-with the web shell live at `https://friday.fridayhost.dev`. The other
-six apps (projects, inventory, web3, accounting, minions, fleets) exist
-in the repo and build via the same `infra/python-app.Dockerfile`
-pattern, just not deployed as tenant containers yet — not blocked on
-anything, just not needed until a dogfood or real-customer workflow
-exercises them.
+**Deployed as of 2026-11-09**: kernel + crm + invoicing run as real
+tenant containers on Friday Host, web shell live at
+`https://friday.fridayhost.dev`.
+
+**Update, 2026-11-10 — superseded, kept for history**: the paragraph
+above was accurate when written but is wrong now. The other six apps
+(projects, inventory, web3, accounting, minions, fleets) are deployed
+too as of 2026-11-10 (`friday-cloud-labs/ROADMAP.md`'s own session note
+has the full detail: `fridayBuildSpecs` was missing them, not a
+decision to leave them undeployed). **The live kernel is still on an
+older commit than `main`, though** — see this file's very top ("NEXT
+SESSION — START HERE" pointer) before assuming anything deployed today
+is actually live.
 
 **This session's changes** (commit `065ac3e`, pushed):
 - `web/src/ui/TopBar.tsx` — a shortcut straight to
