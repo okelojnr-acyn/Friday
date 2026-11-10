@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { RecordRow } from "../lib/types";
-import { InvoiceCreateModal } from "../apps/invoicing/InvoiceCreateModal";
+import { InvoiceCreateModal, QuoteCreateModal } from "../apps/invoicing/InvoiceCreateModal";
 import { PurchaseOrderCreateModal } from "../apps/inventory/PurchaseOrderCreateModal";
 
 export interface CustomCreateProps {
@@ -16,5 +16,6 @@ export interface CustomCreateProps {
  * without every app needing to know about this mechanism. */
 export const CUSTOM_CREATE_SCREENS: Record<string, ComponentType<CustomCreateProps>> = {
   "invoicing.invoice": InvoiceCreateModal,
+  "invoicing.quote": QuoteCreateModal,
   "inventory.purchase_order": PurchaseOrderCreateModal,
 };

@@ -9,6 +9,7 @@ import { invalidateReferenceOptions } from "./referenceCache";
 // FormView still works for it -- it only needs to know the path shape.
 const UPDATE_PATH_OVERRIDES: Record<string, (base: string, id: string) => string> = {
   "invoicing.invoice": (base, id) => `${base}/${id}/status`,
+  "invoicing.quote": (base, id) => `${base}/${id}/status`,
   "inventory.purchase_order": (base, id) => `${base}/${id}/status`,
 };
 

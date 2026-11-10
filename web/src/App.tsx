@@ -14,6 +14,7 @@ import { TreasuryPage } from "./apps/web3/TreasuryPage";
 import { MarketPage } from "./apps/web3/MarketPage";
 import { ReportsPage } from "./apps/accounting/ReportsPage";
 import { PipelinePage } from "./apps/crm/PipelinePage";
+import { ReceivablesPage } from "./apps/invoicing/ReceivablesPage";
 
 export default function App() {
   return (
@@ -34,6 +35,7 @@ export default function App() {
               reasoning Minions already has its own entry. Reachable from
               the dashboard tile (external link, not this route table). */}
           <Route path="/crm" element={<PipelinePage />} />
+          <Route path="/invoicing" element={<ReceivablesPage />} />
           <Route path="/web3/treasury" element={<TreasuryPage />} />
           <Route path="/accounting/reports" element={<ReportsPage />} />
           <Route path="/web3/market" element={<MarketPage />} />

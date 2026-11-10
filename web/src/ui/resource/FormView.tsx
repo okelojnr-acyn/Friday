@@ -8,6 +8,7 @@ import { FieldWrap } from "../Field";
 import { FieldInput } from "./FieldInput";
 import { SmartButtons } from "./SmartButtons";
 import { PayWithCardPanel } from "../../apps/invoicing/PayWithCardPanel";
+import { DocumentActionsPanel } from "../../apps/invoicing/DocumentActionsPanel";
 import { CreatePurchaseOrderPanel } from "../../apps/inventory/CreatePurchaseOrderPanel";
 import { amountInputToCents, centsToAmountInput, toDateInputValue, toDatetimeInputValue } from "./fieldFormat";
 
@@ -124,6 +125,9 @@ export function FormView({ spec, app, schema, record, onClose, onSaved }: FormVi
           </Button>
         </div>
       </form>
+      {isEdit && app === "invoicing" && (spec.name === "invoice" || spec.name === "quote") ? (
+        <DocumentActionsPanel kind={spec.name} record={record!} onChanged={onSaved} />
+      ) : null}
       {isEdit && app === "invoicing" && spec.name === "invoice" ? (
         <PayWithCardPanel
           invoiceId={record!.id}
