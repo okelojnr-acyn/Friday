@@ -21,6 +21,18 @@ products together (critical bugs ranked by what blocks a real paying
 customer, what's stale, the actual path to launch). This file has the
 Friday-specific detail underneath it.
 
+**Update 2026-11-10 ~13:30 UTC — incident, read first**: all 9 live
+containers were updated to `e16ac1be` at ~02:22 UTC (so "the live
+kernel is behind" below is **stale** — passkey logging etc. is live).
+That update took every app down: Friday Host's update path dropped the
+apps' network aliases and moved the kernel onto gVisor, so the gateway
+couldn't resolve any app. Not a bug in this repo. Full write-up, the
+code fix, and the repair runbook are in `friday-cloud-labs/ROADMAP.md`
+→ "Incident 2026-11-10". **Friday-side follow-up it created**: every
+app needs a real `GET /health` (today they 404 on it) so Friday Host's
+planned blue/green update (its Increment 6.5) can health-check before
+swapping.
+
 ---
 
 ## Status snapshot — 2026-11-09
