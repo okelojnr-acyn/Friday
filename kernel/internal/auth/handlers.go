@@ -350,9 +350,11 @@ func (h *Handlers) PasskeyRegisterOptions(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 	user, err := loadWebauthnUser(ctx, h.Pool, claims.Subject, claims.Email, "")
 	if err != nil {
+		log.Printf("passkey register options (user %s): load user: %v", claims.Subject, err)
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	log.Printf("passkey register options requested (user %s, purpose %q)", claims.Subject, r.URL.Query().Get("purpose"))
 
 	// Required, not Preferred, in both branches below -- login
 	// (PasskeyLoginOptions/Verify, this doc comment's own "required
@@ -412,26 +414,34 @@ func (h *Handlers) PasskeyRegisterVerify(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ctx := r.Context()
+	// Every failure below is logged with the caller's user id (2026-11-10:
+	// "passkey creation fails" reports had zero server-side evidence --
+	// these paths returned errors without logging anything).
 	user, err := loadWebauthnUser(ctx, h.Pool, claims.Subject, claims.Email, "")
 	if err != nil {
+		log.Printf("passkey register verify (user %s): load user: %v", claims.Subject, err)
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
 	session, err := consumeWebauthnChallenge(ctx, h.Pool, sessionID, "registration")
 	if err != nil {
+		log.Printf("passkey register verify (user %s): consume challenge: %v", claims.Subject, err)
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	cred, err := h.WebAuthn.FinishRegistration(user, *session, r)
 	if err != nil {
+		log.Printf("passkey register verify (user %s): FinishRegistration: %v", claims.Subject, err)
 		writeError(w, http.StatusUnauthorized, "passkey registration could not be verified: "+err.Error())
 		return
 	}
 	if err := storeWebauthnCredential(ctx, h.Pool, claims.Subject, cred, r.URL.Query().Get("device_label")); err != nil {
+		log.Printf("passkey register verify (user %s): store credential: %v", claims.Subject, err)
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	log.Printf("passkey registered for user %s", claims.Subject)
 	w.WriteHeader(http.StatusNoContent)
 }
 

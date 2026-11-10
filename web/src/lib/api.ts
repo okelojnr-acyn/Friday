@@ -20,7 +20,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   headers.set("Content-Type", "application/json");
   if (session) headers.set("Authorization", `Bearer ${session.token}`);
 
-  const res = await fetch(`${KERNEL_URL}${path}`, { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${KERNEL_URL}${path}`, { ...init, headers });
+  } catch {
+    // fetch() only rejects when the browser got no usable response at
+    // all -- offline, DNS, or a CORS rejection (2026-11-10: crm/invoicing
+    // sent a stale Access-Control-Allow-Origin and every page fell back
+    // to a generic "Could not load ..." with nothing to go on). Status 0
+    // so callers' `instanceof ApiError` paths show this instead.
+    throw new ApiError(0, `Can't reach the Friday server (${path.split("?")[0]}) — network or CORS problem`);
+  }
 
   if (res.status === 401) {
     clearSession();

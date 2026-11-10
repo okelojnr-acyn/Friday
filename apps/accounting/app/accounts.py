@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Account
@@ -37,12 +38,24 @@ async def ensure_default_accounts(session: AsyncSession, org_id: uuid.UUID) -> N
     which the kernel doesn't have."""
     existing = await session.execute(select(Account.code).where(Account.org_id == org_id))
     have = set(existing.scalars().all())
+    missing = [a for a in DEFAULT_ACCOUNTS if a[0] not in have]
+    if not missing:
+        return
+    # ON CONFLICT, not a check-then-insert: the accounts list and the P&L
+    # report load concurrently on first visit, both saw "no accounts", and
+    # the loser 500'd on idx_accounts_org_code (seen live 2026-11-10).
     now = datetime.now(UTC)
-    for code, name, type_ in DEFAULT_ACCOUNTS:
-        if code not in have:
-            session.add(Account(org_id=org_id, code=code, name=name, type=type_, created_at=now))
-    if have != {c for c, _, _ in DEFAULT_ACCOUNTS}:
-        await session.commit()
+    await session.execute(
+        pg_insert(Account)
+        .values(
+            [
+                {"id": uuid.uuid4(), "org_id": org_id, "code": code, "name": name, "type": type_, "created_at": now}
+                for code, name, type_ in missing
+            ]
+        )
+        .on_conflict_do_nothing(index_elements=["org_id", "code"])
+    )
+    await session.commit()
 
 
 async def get_account_by_code(session: AsyncSession, org_id: uuid.UUID, code: str) -> Account:

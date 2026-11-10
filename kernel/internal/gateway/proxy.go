@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 
 	"github.com/acyn-innovation/friday/kernel/internal/registry"
 )
@@ -29,7 +30,19 @@ func NewAppProxy(app registry.App) (http.Handler, error) {
 		r.URL.Path = trimPrefix(r.URL.Path, prefix)
 		originalDirector(r)
 	}
+	// The kernel's withCORS owns CORS for every route; drop whatever the
+	// app sent so the browser never sees a doubled or stale-origin header.
+	proxy.ModifyResponse = stripCORS
 	return proxy, nil
+}
+
+func stripCORS(resp *http.Response) error {
+	for k := range resp.Header {
+		if strings.HasPrefix(http.CanonicalHeaderKey(k), "Access-Control-") {
+			resp.Header.Del(k)
+		}
+	}
+	return nil
 }
 
 func trimPrefix(path, prefix string) string {

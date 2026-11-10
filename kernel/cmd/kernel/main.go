@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/acyn-innovation/friday/kernel/internal/auth"
@@ -139,30 +138,26 @@ func main() {
 	}
 }
 
-// withCORS handles preflight for every route (proxied routes are
-// auth-gated, so an OPTIONS preflight -- which never carries the
-// Authorization header -- would otherwise 401 before reaching the app).
-// For the actual request, it only sets CORS headers on routes the kernel
-// serves itself. /api/{app}/* responses already carry CORS headers from
-// the app's own CORSMiddleware (friday_common.create_app) -- the proxy
-// forwards the Origin header through, so the app sees it and responds
-// accordingly -- and httputil.ReverseProxy copies backend headers with
-// Add, not Set, so setting them here too would duplicate the header.
-// Browsers reject a doubled Access-Control-Allow-Origin as invalid CORS,
-// which fails every proxied request with an opaque "Failed to fetch".
+// withCORS is the single owner of CORS for every route, the kernel's own
+// and the proxied /api/{app}/* ones alike. Previously proxied routes
+// relied on each app's own CORSMiddleware, configured from each app's
+// own CORS_ORIGINS env -- found 2026-11-10: crm and invoicing still only
+// allowed an old Vercel origin while the other six allowed the real one,
+// so the browser silently dropped every crm/invoicing response ("Could
+// not load the pipeline", empty invoice list) and every kernel-generated
+// /api 401 (no CORS headers at all) surfaced as an opaque "Failed to
+// fetch". gateway.NewAppProxy strips the app's own Access-Control-*
+// headers, so setting them here never produces a doubled
+// Access-Control-Allow-Origin (which browsers also reject).
 func withCORS(origin string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Add("Vary", "Origin")
 		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			w.WriteHeader(http.StatusNoContent)
 			return
-		}
-		if !strings.HasPrefix(r.URL.Path, "/api/") {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		}
 		next.ServeHTTP(w, r)
 	})
