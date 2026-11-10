@@ -291,64 +291,255 @@ wrong in practice, the actual cause is almost certainly that an org
 hasn't set a real `cost_cents` on its products (defaults to 0, so
 there's genuinely no cost to post) — not a code gap.
 
-### 3. Decide the fate of the island apps
+### ~~3. Decide the fate of the island apps~~ — Projects linked in, 2026-11-09
 
-`projects`, `fleets`, and `web3` publish nothing, subscribe to nothing,
-and nothing else references their data (confirmed by a repo-wide grep
-for cross-references) — CRM is one-directional (feeds invoicing, nothing
-feeds back). Part of the user's "all these apps depend on each other"
-complaint. Needs a product decision, not just code: which of these
-should actually integrate with the rest (and how), vs. staying
-legitimately independent for now.
+Resolved via a real code survey, not a guess: the frontend's reference
+system (`ListView`/`ReferenceInput`/`SmartButtons`) already generically
+parses `field.reference` as `"app.resource"` and fetches cross-app —
+nobody had ever actually pointed one at a different app, so this was
+cheap to close, not a missing-architecture problem. Shipped:
+`projects.project.opportunity_id -> crm.opportunity` (a won deal becomes
+a project) and `projects.ticket.customer_id -> invoicing.customer` (a
+helpdesk ticket tied to the real paying customer), both by-id-only, no
+FK across schemas. Also fixed a real latent bug this surfaced:
+`SmartButtons.tsx`'s reverse-lookup ("what points back at this record")
+only ever searched the *current* app's own schema array, so the reverse
+direction (a Customer's "Tickets" button) would never have appeared even
+though the forward direction worked — now searches every installed
+app's schema.
 
-### 4. Self-serve data import
+Fleets stays deliberately unlinked for now (`Vehicle.assigned_driver_name`/
+`Driver` free-text, by the code's own prior reasoning) — the real gap
+there is financial, not referential: `MaintenanceLog`/`FuelLog.cost_cents`
+never post anywhere, but neither does Invoicing's revenue (no app posts
+to Accounting's ledger automatically yet, anywhere) — that's a real
+feature (GL account defaults, debit/credit rules), not a reference field,
+and deliberately not bundled into this pass. Worth its own session.
 
-There's a one-off dev script
-(`scripts/host-data-import-template.py`) but nothing in-product for an
-org to bring in an Excel sheet or connect an external DB/spreadsheet for
-inventory or CRM data — raised explicitly by the user ("we can't connect
-it to excel or database that we do have"). Not scoped yet.
+### ~~4. Self-serve data import~~ — shipped, 2026-11-09
 
-### 5. Minions meeting scheduling — unblocked (Google Calendar OAuth2 done)
+`ImportCsvPanel` (`web/src/ui/resource/ImportCsvPanel.tsx`), wired into
+`ResourcePage.tsx` for every app/resource at once, not just the two
+`host-data-import-template.py` happened to hardcode (inventory products,
+invoicing customers). Paste/upload CSV, map columns to the resource's
+own schema-driven fields (reuses `FormView`'s `initialValues`/
+`toWireBody` so coercion matches the manual form exactly), import row by
+row via the same generic create endpoint "New" already uses — zero new
+backend routes. Partial-success by design: one bad row doesn't abort the
+batch, it shows up in a per-row result list. "Download a template"
+button gives the exact column headers a resource expects.
 
-`GoogleCalendarProvider.create_event` now actually works end-to-end once
-an org connects (still **not yet verified against a real Google Cloud
-OAuth client** — do that first). Confirmed earlier this session: Minions
-has **zero** task/calendar/meeting concept today — only `employee`,
-`expense_claim`, `payroll_run`, and the new `employee_sale` resources
-exist. `web/src/minions/MyTasksPage.tsx` is a thin read of **Projects'**
-`task` resource filtered client-side by `assignee_email`, not a
-Minions-owned concept.
+### ~~5. Minions meeting scheduling~~ — shipped, 2026-11-09
 
-Open design question: does "easy meeting scheduling" become a new
-Minions-owned resource (e.g. `meeting`, calling
-`GoogleCalendarProvider.create_event` on create), or does it extend the
-existing cross-app pattern `MyTasksPage` already uses? Needs its own
-design pass before code.
+Resolved the open design question in favor of a **new resource**
+(`minions.meeting`), not extending `MyTasksPage`'s cross-app Task
+pattern: a Task is one due date + one assignee shaped for kanban
+work-tracking, a meeting is a time *range* with potentially several
+attendees, different enough shapes that forcing one into the other would
+warp Task for every other caller.
 
-### 6. Enterprise-grade invoicing/checkout breadth (generic frontend)
+`title`/`starts_at`/`ends_at`/`attendee_emails`, synced to the org's
+connected calendar on create and on any calendar-relevant edit
+(title/time/attendees — an unrelated field edit doesn't trigger a
+pointless resync). `sync_status`/`sync_error` stay visible on the record
+rather than failing the request — an org with no Google Calendar
+connected can still schedule a meeting, it just stays `'pending'` with a
+clear reason. Added the missing `update_event`/`delete_event` to
+`CalendarProvider`'s interface (`GoogleCalendarProvider` implements both
+for real; the Calendly stub gets matching `NotImplementedError`s) —
+deleting a meeting cancels its real calendar event instead of leaving a
+stale invite on every attendee's calendar. 7 new tests, all passing in
+CI against a real Postgres (caught a real bug before it shipped: the new
+table was initially missing `ENABLE`/`FORCE ROW LEVEL SECURITY`
+entirely, unlike every other table in this app).
 
-Mirrors Friday Host's own `ROADMAP.md` Increment 6 item 2: `crm`,
-`fleets`, and `projects` have **no custom frontend at all**, rendering
-purely through the generic `web/src/ui/resource/{ListView,KanbanView,
-FormView}.tsx` pattern. Not started.
+**Still genuinely unverified**: a real Google Cloud OAuth client. See
+"Google Calendar — ready for a real test" below for exactly what's left
+and how to close it — as of today that gap is entirely on the human side
+(Google Cloud Console steps), not code; `KERNEL_PUBLIC_URL` was also
+missing in production until today (redirect_uri would have silently
+pointed at `localhost`), now fixed.
+
+### 6. Enterprise-grade invoicing/checkout breadth (generic frontend) — CRM started, 2026-11-09
+
+Mirrors Friday Host's own `ROADMAP.md` Increment 6 item 2. **CRM done**:
+`web/src/apps/crm/PipelinePage.tsx`, same justification as Accounting's
+`ReportsPage`/Web3's `TreasuryPage` — win rate (gauge), open pipeline
+value, average deal size, and a lost-reason breakdown are aggregation
+reads the generic renderer has no concept of, not CRUD. Reuses the
+*actual* `KanbanView` as-is (same drag-and-drop every kanban-enabled
+resource already gets), doesn't reinvent it. `/crm` now lands here
+instead of the generic list; `/crm/opportunity` and `/crm/activity`
+still reach the raw schema-driven screens. Verified in a real browser
+(clean console, correct route, graceful no-backend error state) — not
+yet verified with a live backend rendering real data.
+
+**`fleets` and `projects` still have no custom frontend** — not started.
+Fleets' natural custom view is an operational dashboard (vehicle status
+grid, maintenance/fuel cost rollups per vehicle); Projects' marginal
+gain is smaller since Task already gets a kanban view free from the
+generic renderer.
 
 ---
 
 ## Open decisions / things to confirm before they block something
 
-- Whether Minions meeting scheduling is a new resource or extends the
-  cross-app pattern (see #5 above) — resolve as part of its own design
-  pass before writing code.
+- ~~Whether Minions meeting scheduling is a new resource or extends the
+  cross-app pattern~~ — **decided and shipped, 2026-11-09**: new
+  resource (`minions.meeting`), see item #5 above for why.
 - ~~Whether POS's biometric cashier gate should be constrained to
   platform authenticators~~ — **decided and shipped**: platform-only,
   registration-time only (see the status snapshot above).
-- Which of `projects`/`fleets`/`web3` (item #3) should actually
-  integrate with the rest of the system — a product decision, not a
-  technical one.
-- Whether the shared-register-device model for POS clock-in actually
-  holds on real hardware (multiple enrolled fingerprints, one device) —
-  unverified, see item #1 above.
+- ~~Which of `projects`/`fleets`/`web3` should actually integrate with
+  the rest of the system~~ — **decided and shipped, 2026-11-09**:
+  Projects linked to CRM/Invoicing now; Fleets/Web3 stay independent for
+  now (financial auto-posting is the real gap, not a reference field —
+  see item #3 above).
+- **Pushed to next session, on purpose (2026-11-09)**: whether the
+  shared-register-device model for POS clock-in actually holds on real
+  hardware (multiple enrolled fingerprints, one device). See the
+  dedicated "WebAuthn shared-device multi-fingerprint — technical
+  handoff" section below for the full state of this: what's confirmed,
+  what isn't, exactly how to test it, and every relevant code pointer.
+  Needs physical biometric hardware this session didn't have.
+
+## Google Calendar — ready for a real test (2026-11-09)
+
+Code side is done and was re-verified today, not just assumed:
+`GoogleCalendarProvider` (`packages/py-common/friday_common/integrations/
+google_calendar.py`) implements `create_event`/`update_event`/
+`delete_event` for real against Google's REST API; Minions' `meeting`
+resource (item #5 above) calls all three; the OAuth consent/callback
+flow (`kernel/internal/integrations/google_oauth.go`) and its frontend
+(`web/src/shell/IntegrationsSettingsPage.tsx`, Settings → Integrations →
+Google Calendar) both already exist and were confirmed present, not
+assumed.
+
+**Found and fixed today**: the live kernel (`friday-kernel`, Friday
+Host-managed) had no `KERNEL_PUBLIC_URL` set at all, so
+`googleRedirectURI()` was silently computing `http://localhost:8080/...`
+— unreachable from Google's side, would have failed the consent flow at
+the very last step with no useful error. Fixed by recreating the live
+container with `KERNEL_PUBLIC_URL=https://friday-api.fridayhost.dev`
+added (direct docker surgery, not through Friday Host's own update
+path, since there's no API for adding one env var to a running tenant
+server — also updated `core.servers.container_id` in Friday Host's own
+Postgres afterward so its UI keeps tracking the right container).
+**Caused a brief real outage doing this**: the first recreate attempt
+removed the old container before the replacement started, failed on an
+unrelated shell bug (an empty line from `docker inspect`'s env dump
+produced an invalid empty `-e` arg), and the kernel was down for a few
+minutes until restored with the same config captured just before the
+failed attempt. Lesson for next time: never `docker rm` the old
+container before the replacement is confirmed healthy — stop, verify
+the new one works, *then* remove the old one, not stop+rm+run as one
+uninterruptible block.
+
+What's left is entirely on the human side now: a real Google Cloud
+project, OAuth consent screen, and OAuth client with that exact redirect
+URI registered, using `acyncupbase@gmail.com`. See the session's own
+chat log for the full numbered walkthrough if it's not repeated
+elsewhere by the time this is picked back up — the short version is
+Cloud Console → enable Calendar API → OAuth consent screen (Testing mode
+is fine) → Credentials → OAuth client ID (Web application) → that
+redirect URI → paste client ID/secret into Settings → Integrations →
+Connect with Google → schedule a test Meeting → check it actually
+appears on the real calendar → edit it → delete it, confirming all
+three provider methods for real, not just in CI's mocked tests.
+
+## WebAuthn shared-device multi-fingerprint — technical handoff (2026-11-09)
+
+**The question**: POS runs as a shared register device (not
+one-per-cashier) — `web/src/apps/pos/PosClockIn.tsx` gates the register
+behind a passkey scan, and the *same physical device* is meant to have
+multiple cashiers each enroll their own platform fingerprint, so a scan
+identifies *whoever's standing there right now* via WebAuthn's
+discoverable/usernameless login (`navigator.credentials.get()` with no
+`allowCredentials` list, resolving the account from the credential's own
+`userHandle`). Does this actually work in practice on real target
+hardware — does the OS's native passkey picker correctly disambiguate
+between several enrolled fingerprints on one device and let each person
+pick (or auto-select) *their own* credential, not just whichever was
+enrolled first or most recently? This is a platform/OS behavior
+question, not something inspectable in source code.
+
+**Why it still isn't verified, concretely**: completing a real WebAuthn
+ceremony requires an actual platform authenticator (Touch ID, Windows
+Hello, Android/iOS biometric) — there is no software way to drive one.
+This was confirmed empirically this session's predecessor, not assumed:
+with the full stack running live (Postgres, kernel, web dev server) and
+driven through a real Chrome browser via claude-in-chrome, clicking
+"Set up a passkey" correctly reached `navigator.credentials.create()`
+and got a real challenge from the kernel — it failed cleanly at
+`"Could not set up a passkey"` only because that automated Chrome
+environment has no platform authenticator attached, never reaching an
+actual biometric prompt. That's the literal ceiling of what this kind
+of session can verify alone, confirmed rather than inferred.
+
+**What's already fixed and should make the real test more likely to
+pass cleanly** (2026-11-09, this session): both
+`kernel/internal/auth/handlers.go`'s `PasskeyRegisterOptions` branches
+(the general one and the `?purpose=pos` one) were asking for
+`protocol.ResidentKeyRequirementPreferred` instead of `Required`.
+`Preferred` lets the authenticator/OS create a *non-discoverable*
+credential anyway (a real behavior on several platform authenticators,
+not a hypothetical) — but login
+(`PasskeyLoginOptions`/`PasskeyLoginVerify`, via
+`h.WebAuthn.BeginDiscoverableLogin()`) can only ever see a *resident*
+credential. So a passkey could register successfully and then simply
+never be usable to log in, with nothing at registration time to explain
+why — this is almost certainly why an earlier live attempt to register
+and then use a passkey failed on both Friday Host (`friday-cloud-labs`
+has the identical bug, also fixed today) and here. Changed both to
+`Required`; the POS branch additionally needed
+`RequireResidentKey: protocol.ResidentKeyRequired()` set explicitly
+since it builds `AuthenticatorSelection` directly rather than through
+the `WithResidentKeyRequirement` helper that sets both fields together
+(confirmed by reading `go-webauthn`'s actual source,
+`webauthn/registration_opt.go`, not guessed).
+
+**Important implication for the hardware test**: any passkey registered
+*before* today's fix is almost certainly still broken — the fix only
+changes what new registrations ask for, it can't retroactively fix an
+already-non-resident credential sitting in `core.webauthn_credentials`.
+**Register fresh for the hardware test; don't reuse an old enrollment.**
+
+**Exact test plan for next session** (needs real hardware — a phone or
+laptop with a working fingerprint/Face ID sensor, ideally the actual
+target POS tablet):
+
+1. Register cashier A's fingerprint via POS's "New cashier? Set up your
+   fingerprint" flow (`PosClockIn.tsx`'s `addPasskey({ platformOnly:
+   true })`, which now asks for `Required` + `platform` attachment).
+   Confirm A can clock out and back in with just a scan.
+2. On the *same device*, register cashier B's fingerprint the same way
+   (different email, different admin-invited account — see this
+   session's POS admin-gating work,
+   `kernel/internal/auth/invites.go`'s `PosRequestCode`/`PosVerifyCode`,
+   for why B must already be admin-invited first).
+3. With both enrolled, scan as A. Confirm the session that comes back is
+   actually A's (`session.email` shown in the POS header), not B's or
+   whichever was enrolled first.
+4. Scan as B. Confirm the same, the other direction.
+5. Repeat 3–4 a few times in different orders — the real risk is the OS
+   picker defaulting to "most recently used" or "first enrolled" instead
+   of correctly disambiguating by which finger/face was actually
+   presented.
+6. If it fails — the OS can't disambiguate multiple resident credentials
+   for the same RP on one device by biometric alone, only by showing an
+   account-picker UI first — **the code is unaffected**, per the
+   existing design-fork note above: fall back to one enrolled slot per
+   device (one shared fingerprint logs in whoever currently owns it,
+   explicit hand-off) instead of per-person, a rollout/process change,
+   not a rewrite. Document whichever outcome here when it's run.
+
+**Relevant code, all already built, none of it the open question**:
+`web/src/lib/auth.tsx` (`loginWithPasskey`/`addPasskey`),
+`web/src/apps/pos/PosClockIn.tsx`, `kernel/internal/auth/webauthn.go`
+(`storeWebauthnChallenge`/`consumeWebauthnChallenge`/
+`loadWebauthnUser`), `kernel/internal/auth/handlers.go`
+(`PasskeyRegisterOptions`/`PasskeyRegisterVerify`/
+`PasskeyLoginOptions`/`PasskeyLoginVerify`).
 
 ## Session rules (apply across both Friday and Friday Host)
 
