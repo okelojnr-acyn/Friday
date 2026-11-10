@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
@@ -132,6 +132,11 @@ class InvoiceOut(BaseModel):
     total_cents: int
     paid_cents: int
     balance_cents: int
+    kind: str = "invoice"
+    valid_until: datetime | None = None
+    # Computed, not stored: kind=invoice, status=sent, past due_at, balance > 0.
+    is_overdue: bool = False
+    days_overdue: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -141,11 +146,17 @@ class InvoiceOut(BaseModel):
         tax = sum(line.tax_cents for line in inv.lines)
         total = subtotal + tax
         paid = sum(p.amount_cents for p in inv.payments)
+        now = datetime.now(UTC)
+        overdue = inv.is_overdue(now)
         return cls(
             id=inv.id,
             org_id=inv.org_id,
             customer_id=inv.customer_id,
             number=inv.number,
+            kind=inv.kind,
+            valid_until=inv.valid_until,
+            is_overdue=overdue,
+            days_overdue=(now - inv.due_at).days if overdue else 0,
             status=inv.status,
             currency=inv.currency,
             source=inv.source,
@@ -179,3 +190,48 @@ class InvoiceOut(BaseModel):
             paid_cents=paid,
             balance_cents=total - paid,
         )
+
+
+class QuoteCreate(BaseModel):
+    customer_id: uuid.UUID | None = None
+    currency: str = "USD"
+    lines: list[LineIn] = Field(min_length=1)
+    # Days the quote stays valid; sets valid_until at creation.
+    valid_days: int = Field(default=30, ge=1, le=365)
+    # Optional link back to the CRM deal this quote was built for --
+    # stored in source_ref so the converted invoice can carry it too.
+    opportunity_id: str | None = None
+
+
+class QuoteStatusUpdate(BaseModel):
+    status: str
+
+
+class ArAgingBucketTotals(BaseModel):
+    current_cents: int = 0
+    days_1_30_cents: int = 0
+    days_31_60_cents: int = 0
+    days_61_90_cents: int = 0
+    days_over_90_cents: int = 0
+    total_cents: int = 0
+
+
+class ArAgingCustomerRow(ArAgingBucketTotals):
+    customer_id: uuid.UUID | None
+    customer_name: str
+    currency: str
+    invoice_count: int = 0
+
+
+class ArAgingCurrencyTotals(ArAgingBucketTotals):
+    currency: str
+
+
+class ArAgingOut(BaseModel):
+    """Open receivables (kind=invoice, status=sent, balance > 0) bucketed
+    by days past due. One row per (customer, currency) and one total per
+    currency -- amounts in different currencies are never summed."""
+
+    as_of: datetime
+    rows: list[ArAgingCustomerRow]
+    totals: list[ArAgingCurrencyTotals]

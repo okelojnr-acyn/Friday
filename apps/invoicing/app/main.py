@@ -23,6 +23,8 @@ from .events import invoice_lines_payload, publish_invoice_paid, publish_pos_sal
 from .models import (
     INVOICE_STATUSES,
     POS_SHIFT_STATUSES,
+    QUOTE_MANUAL_STATUSES,
+    QUOTE_STATUSES,
     RECURRING_INTERVALS,
     Customer,
     Invoice,
@@ -31,6 +33,9 @@ from .models import (
     PosShift,
 )
 from .schemas import (
+    ArAgingCurrencyTotals,
+    ArAgingCustomerRow,
+    ArAgingOut,
     CustomerBulkCreate,
     CustomerCreate,
     CustomerOut,
@@ -44,6 +49,8 @@ from .schemas import (
     PosShiftClose,
     PosShiftOpen,
     PosShiftOut,
+    QuoteCreate,
+    QuoteStatusUpdate,
 )
 from .webhooks import external_router
 from .webhooks import router as webhooks_router
@@ -98,6 +105,30 @@ resource(
             # editable without actually persisting.
             FieldSpec("recurring_interval", "Repeats", "select", options=RECURRING_INTERVALS, form_visible=False),
             FieldSpec("next_recurrence_at", "Next invoice", "datetime", list_visible=False, form_visible=False),
+            FieldSpec("created_at", "Created", "datetime", form_visible=False),
+        ),
+    )
+)
+
+resource(
+    ResourceSpec(
+        name="quote",
+        app="invoicing",
+        label="Quote",
+        label_plural="Quotes",
+        views=("list", "form"),
+        search_fields=("number",),
+        fields=(
+            FieldSpec("number", "Number", "text", form_visible=False),
+            FieldSpec(
+                "customer_id", "Customer", "reference", reference="invoicing.customer", form_visible=False
+            ),
+            # Editable via PATCH /quotes/{id}/status (resourceApi.ts
+            # UPDATE_PATH_OVERRIDES); "accepted" is only ever set by
+            # POST /quotes/{id}/convert.
+            FieldSpec("status", "Status", "select", options=QUOTE_STATUSES, required=True),
+            FieldSpec("valid_until", "Valid until", "date", form_visible=False),
+            FieldSpec("total_cents", "Total", "currency", form_visible=False),
             FieldSpec("created_at", "Created", "datetime", form_visible=False),
         ),
     )
@@ -219,10 +250,15 @@ async def bulk_create_customers(
     return created
 
 
-async def _get_invoice(session: AsyncSession, principal: Principal, invoice_id: uuid.UUID) -> Invoice:
+async def _get_invoice(
+    session: AsyncSession, principal: Principal, invoice_id: uuid.UUID, kind: str = "invoice"
+) -> Invoice:
+    """`kind` keeps /invoices/{id} and /quotes/{id} from acting on each
+    other's documents (same table, see 0009_quotes.sql) -- e.g. marking a
+    quote "paid" through the invoice status endpoint."""
     inv = await session.get(Invoice, invoice_id)
-    if inv is None or str(inv.org_id) != principal.org_id:
-        raise HTTPException(404, "invoice not found")
+    if inv is None or str(inv.org_id) != principal.org_id or inv.kind != kind:
+        raise HTTPException(404, f"{kind} not found")
     return inv
 
 
@@ -232,7 +268,9 @@ async def list_invoices(
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(
-        select(Invoice).where(Invoice.org_id == uuid.UUID(principal.org_id)).order_by(Invoice.created_at.desc())
+        select(Invoice)
+        .where(Invoice.org_id == uuid.UUID(principal.org_id), Invoice.kind == "invoice")
+        .order_by(Invoice.created_at.desc())
     )
     return [InvoiceOut.from_model(inv) for inv in rows.scalars().all()]
 
@@ -324,6 +362,8 @@ async def record_payment(
     session: AsyncSession = Depends(get_org_session),
 ):
     inv = await _get_invoice(session, principal, invoice_id)
+    if inv.kind != "invoice":
+        raise HTTPException(400, "payments can only be recorded against an invoice, not a quote")
     session.add(
         Payment(
             org_id=uuid.UUID(principal.org_id),
@@ -336,8 +376,8 @@ async def record_payment(
     await session.flush()
     await session.refresh(inv, attribute_names=["lines", "payments"])
 
-    total = sum(l.total_cents for l in inv.lines)
-    paid = sum(p.amount_cents for p in inv.payments)
+    total = inv.grand_total_cents  # incl. tax -- see Invoice.grand_total_cents
+    paid = inv.paid_cents
     newly_paid = paid >= total and inv.status not in ("paid", "void")
     if paid >= total and inv.status != "void":
         inv.status = "paid"
@@ -367,9 +407,9 @@ async def pay_with_card(
     if not config.get("secret_key"):
         raise HTTPException(400, "Stripe is not connected -- add a secret key in Settings > Integrations")
 
-    total = sum(l.total_cents for l in inv.lines)
-    paid = sum(p.amount_cents for p in inv.payments)
-    balance = total - paid
+    if inv.kind != "invoice":
+        raise HTTPException(400, "a quote can't be paid -- convert it to an invoice first")
+    balance = inv.balance_cents  # incl. tax -- see Invoice.grand_total_cents
     if balance <= 0:
         raise HTTPException(400, "invoice has no outstanding balance")
 
@@ -915,8 +955,226 @@ async def close_pos_shift(
     return shift
 
 
+# --- Quotes (P1 quote-to-cash) ------------------------------------------
+
+quotes_router = APIRouter(prefix="/quotes", tags=["quotes"])
+reports_router = APIRouter(prefix="/reports", tags=["reports"])
+
+
+def _copy_line(org_id: uuid.UUID, document_id: uuid.UUID, line) -> InvoiceLine:
+    """One place that knows every InvoiceLine field, used for quote
+    creation (from LineIn) and quote -> invoice conversion (from an
+    existing InvoiceLine) so a converted invoice can't silently drop a
+    field the quote had (tax, discount, cost basis, product link)."""
+    return InvoiceLine(
+        org_id=org_id,
+        invoice_id=document_id,
+        description=line.description,
+        quantity=line.quantity,
+        unit_price_cents=line.unit_price_cents,
+        tax_rate_bp=line.tax_rate_bp,
+        discount_bp=line.discount_bp,
+        unit_cost_cents=line.unit_cost_cents,
+        product_id=line.product_id,
+    )
+
+
+@quotes_router.get("", response_model=list[InvoiceOut])
+async def list_quotes(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(
+        select(Invoice)
+        .where(Invoice.org_id == uuid.UUID(principal.org_id), Invoice.kind == "quote")
+        .order_by(Invoice.created_at.desc())
+    )
+    return [InvoiceOut.from_model(q) for q in rows.scalars().all()]
+
+
+@quotes_router.post("", response_model=InvoiceOut, status_code=201)
+async def create_quote(
+    body: QuoteCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    org_id = uuid.UUID(principal.org_id)
+    if body.customer_id is not None:
+        customer = await session.get(Customer, body.customer_id)
+        if customer is None or customer.org_id != org_id:
+            raise HTTPException(404, "customer not found")
+    now = datetime.now(UTC)
+    quote = Invoice(
+        org_id=org_id,
+        customer_id=body.customer_id,
+        kind="quote",
+        number=f"QUO-{now:%Y%m}-{uuid.uuid4().hex[:6].upper()}",
+        status="draft",
+        currency=body.currency,
+        source="crm" if body.opportunity_id else "manual",
+        source_ref=body.opportunity_id,
+        valid_until=now + timedelta(days=body.valid_days),
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(quote)
+    await session.flush()
+    for line in body.lines:
+        session.add(_copy_line(org_id, quote.id, line))
+    await session.commit()
+    await session.refresh(quote, attribute_names=["lines", "payments"])
+    return InvoiceOut.from_model(quote)
+
+
+@quotes_router.get("/{quote_id}", response_model=InvoiceOut)
+async def get_quote(
+    quote_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    return InvoiceOut.from_model(await _get_invoice(session, principal, quote_id, kind="quote"))
+
+
+@quotes_router.patch("/{quote_id}/status", response_model=InvoiceOut)
+async def set_quote_status(
+    quote_id: uuid.UUID,
+    body: QuoteStatusUpdate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    if body.status not in QUOTE_MANUAL_STATUSES:
+        raise HTTPException(
+            422, f"status must be one of {QUOTE_MANUAL_STATUSES} (accept a quote by converting it to an invoice)"
+        )
+    quote = await _get_invoice(session, principal, quote_id, kind="quote")
+    if quote.status == "accepted":
+        raise HTTPException(409, "this quote was already converted to an invoice")
+    quote.status = body.status
+    quote.updated_at = datetime.now(UTC)
+    if body.status == "sent" and quote.issued_at is None:
+        quote.issued_at = quote.updated_at
+    await session.commit()
+    await session.refresh(quote, attribute_names=["lines", "payments"])
+    return InvoiceOut.from_model(quote)
+
+
+@quotes_router.post("/{quote_id}/convert", response_model=InvoiceOut, status_code=201)
+async def convert_quote(
+    quote_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Customer accepted: create a draft invoice with the quote's exact
+    lines, mark the quote accepted, link both ways (invoice.source =
+    "quote", source_ref = quote id). The invoice starts as draft so the
+    user reviews it before "sent" emails the customer."""
+    quote = await _get_invoice(session, principal, quote_id, kind="quote")
+    if quote.status in ("accepted", "declined"):
+        raise HTTPException(409, f"quote is already {quote.status}")
+    now = datetime.now(UTC)
+    if quote.valid_until is not None and quote.valid_until < now:
+        raise HTTPException(409, f"quote expired on {quote.valid_until:%Y-%m-%d} -- issue a new quote")
+
+    org_id = uuid.UUID(principal.org_id)
+    due_at = None
+    if quote.customer_id is not None:
+        customer = await session.get(Customer, quote.customer_id)
+        if customer is not None:
+            due_at = now + timedelta(days=customer.payment_terms_days)
+    invoice = Invoice(
+        org_id=org_id,
+        customer_id=quote.customer_id,
+        kind="invoice",
+        number=f"INV-{now:%Y%m}-{uuid.uuid4().hex[:6].upper()}",
+        status="draft",
+        currency=quote.currency,
+        source="quote",
+        source_ref=str(quote.id),
+        due_at=due_at,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(invoice)
+    await session.flush()
+    for line in quote.lines:
+        session.add(_copy_line(org_id, invoice.id, line))
+    quote.status = "accepted"
+    quote.updated_at = now
+    await session.commit()
+    await session.refresh(invoice, attribute_names=["lines", "payments"])
+    return InvoiceOut.from_model(invoice)
+
+
+# --- Reports ------------------------------------------------------------
+
+_AGING_BUCKETS = (
+    (0, "current_cents"),
+    (30, "days_1_30_cents"),
+    (60, "days_31_60_cents"),
+    (90, "days_61_90_cents"),
+)
+
+
+def _aging_bucket(days_past_due: int) -> str:
+    for limit, name in _AGING_BUCKETS:
+        if days_past_due <= limit:
+            return name
+    return "days_over_90_cents"
+
+
+@reports_router.get("/ar-aging", response_model=ArAgingOut)
+async def ar_aging(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Accounts-receivable aging: what customers owe and how late it is.
+    Only issued invoices (status "sent") with an outstanding balance --
+    drafts aren't owed yet, paid/void owe nothing. No due date = current."""
+    now = datetime.now(UTC)
+    org_id = uuid.UUID(principal.org_id)
+    invoices = (
+        await session.execute(
+            select(Invoice).where(Invoice.org_id == org_id, Invoice.kind == "invoice", Invoice.status == "sent")
+        )
+    ).scalars().all()
+    customers = {
+        c.id: c.name
+        for c in (await session.execute(select(Customer).where(Customer.org_id == org_id))).scalars().all()
+    }
+
+    rows: dict[tuple, ArAgingCustomerRow] = {}
+    totals: dict[str, ArAgingCurrencyTotals] = {}
+    for inv in invoices:
+        balance = inv.balance_cents
+        if balance <= 0:
+            continue
+        days = (now - inv.due_at).days if inv.due_at is not None else 0
+        bucket = _aging_bucket(days)
+        key = (inv.customer_id, inv.currency)
+        row = rows.get(key) or ArAgingCustomerRow(
+            customer_id=inv.customer_id,
+            customer_name=customers.get(inv.customer_id, "No customer") if inv.customer_id else "No customer",
+            currency=inv.currency,
+        )
+        rows[key] = row
+        total = totals.get(inv.currency) or ArAgingCurrencyTotals(currency=inv.currency)
+        totals[inv.currency] = total
+        for target in (row, total):
+            setattr(target, bucket, getattr(target, bucket) + balance)
+            target.total_cents += balance
+        row.invoice_count += 1
+
+    return ArAgingOut(
+        as_of=now,
+        rows=sorted(rows.values(), key=lambda r: (r.currency, -r.total_cents)),
+        totals=sorted(totals.values(), key=lambda t: t.currency),
+    )
+
+
 app.include_router(customers_router)
 app.include_router(invoices_router)
+app.include_router(quotes_router)
+app.include_router(reports_router)
 app.include_router(pos_router)
 app.include_router(webhooks_router)
 app.include_router(external_router)

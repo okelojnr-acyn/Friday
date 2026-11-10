@@ -18,6 +18,11 @@ class Base(DeclarativeBase):
 # set only by that one code path, never something set_invoice_status
 # should let a user pick from the manual dropdown.
 INVOICE_STATUSES = ("draft", "sent", "paid", "void")
+# A quote's own lifecycle (see 0009_quotes.sql). "accepted" is set only by
+# convert_quote, never picked by hand, so it isn't in QUOTE_MANUAL_STATUSES.
+QUOTE_STATUSES = ("draft", "sent", "accepted", "declined")
+QUOTE_MANUAL_STATUSES = ("draft", "sent", "declined")
+DOCUMENT_KINDS = ("invoice", "quote")
 PAYMENT_METHODS = ("cash", "card", "pos", "bank_transfer", "refund", "pesapal", "other")
 RECURRING_INTERVALS = ("", "weekly", "monthly", "yearly")
 POS_SHIFT_STATUSES = ("open", "closed")
@@ -46,6 +51,9 @@ class Invoice(Base):
         UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
     )
     number: Mapped[str] = mapped_column(Text, nullable=False)
+    # "invoice" or "quote" -- see 0009_quotes.sql for why one table.
+    kind: Mapped[str] = mapped_column(String(8), nullable=False, default="invoice")
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
@@ -79,6 +87,33 @@ class Invoice(Base):
     payments: Mapped[list["Payment"]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan", lazy="selectin"
     )
+
+    # The one definition of "what the customer owes". Before 2026-11-10,
+    # record_payment / pay_with_card / the Stripe webhook each summed
+    # line.total_cents only -- the *pre-tax* subtotal -- so an invoice
+    # with per-line tax was marked paid (and charged by card) without the
+    # tax. POS lines carry tax_rate_bp=0 (tax arrives as its own
+    # reconciling line), so this is identical to the old sum for POS.
+    @property
+    def grand_total_cents(self) -> int:
+        return sum(line.total_cents + line.tax_cents for line in self.lines)
+
+    @property
+    def paid_cents(self) -> int:
+        return sum(p.amount_cents for p in self.payments)
+
+    @property
+    def balance_cents(self) -> int:
+        return self.grand_total_cents - self.paid_cents
+
+    def is_overdue(self, now: datetime) -> bool:
+        return (
+            self.kind == "invoice"
+            and self.status == "sent"
+            and self.due_at is not None
+            and self.due_at < now
+            and self.balance_cents > 0
+        )
 
 
 class InvoiceLine(Base):

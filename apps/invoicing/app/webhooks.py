@@ -133,8 +133,8 @@ async def stripe_webhook(request: Request, session: AsyncSession = Depends(get_s
         raise HTTPException(404, "invoice not found")
 
     await session.refresh(inv, attribute_names=["lines", "payments"])
-    total = sum(line.total_cents for line in inv.lines)
-    already_paid = sum(p.amount_cents for p in inv.payments)
+    total = inv.grand_total_cents  # incl. tax -- see Invoice.grand_total_cents
+    already_paid = inv.paid_cents
     amount = payment_intent.get("amount_received", total - already_paid)
     now = datetime.now(UTC)
 
