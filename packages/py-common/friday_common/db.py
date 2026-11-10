@@ -3,7 +3,7 @@ from functools import lru_cache
 from uuid import uuid4
 
 from fastapi import Depends
-from sqlalchemy import URL, make_url, text
+from sqlalchemy import URL, event, make_url, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -51,14 +51,30 @@ def make_engine() -> AsyncEngine:
     return create_async_engine(url, pool_pre_ping=True, connect_args=connect_args)
 
 
-async def _set_search_path(session: AsyncSession, schema: str) -> None:
-    # Transaction-scoped (is_local=true), like set_org_context: a plain
-    # session-level SET would stick to the pooled PgBouncer server
-    # connection and leak into whichever app's transaction uses it next.
-    await session.execute(
-        text("SELECT set_config('search_path', :sp, true)"),
-        {"sp": f'"{schema}", public'},
-    )
+def _pin_per_transaction(session: AsyncSession, schema: str, org_id: str | None = None) -> None:
+    """Apply search_path (and the RLS org context) at the start of *every*
+    transaction this session opens, transaction-scoped (is_local=true).
+
+    Why not a plain session-level `SET search_path` once (the original
+    code): behind PgBouncer transaction pooling the session-level setting
+    sticks to the pooled *server* connection and leaks into whichever
+    app's transaction lands there next, while this session's own next
+    transaction may land on a connection carrying some other app's
+    search_path. Why not set it once transaction-locally: handlers commit
+    mid-request and keep querying, and the setting dies with the first
+    commit (CI caught exactly that, 2026-11-10: `relation "wallets" does
+    not exist`). Re-applying on every begin is correct in both cases.
+    """
+    sp = f'"{schema}", public'
+
+    @event.listens_for(session.sync_session, "after_begin")
+    def _apply(_sess, _txn, connection) -> None:
+        if schema != "public":
+            connection.execute(text("SELECT set_config('search_path', :sp, true)"), {"sp": sp})
+        if org_id is not None:
+            connection.execute(
+                text("SELECT set_config('app.current_org_id', :org_id, true)"), {"org_id": org_id}
+            )
 
 
 def _session_factory(settings: FridaySettings | None = None) -> async_sessionmaker[AsyncSession]:
@@ -75,8 +91,7 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     settings = get_settings()
     session_factory = _session_factory(settings)
     async with session_factory() as session:
-        if settings.db_schema != "public":
-            await _set_search_path(session, settings.db_schema)
+        _pin_per_transaction(session, settings.db_schema)
         yield session
 
 
@@ -93,9 +108,7 @@ async def get_org_session(
     settings = get_settings()
     session_factory = _session_factory(settings)
     async with session_factory() as session:
-        if settings.db_schema != "public":
-            await _set_search_path(session, settings.db_schema)
-        await set_org_context(session, principal.org_id)
+        _pin_per_transaction(session, settings.db_schema, principal.org_id)
         yield session
 
 
