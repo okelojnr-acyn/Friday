@@ -90,6 +90,25 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // The browser's own passkey errors carry the real reason. POS asks for
+  // the till's built-in fingerprint/face sign-in only, so on a computer
+  // without it (e.g. Windows without Windows Hello) creation fails before
+  // any password manager is offered. Say so instead of "try again".
+  function passkeyMessage(err: unknown, fallback: string): string {
+    if (err instanceof ApiError) return err.message;
+    const name = err instanceof DOMException ? err.name : "";
+    if (name === "NotSupportedError" || name === "SecurityError") {
+      return "This device can't create a fingerprint sign-in. Set up its built-in fingerprint or face sign-in (Windows Hello, Touch ID or the phone's own), or use a till device that has one.";
+    }
+    if (name === "NotAllowedError") {
+      return "The fingerprint step was cancelled or timed out. If no fingerprint or face prompt appeared, this device's built-in sign-in (Windows Hello, Touch ID) isn't set up.";
+    }
+    if (name === "InvalidStateError") {
+      return "This device already has a fingerprint sign-in for this account. Use Scan to clock in.";
+    }
+    return fallback;
+  }
+
   async function onScan() {
     setError(null);
     setSubmitting(true);
@@ -97,7 +116,7 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
       await loginWithPasskey();
       onClockedIn();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not verify that fingerprint -- try again");
+      setError(passkeyMessage(err, "Could not verify that fingerprint -- try again"));
     } finally {
       setSubmitting(false);
     }
@@ -128,7 +147,7 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
       await addPasskey({ platformOnly: true });
       onClockedIn();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not verify that code or register your fingerprint");
+      setError(passkeyMessage(err, "Could not verify that code or register your fingerprint"));
     } finally {
       setSubmitting(false);
     }

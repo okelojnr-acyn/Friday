@@ -89,6 +89,56 @@ jobs:
       - working-directory: web
         run: npm run build
 
+  publish:
+    # Versioned images for Friday Host (docs/FRIDAYHOST-READINESS.md, 4E in
+    # friday-cloud-labs): ghcr.io/okelojnr-acyn/friday-<app>:<full sha>
+    # plus :latest. Friday Host pulls these instead of building on its own
+    # box, and customer VPSes pull the exact same tested image. Only after
+    # every test job passed on main.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [kernel, apps, pos-engine, web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - { image: friday-kernel, dockerfile: infra/kernel.Dockerfile, app: "", port: "" }
+          - { image: friday-crm, dockerfile: infra/python-app.Dockerfile, app: crm, port: "8001" }
+          - { image: friday-invoicing, dockerfile: infra/python-app.Dockerfile, app: invoicing, port: "8002" }
+          - { image: friday-projects, dockerfile: infra/python-app.Dockerfile, app: projects, port: "8003" }
+          - { image: friday-inventory, dockerfile: infra/python-app.Dockerfile, app: inventory, port: "8004" }
+          - { image: friday-web3, dockerfile: infra/python-app.Dockerfile, app: web3, port: "8005" }
+          - { image: friday-accounting, dockerfile: infra/python-app.Dockerfile, app: accounting, port: "8006" }
+          - { image: friday-minions, dockerfile: infra/python-app.Dockerfile, app: minions, port: "8007" }
+          - { image: friday-fleets, dockerfile: infra/python-app.Dockerfile, app: fleets, port: "8008" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          build-args: |
+            APP_NAME=${{ matrix.app }}
+            APP_PORT=${{ matrix.port }}
+          push: true
+          tags: |
+            ghcr.io/okelojnr-acyn/${{ matrix.image }}:${{ github.sha }}
+            ghcr.io/okelojnr-acyn/${{ matrix.image }}:latest
+          # Links the package to this public repo (visibility follows it).
+          labels: |
+            org.opencontainers.image.source=https://github.com/okelojnr-acyn/Friday
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
   notify-release:
     # Only once every other job has actually passed on main -- this marks
     # the commit as the recommended Friday version for every Friday
@@ -96,8 +146,10 @@ jobs:
     # never let a broken commit get marked. See friday-cloud-labs'
     # api/internal/fridayupdate (CreateReleaseFromCI) for what receives
     # this and FRIDAY_RELEASE_CI_TOKEN's own docs for the auth model.
+    # ...and only once its images are published, so a marked release can
+    # always be pulled.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [kernel, apps, pos-engine, web]
+    needs: [publish]
     runs-on: ubuntu-latest
     steps:
       - name: Mark this commit as the recommended Friday release
