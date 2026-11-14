@@ -1040,3 +1040,214 @@
   font-size: 12px;
   white-space: nowrap;
 }
+
+/* ---------- Guss floating widget ---------- */
+.guss-fab {
+  position: fixed;
+  right: 20px;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 48px;
+  padding: 0 18px 0 14px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--ink-bg);
+  color: var(--ink-text);
+  font: 600 14px var(--font);
+  box-shadow: var(--shadow-float);
+  cursor: pointer;
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+.guss-fab:hover { transform: translateY(-1px); }
+.guss-fab:active { transform: scale(0.98); }
+.guss-fab-open { width: 48px; padding: 0; justify-content: center; }
+.guss-fab:focus-visible, .guss-icon-btn:focus-visible, .guss-chip:focus-visible, .guss-send:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.guss-panel {
+  position: fixed;
+  right: 20px;
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 60px);
+  z-index: 60;
+  width: min(380px, calc(100vw - 40px));
+  height: min(560px, calc(100vh - 120px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+  animation: guss-in 0.18s ease-out;
+}
+@keyframes guss-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guss-panel { animation: none; }
+  .guss-fab, .guss-fab:hover { transition: none; transform: none; }
+  .guss-typing span { animation: none; }
+}
+.guss-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.guss-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  background: var(--ink-bg);
+  color: var(--ink-text);
+  flex-shrink: 0;
+}
+.guss-title { flex: 1; min-width: 0; font-weight: 600; font-size: 14px; display: flex; flex-direction: column; }
+.guss-sub { font-weight: 400; font-size: 12px; color: var(--text-muted); }
+.guss-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.guss-icon-btn:hover { background: var(--bg); color: var(--text); }
+
+.guss-lines {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.guss-empty { color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+.guss-empty p { margin: 0 0 var(--space-2); }
+.guss-empty ul { margin: 0 0 var(--space-3); padding-left: 18px; color: var(--text); }
+.guss-line {
+  max-width: 85%;
+  padding: 9px 12px;
+  border-radius: 16px;
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.guss-line-you { align-self: flex-end; background: var(--ink-bg); color: var(--ink-text); border-bottom-right-radius: 6px; }
+.guss-line-guss { align-self: flex-start; background: var(--bg); color: var(--text); border-bottom-left-radius: 6px; }
+.guss-line-error { align-self: flex-start; background: rgba(214, 72, 63, 0.08); color: var(--danger); }
+.guss-typing { display: inline-flex; gap: 4px; padding: 12px 14px; }
+.guss-typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: guss-dot 1s ease-in-out infinite;
+}
+.guss-typing span:nth-child(2) { animation-delay: 0.15s; }
+.guss-typing span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes guss-dot { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+
+.guss-reports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.guss-chip {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font: 500 13px var(--font);
+  cursor: pointer;
+}
+.guss-chip:hover:not(:disabled) { background: var(--bg); }
+.guss-chip:disabled { opacity: 0.5; cursor: default; }
+.guss-chip-quiet { color: var(--text-muted); margin-left: auto; }
+
+.guss-form {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+.guss-input {
+  flex: 1;
+  min-height: 42px;
+  max-height: 120px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 21px;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px var(--font);
+  resize: none;
+  field-sizing: content;
+}
+.guss-input:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+.guss-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  cursor: pointer;
+}
+.guss-send:disabled { opacity: 0.4; cursor: default; }
+.guss-readonly { margin: 0; padding: var(--space-3) var(--space-4) var(--space-4); font-size: 13px; color: var(--text-muted); }
+
+/* Phones: a bottom sheet, not a small box in the corner. */
+@media (max-width: 560px) {
+  .guss-panel {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: min(78vh, 640px);
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .guss-fab { right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); }
+  .guss-fab-open { display: none; }
+  .guss-line { max-width: 90%; }
+}
+
+/* Footer text on the dark gradient card: the muted label grey is
+ * unreadable there. */
+.stat-card-featured .stat-card-foot,
+.stat-card-featured .stat-card-foot .field-label {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* Phones: the top bar keeps every destination but drops the words. */
+@media (max-width: 760px) {
+  .topbar { padding: 0 var(--space-4); }
+  .topbar-right { gap: var(--space-2); }
+  .topbar-label, .topbar-email { display: none; }
+  .topbar-right .btn-pill { padding-left: 0; padding-right: 0; width: 36px; justify-content: center; }
+  .topbar-user { padding: 3px; }
+}

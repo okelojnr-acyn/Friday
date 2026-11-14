@@ -1,9 +1,10 @@
 import { Link } from "react-router-dom";
-import { Icon } from "./Icon";
+import { Icon, type IconName } from "./Icon";
 
 interface AppTileProps {
   to: string;
-  icon: string;
+  // The app's registry name ("crm", "pos", ...); picks the icon and tint.
+  app: string;
   label: string;
   description?: string;
   // True for a separate HTML entry (e.g. pos.html) rather than a route
@@ -13,31 +14,28 @@ interface AppTileProps {
   external?: boolean;
 }
 
-const KNOWN_ICONS = new Set(["target", "receipt", "kanban", "box"]);
-
-// A distinct accent per app -- the closest Friday gets to Odoo's
-// bespoke, colorful per-app icon without a full illustration pipeline:
-// one line-icon set, tinted differently per app so the grid still reads
-// as "many distinct apps," not one repeated glyph.
-const ICON_COLOR: Record<string, string> = {
-  target: "#d6483f",
-  receipt: "#2f9e63",
-  kanban: "#3f6fd6",
-  box: "#b5792a",
-  "app-window": "var(--accent)",
+// One silhouette and one tint per app, chosen here by app name rather
+// than the kernel catalog's icon field, so the grid never shows two apps
+// with the same glyph (it used to: anything outside four names fell back
+// to a generic window, and Point of Sale reused Invoicing's receipt).
+const APP_ICONS: Record<string, { icon: IconName; color: string }> = {
+  crm: { icon: "funnel", color: "#d6483f" },
+  invoicing: { icon: "invoice", color: "#2f9e63" },
+  projects: { icon: "kanban", color: "#3f6fd6" },
+  inventory: { icon: "box", color: "#b5792a" },
+  accounting: { icon: "calculator", color: "#6b5bd2" },
+  web3: { icon: "chain", color: "#0f8f9c" },
+  minions: { icon: "users", color: "#c2417a" },
+  fleets: { icon: "truck", color: "#4d6b2f" },
+  pos: { icon: "storefront", color: "#e07a35" },
 };
 
-export function AppTile({ to, icon, label, external }: AppTileProps) {
-  const iconName = (KNOWN_ICONS.has(icon) ? icon : "app-window") as
-    | "target"
-    | "receipt"
-    | "kanban"
-    | "box"
-    | "app-window";
+export function AppTile({ to, app, label, external }: AppTileProps) {
+  const { icon, color } = APP_ICONS[app] ?? { icon: "app-window" as IconName, color: "var(--accent)" };
   const content = (
     <>
-      <span className="app-tile-icon" style={{ color: ICON_COLOR[iconName] }}>
-        <Icon name={iconName} size={20} />
+      <span className="app-tile-icon" style={{ color }}>
+        <Icon name={icon} size={22} />
       </span>
       <span className="app-tile-label">{label}</span>
     </>

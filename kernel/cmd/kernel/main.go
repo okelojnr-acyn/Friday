@@ -12,6 +12,7 @@ import (
 	"github.com/acyn-innovation/friday/kernel/internal/auth"
 	"github.com/acyn-innovation/friday/kernel/internal/db"
 	"github.com/acyn-innovation/friday/kernel/internal/gateway"
+	"github.com/acyn-innovation/friday/kernel/internal/guss"
 	"github.com/acyn-innovation/friday/kernel/internal/integrations"
 	"github.com/acyn-innovation/friday/kernel/internal/mail"
 	"github.com/acyn-innovation/friday/kernel/internal/org"
@@ -118,6 +119,11 @@ func main() {
 	// Not behind requireAuth -- Google's redirect back to this URL carries
 	// no Authorization header; see google_oauth.go's oauthStateClaims doc.
 	mux.HandleFunc("GET /orgs/integrations/google_calendar/oauth/callback", integrationHandlers.GoogleOAuthCallback)
+
+	gussHandlers := &guss.Handlers{Pool: pool}
+	mux.Handle("GET /guss/status", requireAuth(http.HandlerFunc(gussHandlers.Status)))
+	mux.Handle("POST /guss/chat", requireAuth(http.HandlerFunc(gussHandlers.Chat)))
+	mux.Handle("GET /guss/report", requireAuth(http.HandlerFunc(gussHandlers.Report)))
 
 	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(apps, eventsToken))
 	mux.Handle("GET /health", gateway.HealthHandler(apps, pool, nil))

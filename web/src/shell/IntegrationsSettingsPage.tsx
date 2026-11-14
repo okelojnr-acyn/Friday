@@ -44,6 +44,18 @@ interface ProviderDescriptor {
 // INTEGRATIONS.md#<docAnchor> for exactly what each one needs.
 const PROVIDERS: ProviderDescriptor[] = [
   {
+    key: "guss",
+    label: "Guss",
+    icon: "sparkle",
+    category: "Assistant",
+    codeReady: true,
+    docAnchor: "guss",
+    fields: [
+      { key: "url", label: "Guss address", placeholder: "https://shop-guss.tenants.fridayhost.dev" },
+      { key: "token", label: "Web API token", secret: true, placeholder: "From Friday Host: Servers, Guss, Settings" },
+    ],
+  },
+  {
     key: "stripe",
     label: "Stripe",
     icon: "credit-card",
@@ -290,7 +302,7 @@ function ProviderCard({
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {provider.codeReady ? <Badge tone="accent">Code-ready</Badge> : <Badge tone="neutral">Stub</Badge>}
+          {provider.codeReady ? null : <Badge tone="neutral">Coming soon</Badge>}
           <Badge tone={connected ? "success" : "neutral"}>{connected ? "Connected" : "Not connected"}</Badge>
           {canManage ? (
             <Button size="sm" variant="secondary" onClick={openEditor} disabled={editing}>
@@ -410,8 +422,7 @@ export function IntegrationsSettingsPage() {
       ) : null}
       {error ? <div className="error-banner" style={{ marginBottom: 16 }}>{error}</div> : null}
       <p className="field-label" style={{ marginBottom: 16 }}>
-        Connect a provider with the API key or webhook URL it gives you -- see INTEGRATIONS.md for what each one
-        needs and whether it's wired up already or a stub to finish.
+        Connect the services your business already uses. Each one asks for the key or link that service gives you.
       </p>
       {PROVIDERS.map((p) => (
         <ProviderCard key={p.key} provider={p} connected={connected.has(p.key)} canManage={canManage} onChanged={load} />

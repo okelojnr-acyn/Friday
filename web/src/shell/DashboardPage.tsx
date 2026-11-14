@@ -154,7 +154,15 @@ export function DashboardPage() {
   if (error) return <div className="page error-banner">{error}</div>;
   if (!apps) return <div className="page spinner">Loading...</div>;
 
-  const installedApps = apps.filter((a) => a.installed);
+  // Daily-work apps first, back-office after; unknown apps go last by name.
+  const APP_ORDER = ["crm", "invoicing", "inventory", "projects", "minions", "accounting", "fleets", "web3"];
+  const rank = (name: string) => {
+    const i = APP_ORDER.indexOf(name);
+    return i < 0 ? APP_ORDER.length : i;
+  };
+  const installedApps = apps
+    .filter((a) => a.installed)
+    .sort((a, b) => rank(a.name) - rank(b.name) || a.label.localeCompare(b.label));
 
   if (installedApps.length === 0) {
     return (
@@ -177,12 +185,12 @@ export function DashboardPage() {
           <AppTile
             key={a.name}
             to={a.name === "web3" ? "/web3/treasury" : a.name === "accounting" ? "/accounting/reports" : `/${a.name}`}
-            icon={a.icon}
+            app={a.name}
             label={a.label}
           />
         ))}
         {installed.has("invoicing") ? (
-          <AppTile to="/pos.html" icon="receipt" label="Point of Sale" external />
+          <AppTile to="/pos.html" app="pos" label="Point of Sale" external />
         ) : null}
       </div>
 

@@ -144,6 +144,16 @@ export function PipelinePage() {
         </Card>
       ) : null}
 
+      {opportunities.length === 0 ? (
+        <Card className="empty-state">
+          <p style={{ margin: "0 0 12px" }}>
+            No opportunities yet. Add a lead, then drag it from New to Won as the deal moves.
+          </p>
+          <Button variant="primary" size="sm" className="btn-pill" onClick={() => setEditing("new")}>
+            <Icon name="plus" size={14} /> New Opportunity
+          </Button>
+        </Card>
+      ) : (
       <KanbanView
         spec={spec}
         records={opportunities}
@@ -159,6 +169,7 @@ export function PipelinePage() {
           }
         }}
       />
+      )}
 
       {editing ? (
         <FormView

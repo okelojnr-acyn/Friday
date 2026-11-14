@@ -34,7 +34,14 @@ export type IconName =
   | "ledger"
   | "users"
   | "truck"
-  | "upload";
+  | "upload"
+  | "funnel"
+  | "invoice"
+  | "calculator"
+  | "chain"
+  | "storefront"
+  | "sparkle"
+  | "send";
 
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = {
@@ -275,6 +282,57 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
         <svg {...common}>
           <path d="M12 16V4M7 9l5-5 5 5" />
           <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+        </svg>
+      );
+    case "funnel":
+      return (
+        <svg {...common}>
+          <path d="M4 5h16l-6 7.5V19l-4-2v-4.5L4 5Z" />
+        </svg>
+      );
+    case "invoice":
+      return (
+        <svg {...common}>
+          <path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3z" />
+          <path d="M14.2 8.2c-.4-.6-1.2-1-2.2-1-1.3 0-2.2.7-2.2 1.6 0 2 4.4 1.2 4.4 3.3 0 1-.9 1.7-2.2 1.7-1 0-1.9-.4-2.3-1.1" />
+          <path d="M12 6v1.2M12 13.8V15" />
+        </svg>
+      );
+    case "calculator":
+      return (
+        <svg {...common}>
+          <rect x="5" y="3" width="14" height="18" rx="2" />
+          <rect x="8" y="6" width="8" height="3.5" rx="0.6" />
+          <path d="M8.5 13h.01M12 13h.01M15.5 13h.01M8.5 16.5h.01M12 16.5h.01M15.5 16.5h.01" strokeWidth={2.4} />
+        </svg>
+      );
+    case "chain":
+      return (
+        <svg {...common}>
+          <rect x="2.5" y="9" width="9" height="6" rx="3" transform="rotate(-35 7 12)" />
+          <rect x="12.5" y="9" width="9" height="6" rx="3" transform="rotate(-35 17 12)" />
+          <path d="M9.6 13.6l4.8-3.2" />
+        </svg>
+      );
+    case "storefront":
+      return (
+        <svg {...common}>
+          <path d="M4 9.5V20h16V9.5" />
+          <path d="M3 9.5 4.5 4h15L21 9.5a2.5 2.5 0 0 1-4.5 1.4 2.5 2.5 0 0 1-4.5 0 2.5 2.5 0 0 1-4.5 0A2.5 2.5 0 0 1 3 9.5Z" />
+          <path d="M10 20v-5h4v5" />
+        </svg>
+      );
+    case "sparkle":
+      return (
+        <svg {...common}>
+          <path d="M12 3.5 13.8 9a2 2 0 0 0 1.3 1.3L20.5 12l-5.4 1.7a2 2 0 0 0-1.3 1.3L12 20.5 10.2 15a2 2 0 0 0-1.3-1.3L3.5 12l5.4-1.7A2 2 0 0 0 10.2 9L12 3.5Z" />
+        </svg>
+      );
+    case "send":
+      return (
+        <svg {...common}>
+          <path d="M4 12 20 4l-5 16-3-7-8-1Z" />
+          <path d="m12 13 8-9" />
         </svg>
       );
     case "app-window":
