@@ -97,7 +97,7 @@ export function PipelinePage() {
 
       <div className="dashboard-layout" style={{ marginBottom: 24 }}>
         <div className="dashboard-hero">
-          <Gauge percent={stats.winRate} />
+          <Gauge percent={stats.winRate} empty={stats.won.length + stats.lost.length === 0} />
           <div className="gauge-wrap">
             <span className="gauge-trend">
               {stats.won.length} won · {stats.lost.length} lost

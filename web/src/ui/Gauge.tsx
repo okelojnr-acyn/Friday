@@ -5,6 +5,8 @@
 interface GaugeProps {
   percent: number;
   size?: number;
+  /** No data yet: draw only the track, so "nothing closed" doesn't read as 0%. */
+  empty?: boolean;
 }
 
 const R = 80;
@@ -12,7 +14,7 @@ const CX = 100;
 const CY = 100;
 const ARC_LENGTH = Math.PI * R;
 
-export function Gauge({ percent, size = 108 }: GaugeProps) {
+export function Gauge({ percent, size = 108, empty = false }: GaugeProps) {
   const clamped = Math.max(0, Math.min(100, percent));
   const dashoffset = ARC_LENGTH * (1 - clamped / 100);
   const angleRad = ((180 - (clamped / 100) * 180) * Math.PI) / 180;
@@ -24,6 +26,7 @@ export function Gauge({ percent, size = 108 }: GaugeProps) {
   return (
     <svg width={size} height={(size * 110) / 200} viewBox="0 0 200 110" fill="none">
       <path d={arcPath} stroke="var(--border)" strokeWidth={10} strokeLinecap="round" />
+      {!empty && clamped > 0 && (
       <path
         d={arcPath}
         stroke="var(--accent)"
@@ -32,8 +35,13 @@ export function Gauge({ percent, size = 108 }: GaugeProps) {
         strokeDasharray={`${ARC_LENGTH} ${ARC_LENGTH}`}
         strokeDashoffset={dashoffset}
       />
-      <line x1={CX} y1={CY} x2={nx} y2={ny} stroke="var(--text)" strokeWidth={3} strokeLinecap="round" />
-      <circle cx={CX} cy={CY} r={5} fill="var(--text)" />
+      )}
+      {!empty && (
+        <>
+          <line x1={CX} y1={CY} x2={nx} y2={ny} stroke="var(--text)" strokeWidth={3} strokeLinecap="round" />
+          <circle cx={CX} cy={CY} r={5} fill="var(--text)" />
+        </>
+      )}
     </svg>
   );
 }

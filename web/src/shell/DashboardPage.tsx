@@ -199,7 +199,7 @@ export function DashboardPage() {
         <div className="dashboard-hero">
           {installed.has("crm") ? (
             <>
-              <Gauge percent={crmStats.winRate} />
+              <Gauge percent={crmStats.winRate} empty={crmStats.won + crmStats.lost === 0} />
               <div className="gauge-wrap">
                 <span className="gauge-trend">
                   {crmStats.won} won · {crmStats.lost} lost

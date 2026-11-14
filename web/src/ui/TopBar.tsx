@@ -19,29 +19,21 @@ export function TopBar({ email, role, onLogout }: TopBarProps) {
         </Link>
       </div>
       <div className="topbar-right">
-        <a href="https://fridayhost.dev/app" title="Friday Host dashboard" aria-label="Friday Host dashboard">
-          <Button variant="secondary" size="sm" className="btn-pill">
+        <a href="https://fridayhost.dev/app" title="Friday Host dashboard" aria-label="Friday Host dashboard" className="btn btn-secondary btn-sm btn-pill">
             <Icon name="arrow-up-right" size={16} />
             <span className="topbar-label">Friday Host</span>
-          </Button>
         </a>
-        <Link to="/apps" title="Apps catalog" aria-label="Apps catalog">
-          <Button variant="secondary" size="sm" className="btn-pill">
+        <Link to="/apps" title="Apps catalog" aria-label="Apps catalog" className="btn btn-secondary btn-sm btn-pill">
             <Icon name="apps" size={16} />
             <span className="topbar-label">Apps</span>
-          </Button>
         </Link>
-        <Link to="/settings/members" title="Members" aria-label="Members">
-          <Button variant="secondary" size="sm" className="btn-pill">
+        <Link to="/settings/members" title="Members" aria-label="Members" className="btn btn-secondary btn-sm btn-pill">
             <Icon name="users" size={16} />
             <span className="topbar-label">Members</span>
-          </Button>
         </Link>
-        <Link to="/settings/integrations" title="Integrations" aria-label="Integrations">
-          <Button variant="secondary" size="sm" className="btn-pill">
+        <Link to="/settings/integrations" title="Integrations" aria-label="Integrations" className="btn btn-secondary btn-sm btn-pill">
             <Icon name="link-2" size={16} />
             <span className="topbar-label">Integrations</span>
-          </Button>
         </Link>
         <span className="topbar-user" title={role}>
           <Avatar label={initials(email)} title={email} size={26} />

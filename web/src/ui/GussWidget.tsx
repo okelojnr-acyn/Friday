@@ -6,6 +6,25 @@ import { Icon } from "./Icon";
 
 type Line = { from: "you" | "guss" | "error"; text: string };
 
+// The browser's own speech-to-text (Chrome, Edge, Safari). Hosted Guss
+// images aren't built with Whisper, so voice is turned into text here and
+// sent like typing. Firefox has none: the mic button just doesn't show.
+interface Recognition {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  start(): void;
+  stop(): void;
+  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
+}
+type RecognitionCtor = new () => Recognition;
+function speechRecognition(): RecognitionCtor | null {
+  const w = window as unknown as { SpeechRecognition?: RecognitionCtor; webkitSpeechRecognition?: RecognitionCtor };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
 const STORE_KEY = "friday.guss.lines";
 const MAX_LINES = 40;
 
@@ -40,6 +59,41 @@ export function GussWidget() {
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const canWrite = session?.role !== "viewer";
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<Recognition | null>(null);
+  const [canSpeak] = useState(() => typeof window !== "undefined" && speechRecognition() !== null);
+
+  function toggleMic() {
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const Ctor = speechRecognition();
+    if (!Ctor) return;
+    const rec = new Ctor();
+    rec.lang = navigator.language || "en-US";
+    rec.interimResults = false;
+    rec.continuous = false;
+    rec.onresult = (e) => {
+      const heard = Array.from(e.results)
+        .map((r) => r[0]?.transcript ?? "")
+        .join(" ")
+        .trim();
+      if (heard) setText((t) => (t.trim() ? `${t.trim()} ${heard}` : heard));
+    };
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        setLines((l) => [...l, { from: "error", text: "Microphone blocked. Allow it in the browser's address bar to speak to Guss." }]);
+      }
+    };
+    rec.onend = () => {
+      setListening(false);
+      inputRef.current?.focus();
+    };
+    recognitionRef.current = rec;
+    setListening(true);
+    rec.start();
+  }
 
   useEffect(() => {
     let alive = true;
@@ -168,7 +222,7 @@ export function GussWidget() {
                 rows={1}
                 value={text}
                 maxLength={2000}
-                placeholder="sold 3 bags of rice at 120"
+                placeholder={listening ? "Listening…" : "sold 3 bags of rice at 120"}
                 aria-label="Message Guss"
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => {
@@ -178,6 +232,19 @@ export function GussWidget() {
                   }
                 }}
               />
+              {canSpeak && (
+                <button
+                  type="button"
+                  className={`guss-mic${listening ? " guss-mic-on" : ""}`}
+                  onClick={toggleMic}
+                  disabled={busy}
+                  aria-pressed={listening}
+                  aria-label={listening ? "Stop listening" : "Speak instead of typing"}
+                  title={listening ? "Listening… tap to stop" : "Speak"}
+                >
+                  <Icon name="mic" size={16} />
+                </button>
+              )}
               <button type="submit" className="guss-send" disabled={busy || !text.trim()} aria-label="Send">
                 <Icon name="send" size={16} />
               </button>
