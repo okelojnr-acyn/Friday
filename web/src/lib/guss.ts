@@ -33,3 +33,17 @@ export const newGussServiceKey = () => api.post<{ key: string }>("/guss/service-
 export const linkGussTelegram = (code: string) =>
   api.post<{ telegram_id: number; telegram_name: string }>("/guss/link", { code });
 export const unlinkGussTelegram = (telegramId: number) => api.del<void>(`/guss/links/${telegramId}`);
+
+export interface GussVoidRequest {
+  number: number;
+  entry_number: number;
+  entry: string;
+  requested_by: string;
+  reason: string;
+  requested_at: string;
+}
+
+/** Void requests waiting for an owner or admin (kernel/internal/guss). */
+export const listGussVoids = () => api.get<{ requests: GussVoidRequest[] }>("/guss/voids");
+export const decideGussVoid = (number: number, approve: boolean) =>
+  api.post<{ reply: string }>(`/guss/voids/${number}`, { approve });

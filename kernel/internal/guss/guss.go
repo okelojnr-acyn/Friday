@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -111,13 +112,22 @@ func (h *Handlers) client() *http.Client {
 }
 
 // call forwards one request to Guss and returns its {"reply": ...}.
+func (h *Handlers) call(ctx context.Context, c config, method, path string, body any) (string, int, error) {
+	var out struct {
+		Reply string `json:"reply"`
+	}
+	status, err := h.callJSON(ctx, c, method, path, body, &out)
+	return out.Reply, status, err
+}
+
+// callJSON forwards one request to Guss and decodes its answer into out.
 // Upstream failures are 424, never 502: Cloudflare (in front of the
 // kernel) swaps 502s for its own page without CORS headers, so the
 // browser only saw "can't reach the server" instead of Guss's reason.
-func (h *Handlers) call(ctx context.Context, c config, method, path string, body any) (string, int, error) {
+func (h *Handlers) callJSON(ctx context.Context, c config, method, path string, body, out any) (int, error) {
 	base, err := validURL(c.URL)
 	if err != nil {
-		return "", http.StatusBadRequest, err
+		return http.StatusBadRequest, err
 	}
 	var rd io.Reader
 	if body != nil {
@@ -126,25 +136,25 @@ func (h *Handlers) call(ctx context.Context, c config, method, path string, body
 	}
 	req, err := http.NewRequestWithContext(ctx, method, base.String()+path, rd)
 	if err != nil {
-		return "", http.StatusFailedDependency, err
+		return http.StatusFailedDependency, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := h.client().Do(req)
 	if err != nil {
-		return "", http.StatusFailedDependency, errors.New("couldn't reach Guss; check it's running and its address on the Integrations page")
+		return http.StatusFailedDependency, errors.New("couldn't reach Guss; check it's running and its address on the Integrations page")
 	}
 	defer resp.Body.Close()
-	var out struct {
-		Reply string `json:"reply"`
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
+	var e struct {
 		Error string `json:"error"`
 	}
-	json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out)
+	json.Unmarshal(raw, &e)
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
-		return "", http.StatusFailedDependency, errors.New("Guss refused the token saved on the Integrations page")
+		return http.StatusFailedDependency, errors.New("Guss refused the token saved on the Integrations page")
 	case resp.StatusCode >= 400:
-		msg := out.Error
+		msg := e.Error
 		if msg == "" {
 			msg = fmt.Sprintf("Guss answered %d", resp.StatusCode)
 		}
@@ -152,9 +162,19 @@ func (h *Handlers) call(ctx context.Context, c config, method, path string, body
 		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusTooManyRequests {
 			status = resp.StatusCode
 		}
-		return "", status, errors.New(msg)
+		return status, errors.New(msg)
 	}
-	return out.Reply, http.StatusOK, nil
+	if out != nil {
+		json.Unmarshal(raw, out)
+	}
+	return http.StatusOK, nil
+}
+
+// actor is who is asking Guss: the signed-in Friday person with their
+// role in Guss's chain of command (owner, admin -> manager, member ->
+// staff). Guss checks it like a Telegram user's role.
+func actor(c *auth.Claims) map[string]string {
+	return map[string]string{"id": "friday:" + c.Subject, "name": c.Email, "role": GussRole(c.Role)}
 }
 
 // Status says whether Guss is connected (GET /guss/status, any member).
@@ -198,7 +218,7 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	// One conversation per Friday user, so "undo" undoes your own entry.
 	reply, status, err := h.call(r.Context(), c, http.MethodPost, "/api/chat",
-		map[string]string{"conversation_id": "friday:" + claims.Subject, "text": req.Text})
+		map[string]any{"conversation_id": "friday:" + claims.Subject, "text": req.Text, "actor": actor(claims)})
 	if err != nil {
 		writeError(w, status, err.Error())
 		return
@@ -224,6 +244,75 @@ func (h *Handlers) Report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply, status, err := h.call(r.Context(), c, http.MethodGet, "/api/report?window="+window, nil)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"reply": reply})
+}
+
+// Voids lists Guss's void requests waiting for a decision (GET
+// /guss/voids, owners and admins: the people who can decide them).
+func (h *Handlers) Voids(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.FromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !isAdmin(claims) {
+		writeError(w, http.StatusForbidden, "only owners and admins decide void requests")
+		return
+	}
+	c, err := h.load(r.Context(), claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	var out struct {
+		Requests []json.RawMessage `json:"requests"`
+	}
+	if status, err := h.callJSON(r.Context(), c, http.MethodGet, "/api/voids", nil, &out); err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	if out.Requests == nil {
+		out.Requests = []json.RawMessage{}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// DecideVoid approves or rejects one (POST /guss/voids/{number}
+// {"approve": true}), as the signed-in owner or admin; Guss applies the
+// same rules as in Telegram (an admin can't overrule the owner).
+func (h *Handlers) DecideVoid(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.FromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !isAdmin(claims) {
+		writeError(w, http.StatusForbidden, "only owners and admins decide void requests")
+		return
+	}
+	number, err := strconv.ParseInt(r.PathValue("number"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "number must be a number")
+		return
+	}
+	var req struct {
+		Approve bool `json:"approve"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, `send {"approve": true|false}`)
+		return
+	}
+	c, err := h.load(r.Context(), claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	reply, status, err := h.call(r.Context(), c, http.MethodPost, "/api/voids/decide",
+		map[string]any{"number": number, "approve": req.Approve, "actor": actor(claims)})
 	if err != nil {
 		writeError(w, status, err.Error())
 		return
