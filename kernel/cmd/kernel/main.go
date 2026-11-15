@@ -17,6 +17,7 @@ import (
 	"github.com/acyn-innovation/friday/kernel/internal/integrations"
 	"github.com/acyn-innovation/friday/kernel/internal/mail"
 	"github.com/acyn-innovation/friday/kernel/internal/org"
+	"github.com/acyn-innovation/friday/kernel/internal/importsource"
 	"github.com/acyn-innovation/friday/kernel/internal/orgexport"
 	"github.com/acyn-innovation/friday/kernel/internal/registry"
 )
@@ -172,6 +173,17 @@ func main() {
 			}
 			return c.OrgID, c.Role, c.Via, true
 		})))
+	// Plan 2.4: read a customer's old database for the import screen.
+	mux.Handle("POST /orgs/import/source", requireAuth(&importsource.Handler{
+		AllowPrivate: os.Getenv("FRIDAY_IMPORT_ALLOW_PRIVATE") == "true",
+		Claims: func(r *http.Request) (string, string, bool) {
+			c, ok := auth.FromContext(r.Context())
+			if !ok {
+				return "", "", false
+			}
+			return c.Role, c.Via, true
+		},
+	}))
 	mux.Handle("POST /guss/voids/{number}", requireAuth(http.HandlerFunc(gussHandlers.DecideVoid)))
 
 	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(apps, eventsToken))

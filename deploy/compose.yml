@@ -71,6 +71,7 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      FRIDAY_IMPORT_ALLOW_PRIVATE: ${FRIDAY_IMPORT_ALLOW_PRIVATE:-false}
       APP_CRM_URL: http://crm:8001
       APP_INVOICING_URL: http://invoicing:8002
       APP_PROJECTS_URL: http://projects:8003

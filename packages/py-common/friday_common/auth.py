@@ -20,6 +20,9 @@ class Principal:
     org_id: str
     role: str
     email: str
+    # Set when an assistant (Guss) acts for the person; see the kernel's
+    # Claims.Via. Routes a person must run themselves check it.
+    via: str = ""
 
     def at_least(self, role: str) -> bool:
         return ROLE_RANK.get(self.role, -1) >= ROLE_RANK.get(role, 99)
@@ -51,6 +54,7 @@ def get_current_principal(
             org_id=payload["org_id"],
             role=payload["role"],
             email=payload["email"],
+            via=payload.get("via", ""),
         )
     except KeyError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"token missing claim: {exc}") from exc

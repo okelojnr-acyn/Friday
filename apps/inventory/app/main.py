@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from friday_common.importer import ImportField, ImportTarget, import_router
 from friday_common import (
     FieldSpec,
     Principal,
@@ -612,6 +613,38 @@ async def create_unit_of_measure(
 
 
 app.include_router(products_router)
+# Stock levels are not importable: on_hand_qty moves only through stock
+# moves. Import the catalogue, then count stock with adjustments.
+app.include_router(
+    import_router(
+        [
+            ImportTarget(
+                "product",
+                "Products",
+                "products",
+                (
+                    ImportField("name", "Name", required=True),
+                    ImportField("sku", "SKU"),
+                    ImportField("barcode", "Barcode"),
+                    ImportField("price_cents", "Price", "cents"),
+                    ImportField("cost_cents", "Cost", "cents"),
+                    ImportField("reorder_point", "Reorder point", "int"),
+                    ImportField("track_inventory", "Track stock", "bool"),
+                ),
+            ),
+            ImportTarget(
+                "supplier",
+                "Suppliers",
+                "suppliers",
+                (
+                    ImportField("name", "Name", required=True),
+                    ImportField("email", "Email", "email"),
+                    ImportField("phone", "Phone", "phone"),
+                ),
+            ),
+        ]
+    )
+)
 app.include_router(moves_router)
 app.include_router(suppliers_router)
 app.include_router(purchase_orders_router)
