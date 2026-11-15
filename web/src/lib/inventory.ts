@@ -7,6 +7,7 @@ export interface Product {
   kind: "product" | "service";
   sku: string;
   barcode: string;
+  category?: string;
   price_cents: number;
   cost_cents: number;
   on_hand_qty: number;

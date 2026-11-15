@@ -139,3 +139,10 @@ async def test_stock_moves_filter_by_reference_and_accept_guss_reasons(client):
     assert [(m["qty_delta"], m["reason"]) for m in only] == [(-5, "sale")]
     assert len((await client.get("/stock_moves")).json()) == 3
     assert (await client.get("/stock_moves", params={"reference": "missing"})).json() == []
+
+
+async def test_products_carry_a_shelf_category(client):
+    made = (await client.post("/products", json={"name": "Milk 500ml", "price_cents": 6500, "category": "Dairy"})).json()
+    assert made["category"] == "Dairy"
+    moved = (await client.patch(f"/products/{made['id']}", json={"category": "Fresh"})).json()
+    assert moved["category"] == "Fresh"

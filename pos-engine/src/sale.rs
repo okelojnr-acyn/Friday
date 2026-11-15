@@ -38,6 +38,11 @@ pub struct Sale {
     /// app updates, not just across one request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payments: Option<Vec<PaymentEntry>>,
+    /// The register shift the sale was rung up in (set by the till after
+    /// checkout_json). Kept through the offline queue, so a sale synced
+    /// later still lands in its own shift's drawer count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shift_id: Option<String>,
 }
 
 impl Sale {
@@ -50,6 +55,7 @@ impl Sale {
             amount_cents: cart.total_cents(),
             created_at_ms: now_ms,
             payments: None,
+            shift_id: None,
         }
     }
 }
@@ -157,5 +163,27 @@ mod tests {
         queue.mark_synced(&s1.client_sale_id);
         assert_eq!(queue.len(), 1);
         assert_eq!(queue.pending()[0].client_sale_id, s2.client_sale_id);
+    }
+}
+
+#[cfg(test)]
+mod shift_id_tests {
+    use super::*;
+
+    #[test]
+    fn a_queued_sale_keeps_its_shift() {
+        let json = r#"{"client_sale_id":"a","lines":[],"currency":"KES","method":"cash","amount_cents":100,"created_at_ms":1,"shift_id":"s-1"}"#;
+        let mut q = OfflineQueue::default();
+        q.enqueue(serde_json::from_str(json).unwrap());
+        let restored: OfflineQueue = serde_json::from_str(&serde_json::to_string(&q).unwrap()).unwrap();
+        assert_eq!(restored.pending()[0].shift_id.as_deref(), Some("s-1"));
+    }
+
+    #[test]
+    fn an_older_sale_without_a_shift_still_reads() {
+        let json = r#"{"client_sale_id":"a","lines":[],"currency":"USD","method":"cash","amount_cents":100,"created_at_ms":1}"#;
+        let sale: Sale = serde_json::from_str(json).unwrap();
+        assert!(sale.shift_id.is_none());
+        assert!(!serde_json::to_string(&sale).unwrap().contains("shift_id"));
     }
 }

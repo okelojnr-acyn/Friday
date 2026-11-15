@@ -12,7 +12,10 @@ export interface PosSale {
 
 export const fetchPosSale = (number: string) => api.get<PosSale>(`/api/invoicing/pos/sales/${number}`);
 
-export const returnPosSale = (number: string) => api.post<PosSale>(`/api/invoicing/pos/sales/${number}/return`);
+export const returnPosSale = (number: string, shiftId?: string) =>
+  api.post<PosSale>(
+    `/api/invoicing/pos/sales/${encodeURIComponent(number)}/return${shiftId ? `?shift_id=${encodeURIComponent(shiftId)}` : ""}`,
+  );
 
 /** Starts a real Pesapal checkout for the built sale payload (same shape
  * PosPage.tsx already sends to /pos/sales -- this is a different

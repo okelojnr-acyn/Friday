@@ -112,3 +112,10 @@ async def test_a_one_till_shop_needs_no_set_up(client):
     assert [r["name"] for r in regs] == ["Main till"]
     closed = (await client.post(f"/pos/shifts/{shift['id']}/close", json={"closing_count_cents": 900})).json()
     assert closed["expected_cents"] == 900
+
+
+async def test_a_receipt_number_finds_the_sale(client):
+    sold = (await client.post("/pos/sales", json=sale(1200, client_sale_id="ab12cd34-0000-4000-8000-000000000001"))).json()
+    found = await client.get("/pos/sales/AB12CD34")
+    assert found.status_code == 200 and found.json()["id"] == sold["id"]
+    assert (await client.get("/pos/sales/AB12")).status_code == 404  # too short to be a receipt

@@ -751,6 +751,20 @@ async def _get_pos_sale(session: AsyncSession, principal: Principal, number: str
         )
     )
     inv = rows.scalars().first()
+    if inv is None and len(number.strip()) >= 8:
+        # The receipt shows the start of the till's own sale id (printed
+        # before the server numbers the sale, e.g. offline).
+        ref = number.strip().lower()
+        rows = await session.execute(
+            select(Invoice).where(
+                Invoice.org_id == uuid.UUID(principal.org_id),
+                Invoice.source == "pos",
+                Invoice.number.like("POS-%"),
+                Invoice.source_ref.like(ref.replace("%", "").replace("_", "") + "%"),
+            )
+        )
+        found = rows.scalars().all()
+        inv = found[0] if len(found) == 1 else None
     if inv is None:
         raise HTTPException(404, "pos sale not found")
     return inv
