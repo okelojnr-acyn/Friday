@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from friday_common.importer import ImportField, ImportTarget, import_router
 from friday_common import (
     FieldSpec,
     Principal,
@@ -1172,6 +1173,23 @@ async def ar_aging(
 
 
 app.include_router(customers_router)
+app.include_router(
+    import_router(
+        [
+            ImportTarget(
+                "customer",
+                "Customers",
+                "customers",
+                (
+                    ImportField("name", "Name", required=True),
+                    ImportField("email", "Email", "email"),
+                    ImportField("company", "Company"),
+                    ImportField("payment_terms_days", "Payment terms (days)", "int"),
+                ),
+            )
+        ]
+    )
+)
 app.include_router(invoices_router)
 app.include_router(quotes_router)
 app.include_router(reports_router)

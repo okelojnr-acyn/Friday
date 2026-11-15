@@ -1,11 +1,25 @@
 // Minimal RFC4180-ish CSV read/write -- zero dependencies, same "stdlib
 // only" philosophy as scripts/host-data-import-template.py. Handles
 // quoted fields (embedded commas/newlines/escaped "" ), \r\n or \n line
-// endings. Not a full spec implementation (no BOM handling, no custom
-// delimiters) -- it only needs to round-trip what Excel/Sheets/Numbers
+// endings, a UTF-8 BOM, and "," ";" or tab separators. Not a full spec
+// implementation -- it only needs to round-trip what Excel/Sheets/Numbers
 // actually export, which this covers.
 
-export function parseCsv(text: string): string[][] {
+/** The separator a file's header line uses: spreadsheets in many locales
+ * save with ";", and some exports use tabs. */
+export type CsvSeparator = "," | ";" | "\t";
+
+export function detectDelimiter(text: string): CsvSeparator {
+  const end = text.search(/\r?\n/);
+  const first = end < 0 ? text : text.slice(0, end);
+  const count = (c: string) => first.split(c).length - 1;
+  const [tabs, semis, commas] = [count("\t"), count(";"), count(",")];
+  if (tabs > commas && tabs > semis) return "\t";
+  return semis > commas ? ";" : ",";
+}
+
+export function parseCsv(input: string, sep: CsvSeparator = ","): string[][] {
+  const text = input.replace(/^\uFEFF/, ""); // Excel's UTF-8 byte-order mark
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -35,7 +49,7 @@ export function parseCsv(text: string): string[][] {
       i++;
       continue;
     }
-    if (c === ",") {
+    if (c === sep) {
       row.push(field);
       field = "";
       i++;

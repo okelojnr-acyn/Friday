@@ -31,6 +31,12 @@ export function TopBar({ email, role, onLogout }: TopBarProps) {
             <Icon name="users" size={16} />
             <span className="topbar-label">Members</span>
         </Link>
+        {role === "owner" || role === "admin" ? (
+          <Link to="/settings/import" title="Import data" aria-label="Import data" className="btn btn-secondary btn-sm btn-pill">
+            <Icon name="upload" size={16} />
+            <span className="topbar-label">Import</span>
+          </Link>
+        ) : null}
         <Link to="/settings/integrations" title="Integrations" aria-label="Integrations" className="btn btn-secondary btn-sm btn-pill">
             <Icon name="link-2" size={16} />
             <span className="topbar-label">Integrations</span>

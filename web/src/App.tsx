@@ -9,6 +9,7 @@ import { DashboardPage } from "./shell/DashboardPage";
 import { AppsCatalogPage } from "./shell/AppsCatalogPage";
 import { IntegrationsSettingsPage } from "./shell/IntegrationsSettingsPage";
 import { MembersSettingsPage } from "./shell/MembersSettingsPage";
+import { ImportPage } from "./shell/ImportPage";
 import { ResourcePage, AppIndexRedirect } from "./shell/ResourcePage";
 import { TreasuryPage } from "./apps/web3/TreasuryPage";
 import { MarketPage } from "./apps/web3/MarketPage";
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/apps" element={<AppsCatalogPage />} />
           <Route path="/settings/integrations" element={<IntegrationsSettingsPage />} />
           <Route path="/settings/members" element={<MembersSettingsPage />} />
+          <Route path="/settings/import" element={<ImportPage />} />
           {/* POS moved to its own installable mini-app (web/pos.html,
               apps/pos/PosApp.tsx) -- gated behind a biometric cashier
               clock-in that only makes sense as a dedicated entry, same
