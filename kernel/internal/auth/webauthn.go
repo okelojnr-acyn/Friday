@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -143,17 +144,74 @@ func consumeWebauthnChallenge(ctx context.Context, pool *pgxpool.Pool, sessionID
 	return &session, nil
 }
 
+// errNoKernelAccount: the token is valid but names nobody in core.users,
+// neither by id nor (within the token's org) by email. Happens with a
+// Friday Host SSO token for someone the install doesn't know.
+var errNoKernelAccount = errors.New("this sign-in isn't linked to a Friday account on this install -- ask an admin to invite your email, then sign in with the emailed code")
+
+// errCredentialTaken: the authenticator returned a credential id that is
+// already registered to a different account.
+var errCredentialTaken = errors.New("this device's sign-in already belongs to another account -- that person should use Scan to clock in, or remove it from their account first")
+
+// resolveWebauthnUser finds the core.users row a passkey ceremony is for.
+// Normally that's the token's subject. A Friday Host SSO token
+// (friday-cloud-labs api/internal/installs.MintSSO) carries the Friday
+// Host user id instead, which has no row here; the email claim, signed
+// with this kernel's own secret, then finds the same person, but only
+// if they belong to the token's org. Without this, the credential insert
+// failed on its user_id foreign key and the browser saw "db error"
+// (owner report, 2026-11-15).
+func resolveWebauthnUser(ctx context.Context, pool *pgxpool.Pool, claims *Claims) (*webauthnUser, error) {
+	var id, email, fullName string
+	err := pool.QueryRow(ctx, `
+		SELECT id::text, email, full_name FROM core.users WHERE id::text = $1
+	`, claims.Subject).Scan(&id, &email, &fullName)
+	if errors.Is(err, pgx.ErrNoRows) && claims.Email != "" && claims.OrgID != "" {
+		err = pool.QueryRow(ctx, `
+			SELECT u.id::text, u.email, u.full_name
+			FROM core.users u JOIN core.memberships m ON m.user_id = u.id
+			WHERE lower(u.email) = lower($1) AND m.org_id::text = $2
+		`, strings.TrimSpace(claims.Email), claims.OrgID).Scan(&id, &email, &fullName)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errNoKernelAccount
+	}
+	if err != nil {
+		return nil, err
+	}
+	// The authenticator shows these; an account made at the till may
+	// have no full name yet.
+	if fullName == "" {
+		fullName = email
+	}
+	return loadWebauthnUser(ctx, pool, id, email, fullName)
+}
+
+// storeWebauthnCredential saves a new passkey. Registering the same
+// credential again for the same person (a retried ceremony, or Windows
+// Hello re-enrolling after a PIN change) refreshes the row instead of
+// failing on the UNIQUE credential_id; the same id for someone else is
+// errCredentialTaken.
 func storeWebauthnCredential(ctx context.Context, pool *pgxpool.Pool, userID string, cred *webauthn.Credential, deviceLabel string) error {
-	_, err := pool.Exec(ctx, `
+	var id string
+	err := pool.QueryRow(ctx, `
 		INSERT INTO core.webauthn_credentials (user_id, credential_id, public_key, sign_count, device_label)
 		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (credential_id) DO UPDATE
+			SET public_key = EXCLUDED.public_key, sign_count = EXCLUDED.sign_count,
+			    device_label = CASE WHEN EXCLUDED.device_label = '' THEN core.webauthn_credentials.device_label ELSE EXCLUDED.device_label END
+			WHERE core.webauthn_credentials.user_id = EXCLUDED.user_id
+		RETURNING id
 	`,
 		userID,
 		base64.RawURLEncoding.EncodeToString(cred.ID),
 		base64.RawURLEncoding.EncodeToString(cred.PublicKey),
-		cred.Authenticator.SignCount,
+		int64(cred.Authenticator.SignCount),
 		deviceLabel,
-	)
+	).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errCredentialTaken
+	}
 	return err
 }
 
