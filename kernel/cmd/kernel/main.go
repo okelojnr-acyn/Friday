@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/acyn-innovation/friday/kernel/internal/auth"
@@ -48,6 +49,13 @@ func main() {
 			log.Fatal(err)
 		}
 		return
+	}
+	// The image's ENTRYPOINT is ./kernel, so `docker compose run kernel
+	// ./kernel dbcheck` arrives here as ["./kernel", "dbcheck"]. Starting the
+	// server on arguments it doesn't know hung CI for 20 minutes
+	// (2026-11-15); say what's wrong instead.
+	if len(os.Args) > 1 {
+		log.Fatalf("unknown command %q; commands: bootstrap, export, dbcheck (no arguments starts the server)", strings.Join(os.Args[1:], " "))
 	}
 	ctx := context.Background()
 

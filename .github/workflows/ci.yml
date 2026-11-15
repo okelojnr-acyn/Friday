@@ -215,6 +215,7 @@ jobs:
           ! unzip -l export.zip | grep -q 'integration_credentials\|webauthn\|otp_codes\|guss_service'
           unzip -l export.zip | grep -c '\.csv$' 
       - name: Friday on its own Postgres (plan 2.4)
+        timeout-minutes: 15
         # A separate PostgreSQL 14 with TLS on the compose network stands
         # in for a customer's database: dbcheck passes, every service
         # comes back healthy on it, Friday's tables land there, and the
@@ -227,7 +228,7 @@ jobs:
           docker run -d --name extdb --network friday_default -e POSTGRES_USER=shop -e POSTGRES_PASSWORD=$EXTPW -e POSTGRES_DB=shop             -v "$PWD/extcerts:/certs:ro" postgres:14-alpine -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
           for i in $(seq 1 30); do docker exec extdb pg_isready -U shop && break; sleep 2; done
           echo "FRIDAY_DATABASE_URL=postgres://shop:$EXTPW@extdb:5432/shop?sslmode=require" >> .env
-          docker compose -f compose.yml --env-file .env run --rm --no-deps -T kernel ./kernel dbcheck | tee /dev/stderr | grep -q '^ok tls'
+          docker compose -f compose.yml --env-file .env run --rm --no-deps -T kernel dbcheck | tee /dev/stderr | grep -q '^ok tls'
           docker compose -f compose.yml --env-file .env up -d
           for i in $(seq 1 60); do
             unhealthy=$(docker compose -f compose.yml --env-file .env ps --format '{{.Service}} {{.Health}}' | awk '$2 != "" && $2 != "healthy"')

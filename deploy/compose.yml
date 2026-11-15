@@ -25,7 +25,7 @@ x-app: &app
 
 # FRIDAY_DATABASE_URL (optional, postgres://...): run Friday on a Postgres
 # the customer already has (plan 2.4); check it first with
-# `docker compose run --rm --no-deps kernel ./kernel dbcheck`. The bundled
+# `docker compose run --rm --no-deps kernel dbcheck`. The bundled
 # postgres service still runs (it's small) so nothing depends on a profile
 # being set; it just holds no data.
 x-app-env: &app-env
