@@ -75,6 +75,10 @@ func Check(ctx context.Context, pool *pgxpool.Pool, rawURL string, schemas []str
 	ver, _ := strconv.Atoi(verStr)
 	if ver < 140000 {
 		add("fail", "version", "Friday needs PostgreSQL 14 or newer; this is %d.%d", ver/10000, ver%10000)
+	} else if ver >= 170000 {
+		// Backups run pg_dump from the bundled postgres:16 image, and
+		// pg_dump refuses a newer server.
+		add("warn", "version", "PostgreSQL %d works, but Friday's nightly backup can only dump 16 or older; back this database up yourself", ver/10000)
 	} else {
 		add("ok", "version", "PostgreSQL %d", ver/10000)
 	}
