@@ -26,6 +26,9 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	url := os.Getenv("KERNEL_TEST_DATABASE_URL")
 	if url == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("KERNEL_TEST_DATABASE_URL must be set on CI")
+		}
 		t.Skip("KERNEL_TEST_DATABASE_URL not set")
 	}
 	ctx := context.Background()
