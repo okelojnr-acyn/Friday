@@ -18,6 +18,7 @@ from friday_common import (
 )
 from friday_common.integrations import PesapalProvider, ResendProvider, StripeProvider
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .events import invoice_lines_payload, publish_invoice_paid, publish_pos_sale_recorded
@@ -31,7 +32,6 @@ from .models import (
     Invoice,
     InvoiceLine,
     Payment,
-    PosShift,
 )
 from .schemas import (
     ArAgingCurrencyTotals,
@@ -47,12 +47,11 @@ from .schemas import (
     PayWithCardOut,
     PayWithPesapalOut,
     PosSaleStatusOut,
-    PosShiftClose,
-    PosShiftOpen,
-    PosShiftOut,
     QuoteCreate,
     QuoteStatusUpdate,
 )
+from .registers import router as registers_router
+from .registers import shift_for_sale
 from .webhooks import external_router
 from .webhooks import router as webhooks_router
 
@@ -531,6 +530,33 @@ async def _apply_pos_sale_lines(
     return charged_cents
 
 
+def _sale_time(body: dict) -> datetime:
+    """When the sale happened: the till's created_at_ms if it's plausible
+    (not in the future, not older than 30 days), else now."""
+    now = datetime.now(UTC)
+    ms = body.get("created_at_ms")
+    if isinstance(ms, (int, float)):
+        t = datetime.fromtimestamp(ms / 1000, UTC)
+        if now - timedelta(days=30) <= t <= now + timedelta(minutes=5):
+            return min(t, now)
+    return now
+
+
+async def _pos_sale_by_client_id(session: AsyncSession, principal: Principal, client_sale_id: str) -> Invoice | None:
+    rows = await session.execute(
+        select(Invoice).where(
+            Invoice.org_id == uuid.UUID(principal.org_id),
+            Invoice.source == "pos",
+            Invoice.number.like("POS-%"),
+            Invoice.source_ref == client_sale_id,
+        )
+    )
+    inv = rows.scalars().first()
+    if inv is not None:
+        await session.refresh(inv, attribute_names=["lines", "payments"])
+    return inv
+
+
 @pos_router.post("/sales", status_code=201)
 async def record_pos_sale(
     body: dict,
@@ -540,11 +566,22 @@ async def record_pos_sale(
     """Where the Rust POS engine's offline sync queue lands once a device
     is back online. A POS sale becomes an already-paid invoice with
     source='pos' -- same ledger, no separate "sales" table to reconcile
-    against invoicing later."""
-    now = datetime.now(UTC)
+    against invoicing later.
+
+    Recorded once per client_sale_id: a till resends a sale whose reply
+    it never got, and the second send returns the first invoice
+    (idx_invoices_pos_sale_once backs this up under a race). The sale's
+    own time (created_at_ms) dates it, not the moment it synced."""
     lines_in = body.get("lines", [])
     if not lines_in:
         raise HTTPException(422, "sale must have at least one line")
+    client_sale_id = body.get("client_sale_id")
+    if client_sale_id:
+        existing = await _pos_sale_by_client_id(session, principal, str(client_sale_id))
+        if existing is not None:
+            return InvoiceOut.from_model(existing)
+    now = _sale_time(body)
+    shift_id = await shift_for_sale(session, principal, body.get("shift_id"))
 
     invoice = Invoice(
         org_id=uuid.UUID(principal.org_id),
@@ -552,9 +589,10 @@ async def record_pos_sale(
         status="paid",
         currency=body.get("currency", "USD"),
         source="pos",
-        source_ref=body.get("client_sale_id"),
+        source_ref=client_sale_id,
         cashier_user_id=principal.user_id,
         cashier_email=principal.email,
+        pos_shift_id=shift_id,
         issued_at=now,
         created_at=now,
         updated_at=now,
@@ -596,7 +634,15 @@ async def record_pos_sale(
                 received_at=now,
             )
         )
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # The same sale arrived twice at once; the other request saved it.
+        await session.rollback()
+        existing = await _pos_sale_by_client_id(session, principal, str(client_sale_id))
+        if existing is None:
+            raise
+        return InvoiceOut.from_model(existing)
     await session.refresh(invoice, attribute_names=["lines", "payments"])
 
     # Lets Inventory auto-decrement stock for any line rung up from the
@@ -725,6 +771,7 @@ async def get_pos_sale(
 @pos_router.post("/sales/{number}/return", response_model=InvoiceOut, status_code=201)
 async def return_pos_sale(
     number: str,
+    shift_id: uuid.UUID | None = None,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_org_session),
 ):
@@ -751,6 +798,7 @@ async def return_pos_sale(
         source_ref=original.number,
         cashier_user_id=principal.user_id,
         cashier_email=principal.email,
+        pos_shift_id=await shift_for_sale(session, principal, shift_id),
         issued_at=now,
         created_at=now,
         updated_at=now,
@@ -860,100 +908,6 @@ async def create_credit_note(
     await publish_invoice_paid(principal.org_id, note, note_total_cents, invoice_lines_payload(note))
 
     return InvoiceOut.from_model(note)
-
-
-@pos_router.get("/shifts", response_model=list[PosShiftOut])
-async def list_pos_shifts(
-    principal: Principal = Depends(get_current_principal),
-    session: AsyncSession = Depends(get_org_session),
-):
-    rows = await session.execute(
-        select(PosShift).where(PosShift.org_id == uuid.UUID(principal.org_id)).order_by(PosShift.opened_at.desc())
-    )
-    return rows.scalars().all()
-
-
-@pos_router.get("/shifts/current", response_model=PosShiftOut)
-async def get_current_pos_shift(
-    principal: Principal = Depends(get_current_principal),
-    session: AsyncSession = Depends(get_org_session),
-):
-    rows = await session.execute(
-        select(PosShift).where(PosShift.org_id == uuid.UUID(principal.org_id), PosShift.status == "open")
-    )
-    shift = rows.scalars().first()
-    if shift is None:
-        raise HTTPException(404, "no open shift")
-    return shift
-
-
-@pos_router.post("/shifts/open", response_model=PosShiftOut, status_code=201)
-async def open_pos_shift(
-    body: PosShiftOpen,
-    principal: Principal = Depends(get_current_principal),
-    session: AsyncSession = Depends(get_org_session),
-):
-    """The DB-level partial unique index (idx_pos_shifts_one_open_per_org,
-    see 0006_pos_shifts.sql) is the real guard against two concurrent
-    opens racing each other -- this check is just a clean error message
-    for the ordinary case where there's already a visibly open shift."""
-    existing = await session.execute(
-        select(PosShift).where(PosShift.org_id == uuid.UUID(principal.org_id), PosShift.status == "open")
-    )
-    if existing.scalars().first() is not None:
-        raise HTTPException(400, "a shift is already open -- close it before opening a new one")
-
-    shift = PosShift(
-        org_id=uuid.UUID(principal.org_id),
-        opened_at=datetime.now(UTC),
-        opening_float_cents=body.opening_float_cents,
-        status="open",
-        opened_by_user_id=principal.user_id,
-        opened_by_email=principal.email,
-    )
-    session.add(shift)
-    await session.commit()
-    await session.refresh(shift)
-    return shift
-
-
-@pos_router.post("/shifts/{shift_id}/close", response_model=PosShiftOut)
-async def close_pos_shift(
-    shift_id: uuid.UUID,
-    body: PosShiftClose,
-    principal: Principal = Depends(get_current_principal),
-    session: AsyncSession = Depends(get_org_session),
-):
-    """Expected cash = opening float + cash payments received during the
-    shift's window. Known gap: a cash refund is always recorded with
-    method="refund" (see return_pos_sale), never "cash" specifically --
-    there's no payment-method tracking on a refund today -- so a cash
-    refund during this shift won't reduce the expected count. Documented
-    here rather than silently wrong."""
-    shift = await session.get(PosShift, shift_id)
-    if shift is None or str(shift.org_id) != principal.org_id:
-        raise HTTPException(404, "shift not found")
-    if shift.status != "open":
-        raise HTTPException(400, "shift is already closed")
-
-    now = datetime.now(UTC)
-    cash_rows = await session.execute(
-        select(Payment).where(
-            Payment.org_id == uuid.UUID(principal.org_id),
-            Payment.method == "cash",
-            Payment.received_at >= shift.opened_at,
-            Payment.received_at <= now,
-        )
-    )
-    cash_total = sum(p.amount_cents for p in cash_rows.scalars().all())
-
-    shift.closed_at = now
-    shift.closing_count_cents = body.closing_count_cents
-    shift.expected_cents = shift.opening_float_cents + cash_total
-    shift.status = "closed"
-    await session.commit()
-    await session.refresh(shift)
-    return shift
 
 
 # --- Quotes (P1 quote-to-cash) ------------------------------------------
@@ -1194,5 +1148,6 @@ app.include_router(invoices_router)
 app.include_router(quotes_router)
 app.include_router(reports_router)
 app.include_router(pos_router)
+app.include_router(registers_router)
 app.include_router(webhooks_router)
 app.include_router(external_router)
