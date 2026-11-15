@@ -186,6 +186,16 @@ jobs:
           again=$(docker compose -f compose.yml --env-file .env exec -T kernel ./kernel bootstrap "Smoke Shop" smoke@example.com)
           echo "$first / $again"
           [ -n "$first" ] && [ "$first" = "$again" ]
+          echo "ORG_ID=$first" >> "$GITHUB_ENV"
+      - name: Export an organisation
+        run: |
+          docker compose -f compose.yml --env-file .env exec -T kernel ./kernel export "$ORG_ID" > export.zip
+          unzip -l export.zip | tee /dev/stderr | grep -q manifest.json
+          unzip -p export.zip manifest.json | grep -q '"org_name": "Smoke Shop"'
+          unzip -p export.zip people.csv | grep -q 'smoke@example.com,'
+          unzip -l export.zip | grep -q 'core/memberships.csv'
+          ! unzip -l export.zip | grep -q 'integration_credentials\|webauthn\|otp_codes\|guss_service'
+          unzip -l export.zip | grep -c '\.csv$' 
       - if: failure()
         run: docker compose -f compose.yml --env-file .env logs --tail 100
 

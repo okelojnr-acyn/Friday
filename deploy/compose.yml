@@ -54,6 +54,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?}
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:?}
       MIGRATIONS_DIR: migrations
+      FRIDAY_VERSION: ${FRIDAY_VERSION:?}
       CORS_ORIGIN: https://${FRIDAY_DOMAIN:?}
       KERNEL_PUBLIC_URL: https://${FRIDAY_DOMAIN:?}/kernel
       WEBAUTHN_RP_ID: ${FRIDAY_DOMAIN:?}
