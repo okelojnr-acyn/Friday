@@ -1,0 +1,262 @@
+import { useEffect, useState } from "react";
+import { ApiError } from "../lib/api";
+import {
+  getGussAccess,
+  linkGussTelegram,
+  newGussServiceKey,
+  setGussAccess,
+  unlinkGussTelegram,
+  type GussAccess,
+  type GussAccessLevel,
+} from "../lib/guss";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
+import { Card } from "../ui/Card";
+import { FieldWrap, Input, Select } from "../ui/Field";
+
+const LEVELS: { value: GussAccessLevel; label: string }[] = [
+  { value: "none", label: "No access" },
+  { value: "read", label: "Read only" },
+  { value: "write", label: "Read and write" },
+];
+
+const ROLE_LABEL: Record<string, string> = {
+  owner: "Owner",
+  manager: "Manager",
+  staff: "Staff",
+};
+
+function message(err: unknown, fallback: string) {
+  return err instanceof ApiError ? err.message : fallback;
+}
+
+/** Guss inside Friday: which apps Guss may read or change, its key, and
+ * who is linked. Each person's Friday role is their role in Guss, so the
+ * same chain of command applies in Telegram. */
+export function GussAccessCard({ canManage }: { canManage: boolean }) {
+  const [data, setData] = useState<GussAccess | null>(null);
+  const [draft, setDraft] = useState<Record<string, GussAccessLevel>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [code, setCode] = useState("");
+  const [key, setKey] = useState<string | null>(null);
+
+  function load() {
+    getGussAccess()
+      .then((d) => {
+        setData(d);
+        setDraft(d.access);
+      })
+      .catch((err) => setError(message(err, "Could not load Guss access")));
+  }
+  useEffect(load, []);
+
+  async function run(
+    action: () => Promise<unknown>,
+    done: string,
+    fallback: string,
+  ) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await action();
+      setNotice(done);
+      load();
+    } catch (err) {
+      setError(message(err, fallback));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!data) {
+    return error ? <div className="error-banner">{error}</div> : null;
+  }
+
+  const changed = data.apps.some(
+    (a) => (draft[a] ?? "none") !== (data.access[a] ?? "none"),
+  );
+
+  return (
+    <Card style={{ marginBottom: 12 }}>
+      <div style={{ fontWeight: 500, marginBottom: 4 }}>Guss in your apps</div>
+      <p className="field-label" style={{ marginBottom: 12 }}>
+        What Guss may do in each app when someone talks to it. People act with
+        their own Friday role: owners and admins approve voids, members record
+        entries.
+      </p>
+      {error ? (
+        <div className="error-banner" style={{ marginBottom: 10 }}>
+          {error}
+        </div>
+      ) : null}
+      {notice ? (
+        <div style={{ marginBottom: 10 }}>
+          <Badge tone="success">{notice}</Badge>
+        </div>
+      ) : null}
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {data.apps.map((app) => (
+          <FieldWrap key={app} label={app}>
+            <Select
+              value={draft[app] ?? "none"}
+              disabled={!canManage || busy}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  [app]: e.target.value as GussAccessLevel,
+                }))
+              }
+            >
+              {LEVELS.map((l) => (
+                <option key={l.value} value={l.value}>
+                  {l.label}
+                </option>
+              ))}
+            </Select>
+          </FieldWrap>
+        ))}
+      </div>
+      {canManage ? (
+        <div
+          style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}
+        >
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={!changed || busy}
+            onClick={() =>
+              run(
+                () => setGussAccess(draft),
+                "Access saved",
+                "Could not save access",
+              )
+            }
+          >
+            Save access
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            onClick={() =>
+              run(
+                async () => setKey((await newGussServiceKey()).key),
+                "New key created",
+                "Could not create a key",
+              )
+            }
+          >
+            {data.has_service_key ? "Replace Guss key" : "Create Guss key"}
+          </Button>
+        </div>
+      ) : null}
+      {key ? (
+        <div style={{ marginTop: 10 }}>
+          <div className="field-label">
+            Shown once. Paste it into Friday Host: Servers, your Guss machine,
+            Settings, Friday key. Any older key stopped working just now.
+          </div>
+          <code
+            style={{ display: "block", wordBreak: "break-all", marginTop: 4 }}
+          >
+            {key}
+          </code>
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          borderTop: "1px solid var(--border)",
+          marginTop: 14,
+          paddingTop: 12,
+        }}
+      >
+        <div style={{ fontWeight: 500, marginBottom: 4 }}>
+          Link your Telegram
+        </div>
+        <p className="field-label" style={{ marginBottom: 8 }}>
+          Send /link to your Guss bot and enter the 6-digit code here within 10
+          minutes.
+        </p>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <FieldWrap label="Code">
+            <Input
+              inputMode="numeric"
+              maxLength={6}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+              style={{ width: 120 }}
+            />
+          </FieldWrap>
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={code.length !== 6 || busy}
+            onClick={() =>
+              run(
+                async () => {
+                  await linkGussTelegram(code);
+                  setCode("");
+                },
+                "Telegram linked",
+                "Could not link",
+              )
+            }
+          >
+            Link
+          </Button>
+        </div>
+        {data.links.length > 0 ? (
+          <div style={{ marginTop: 12 }}>
+            {data.links.map((l) => (
+              <div
+                key={l.telegram_id}
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "6px 0",
+                }}
+              >
+                <div
+                  style={{
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {l.telegram_name || l.telegram_id}{" "}
+                  <span className="field-label">({l.email})</span>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <Badge tone={l.guss_role ? "neutral" : "danger"}>
+                    {ROLE_LABEL[l.guss_role] ?? "Viewer, can't use Guss"}
+                  </Badge>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() =>
+                      run(
+                        () => unlinkGussTelegram(l.telegram_id),
+                        "Unlinked",
+                        "Could not unlink",
+                      )
+                    }
+                  >
+                    Unlink
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}

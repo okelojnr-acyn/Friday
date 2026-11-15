@@ -14,6 +14,12 @@ type Claims struct {
 	OrgID string `json:"org_id"`
 	Role  string `json:"role"`
 	Email string `json:"email"`
+	// Via is set on tokens issued to an assistant acting for a user
+	// ("guss"). Such tokens only reach app routes (/api/{app}/*), and only
+	// the apps in Access: "read" (GET) or "write" (everything). Apps that
+	// don't know these fields ignore them; the kernel enforces them.
+	Via    string            `json:"via,omitempty"`
+	Access map[string]string `json:"access,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -36,6 +42,29 @@ func (iss *Issuer) Issue(userID, orgID, role, email string) (string, error) {
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(iss.ttl)),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(iss.secret)
+}
+
+// IssueVia issues a short-lived token for userID acting through an
+// assistant (`via`), limited to the apps in access.
+func (iss *Issuer) IssueVia(userID, orgID, role, email, via string, access map[string]string, ttl time.Duration) (string, error) {
+	now := time.Now()
+	if access == nil {
+		access = map[string]string{}
+	}
+	claims := Claims{
+		OrgID:  orgID,
+		Role:   role,
+		Email:  email,
+		Via:    via,
+		Access: access,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

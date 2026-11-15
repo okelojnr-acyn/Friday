@@ -14,6 +14,7 @@ import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { FieldWrap, Input } from "../ui/Field";
 import { Icon, type IconName } from "../ui/Icon";
+import { GussAccessCard } from "./GussAccessCard";
 
 interface ProviderField {
   key: string;
@@ -425,7 +426,10 @@ export function IntegrationsSettingsPage() {
         Connect the services your business already uses. Each one asks for the key or link that service gives you.
       </p>
       {PROVIDERS.map((p) => (
-        <ProviderCard key={p.key} provider={p} connected={connected.has(p.key)} canManage={canManage} onChanged={load} />
+        <div key={p.key}>
+          <ProviderCard provider={p} connected={connected.has(p.key)} canManage={canManage} onChanged={load} />
+          {p.key === "guss" && connected.has("guss") ? <GussAccessCard canManage={canManage} /> : null}
+        </div>
       ))}
     </div>
   );

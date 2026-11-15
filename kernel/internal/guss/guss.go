@@ -26,6 +26,8 @@ import (
 
 type Handlers struct {
 	Pool *pgxpool.Pool
+	// Issuer signs the short-lived tokens Guss gets for linked people.
+	Issuer *auth.Issuer
 	// Client is replaced in tests; nil means the SSRF-safe default.
 	Client *http.Client
 }

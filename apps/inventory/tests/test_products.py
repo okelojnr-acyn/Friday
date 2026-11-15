@@ -124,3 +124,18 @@ async def test_org_isolation_on_products(client, as_principal, principal):
 
     as_principal(principal)
     assert (await client.get(f"/products/{product['id']}")).status_code == 200
+
+
+async def test_stock_moves_filter_by_reference_and_accept_guss_reasons(client):
+    product = (await client.post("/products", json={"name": "Soda", "price_cents": 80})).json()
+    for delta, reason, ref in [(24, "received", "guss:a"), (-5, "sale", "guss:b"), (-1, "write_off", "other")]:
+        resp = await client.post(
+            f"/products/{product['id']}/adjust-stock",
+            json={"delta": delta, "reason": reason, "reference": ref},
+        )
+        assert resp.status_code == 200, resp.text
+
+    only = (await client.get("/stock_moves", params={"reference": "guss:b"})).json()
+    assert [(m["qty_delta"], m["reason"]) for m in only] == [(-5, "sale")]
+    assert len((await client.get("/stock_moves")).json()) == 3
+    assert (await client.get("/stock_moves", params={"reference": "missing"})).json() == []

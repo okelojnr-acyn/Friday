@@ -120,8 +120,17 @@ func main() {
 	// no Authorization header; see google_oauth.go's oauthStateClaims doc.
 	mux.HandleFunc("GET /orgs/integrations/google_calendar/oauth/callback", integrationHandlers.GoogleOAuthCallback)
 
-	gussHandlers := &guss.Handlers{Pool: pool}
+	gussHandlers := &guss.Handlers{Pool: pool, Issuer: issuer}
 	mux.Handle("GET /guss/status", requireAuth(http.HandlerFunc(gussHandlers.Status)))
+	mux.Handle("GET /guss/access", requireAuth(http.HandlerFunc(gussHandlers.Access)))
+	mux.Handle("PUT /guss/access", requireAuth(http.HandlerFunc(gussHandlers.SetAccess)))
+	mux.Handle("POST /guss/service-key", requireAuth(http.HandlerFunc(gussHandlers.NewServiceKey)))
+	mux.Handle("POST /guss/link", requireAuth(http.HandlerFunc(gussHandlers.Link)))
+	mux.Handle("DELETE /guss/links/{telegram_id}", requireAuth(http.HandlerFunc(gussHandlers.Unlink)))
+	// Called by Guss itself with its service key (not a user session).
+	mux.HandleFunc("POST /guss/svc/link-code", gussHandlers.LinkCode)
+	mux.HandleFunc("POST /guss/svc/token", gussHandlers.Token)
+	mux.HandleFunc("GET /guss/svc/people", gussHandlers.People)
 	mux.Handle("POST /guss/chat", requireAuth(http.HandlerFunc(gussHandlers.Chat)))
 	mux.Handle("GET /guss/report", requireAuth(http.HandlerFunc(gussHandlers.Report)))
 
@@ -133,7 +142,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("configure proxy for %s: %v", app.Name, err)
 		}
-		mux.Handle("/api/"+app.Name+"/", requireAuth(proxy))
+		mux.Handle("/api/"+app.Name+"/", requireAuth(gateway.EnforceAccess(app.Name, proxy)))
 		log.Printf("routing /api/%s/* -> %s", app.Name, app.BaseURL)
 	}
 

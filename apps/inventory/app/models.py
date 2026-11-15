@@ -83,7 +83,7 @@ class Product(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-REASONS = ("manual_adjustment", "pos_sale", "received")
+REASONS = ("manual_adjustment", "pos_sale", "received", "sale", "write_off")
 
 
 class StockMove(Base):

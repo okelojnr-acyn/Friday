@@ -347,12 +347,17 @@ async def adjust_stock(
 
 @moves_router.get("", response_model=list[StockMoveOut])
 async def list_stock_moves(
+    reference: str | None = None,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_org_session),
 ):
-    rows = await session.execute(
-        select(StockMove).where(StockMove.org_id == _org(principal)).order_by(StockMove.created_at.desc())
-    )
+    """All moves, newest first; `?reference=` narrows to one reference
+    (Guss checks "guss:<entry id>" before recording, so a retry never
+    counts twice)."""
+    query = select(StockMove).where(StockMove.org_id == _org(principal))
+    if reference is not None:
+        query = query.where(StockMove.reference == reference)
+    rows = await session.execute(query.order_by(StockMove.created_at.desc()))
     return rows.scalars().all()
 
 
