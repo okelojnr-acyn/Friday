@@ -105,6 +105,10 @@ class PosShiftOut(BaseModel):
     status: str
     opened_by_user_id: str | None
     opened_by_email: str | None
+    register_id: uuid.UUID | None = None
+    closed_by_email: str | None = None
+    close_note: str = ""
+    summary: dict | None = None
 
     model_config = {"from_attributes": True}
 

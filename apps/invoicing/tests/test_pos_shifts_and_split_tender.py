@@ -22,7 +22,7 @@ async def test_get_current_shift_404s_when_none_open(client):
 async def test_cannot_open_a_second_shift_while_one_is_open(client):
     await client.post("/pos/shifts/open", json={"opening_float_cents": 10000})
     resp = await client.post("/pos/shifts/open", json={"opening_float_cents": 5000})
-    assert resp.status_code == 400
+    assert resp.status_code == 409
 
 
 async def test_get_current_shift_returns_the_open_one(client):

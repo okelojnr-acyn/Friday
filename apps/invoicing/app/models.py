@@ -2,7 +2,8 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -78,6 +79,10 @@ class Invoice(Base):
     # Employee); email rides along for display even if that lookup fails.
     cashier_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     cashier_email: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The register shift a POS sale or return was rung up in (0011).
+    pos_shift_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("pos_shifts.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -174,14 +179,24 @@ class Payment(Base):
     invoice: Mapped["Invoice"] = relationship(back_populates="payments")
 
 
+class PosRegister(Base):
+    """A till. Each has its own drawer, so its own shifts (0011)."""
+
+    __tablename__ = "pos_registers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    location_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class PosShift(Base):
-    """Cash-drawer reconciliation: a cashier opens a shift with a known
-    starting cash float, the register keeps selling, and closing the
-    shift compares the counted cash in the drawer against what cash
-    sales during the window say should be there. One open shift per
-    org at a time (see open_pos_shift's check) -- a second register
-    needing its own concurrent shift is a real gap this doesn't cover,
-    documented rather than silently wrong."""
+    """Cash-drawer reconciliation for one register: a cashier opens a
+    shift with the starting cash float, sales rung up on that register
+    carry the shift's id, and closing compares the counted cash with the
+    float plus that register's cash takings (see registers.py)."""
 
     __tablename__ = "pos_shifts"
 
@@ -198,6 +213,13 @@ class PosShift(Base):
     closing_count_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     expected_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    register_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("pos_registers.id"), nullable=True
+    )
+    closed_by_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    closed_by_email: Mapped[str | None] = mapped_column(Text, nullable=True)
+    close_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Who opened the drawer -- set by open_pos_shift from
     # Principal.user_id/email. Accountability for this specific shift's
     # cash float; individual sales carry their own cashier identity on
