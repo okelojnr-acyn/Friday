@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./lib/auth";
+import { OrgSettingsProvider } from "./lib/orgSettings";
 import { RequireAuth } from "./shell/Layout";
 import { LoginPage } from "./shell/LoginPage";
 import { RegisterPage } from "./shell/RegisterPage";
@@ -10,6 +11,7 @@ import { AppsCatalogPage } from "./shell/AppsCatalogPage";
 import { IntegrationsSettingsPage } from "./shell/IntegrationsSettingsPage";
 import { MembersSettingsPage } from "./shell/MembersSettingsPage";
 import { ImportPage } from "./shell/ImportPage";
+import { BusinessSettingsPage } from "./shell/BusinessSettingsPage";
 import { ResourcePage, AppIndexRedirect } from "./shell/ResourcePage";
 import { TreasuryPage } from "./apps/web3/TreasuryPage";
 import { MarketPage } from "./apps/web3/MarketPage";
@@ -20,6 +22,7 @@ import { ReceivablesPage } from "./apps/invoicing/ReceivablesPage";
 export default function App() {
   return (
     <AuthProvider>
+      <OrgSettingsProvider>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
@@ -31,6 +34,7 @@ export default function App() {
           <Route path="/settings/integrations" element={<IntegrationsSettingsPage />} />
           <Route path="/settings/members" element={<MembersSettingsPage />} />
           <Route path="/settings/import" element={<ImportPage />} />
+          <Route path="/settings/business" element={<BusinessSettingsPage />} />
           {/* POS moved to its own installable mini-app (web/pos.html,
               apps/pos/PosApp.tsx) -- gated behind a biometric cashier
               clock-in that only makes sense as a dedicated entry, same
@@ -46,6 +50,7 @@ export default function App() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </OrgSettingsProvider>
     </AuthProvider>
   );
 }

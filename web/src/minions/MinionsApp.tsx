@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "../lib/auth";
+import { OrgSettingsProvider } from "../lib/orgSettings";
 import { LoginPage } from "../shell/LoginPage";
 import { RequireMinionsAuth } from "./MinionsLayout";
 import { MyTasksPage } from "./MyTasksPage";
@@ -17,6 +18,7 @@ import { PayrollPage } from "./PayrollPage";
 export default function MinionsApp() {
   return (
     <AuthProvider>
+      <OrgSettingsProvider>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route element={<RequireMinionsAuth />}>
@@ -27,6 +29,7 @@ export default function MinionsApp() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </OrgSettingsProvider>
     </AuthProvider>
   );
 }

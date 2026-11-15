@@ -10,9 +10,9 @@
   --bg: #f1efe8;
   --surface: #ffffff;
   --surface-raised: #ffffff;
-  --border: rgba(10, 10, 8, 0.08);
+  --border: rgba(10, 10, 8, 0.11);
   --text: #0e0e0b;
-  --text-muted: #87867c;
+  --text-muted: #5f5d54; /* 6.3:1 on --bg; was #87867c (3.2:1) */
   --accent: #e07a35;
   --accent-contrast: #ffffff;
   --success: #2f9e63;
@@ -47,9 +47,14 @@
   /* "Liquid glass": a frosted, translucent surface that lets whatever is
    * behind it (the ambient blob, in practice) bleed through -- used only
    * where a card actually sits over that glow, not on every surface. */
-  --glass-bg: rgba(255, 255, 255, 0.6);
-  --glass-border: rgba(255, 255, 255, 0.7);
-  --glass-blur: blur(22px) saturate(180%);
+  /* A sheen across the surface (lighter top-left), a bright top edge
+   * and a soft lower edge (--glass-edge), so it reads as glass and not
+   * as translucent white. */
+  --glass-bg: linear-gradient(150deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.58) 55%, rgba(255, 255, 255, 0.66) 100%);
+  --glass-border: rgba(255, 255, 255, 0.85);
+  --glass-blur: blur(24px) saturate(190%);
+  --glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -74,8 +79,8 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   position: relative;
 }

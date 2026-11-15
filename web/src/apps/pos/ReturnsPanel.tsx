@@ -5,6 +5,7 @@ import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Field";
 import { Icon } from "../../ui/Icon";
 import { Modal } from "../../ui/Modal";
+import { formatMoney } from "../../lib/orgSettings";
 
 interface ReturnsPanelProps {
   onClose: () => void;
@@ -71,7 +72,7 @@ export function ReturnsPanel({ onClose }: ReturnsPanelProps) {
           <div className="pos-totals-row">
             <span>{sale.number}</span>
             <span>
-              ${(sale.total_cents / 100).toFixed(2)} {sale.currency}
+              {formatMoney(sale.total_cents, { currency: sale.currency })}
             </span>
           </div>
           <div className="field-label">Status: {sale.status}</div>

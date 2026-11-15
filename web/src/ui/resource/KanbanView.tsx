@@ -13,6 +13,7 @@ import {
   isPriorityField,
   sumCents,
 } from "./fieldFormat";
+import { formatMoney } from "../../lib/orgSettings";
 
 interface KanbanViewProps {
   spec: ResourceSpec;
@@ -72,7 +73,7 @@ export function KanbanView({ spec, records, onCardClick, onMove }: KanbanViewPro
                   {col} <span className="kanban-column-count">{cardsInColumn.length}</span>
                 </span>
                 {sum !== null ? (
-                  <span className="kanban-column-sum">${(sum / 100).toFixed(0)}</span>
+                  <span className="kanban-column-sum">{formatMoney(sum, { whole: true })}</span>
                 ) : null}
               </div>
               <div className="kanban-stage-bar">

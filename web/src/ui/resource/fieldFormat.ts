@@ -1,5 +1,6 @@
 import type { FieldSpec } from "../../lib/types";
 import { statusTone } from "../Badge";
+import { formatMoney } from "../../lib/orgSettings";
 
 /** Cents (what every app stores) <-> a dollar-amount string (what a form
  * input shows). Keeps money as integers everywhere outside this one
@@ -18,7 +19,7 @@ export function formatCellValue(field: FieldSpec, value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
   switch (field.type) {
     case "currency":
-      return typeof value === "number" ? `$${(value / 100).toFixed(2)}` : String(value);
+      return typeof value === "number" ? formatMoney(value) : String(value);
     case "boolean":
       return value ? "Yes" : "No";
     case "date":

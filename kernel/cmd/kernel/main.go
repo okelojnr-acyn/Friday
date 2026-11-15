@@ -125,6 +125,9 @@ func main() {
 	mux.Handle("GET /auth/me", requireAuth(http.HandlerFunc(authHandlers.Me)))
 	mux.Handle("POST /orgs/invites", requireAuth(http.HandlerFunc(authHandlers.InviteMember)))
 
+	orgSettings := &org.Settings{Pool: pool}
+	mux.Handle("GET /orgs/settings", requireAuth(http.HandlerFunc(orgSettings.Get)))
+	mux.Handle("PUT /orgs/settings", requireAuth(http.HandlerFunc(orgSettings.Put)))
 	mux.Handle("GET /orgs/apps", requireAuth(http.HandlerFunc(catalog.List)))
 	mux.Handle("POST /orgs/apps/{app}/install", requireAuth(catalog.SetInstalled(true)))
 	mux.Handle("DELETE /orgs/apps/{app}/install", requireAuth(catalog.SetInstalled(false)))

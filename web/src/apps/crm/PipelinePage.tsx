@@ -11,9 +11,10 @@ import { Button } from "../../ui/Button";
 import { Icon } from "../../ui/Icon";
 import { KanbanView } from "../../ui/resource/KanbanView";
 import { FormView } from "../../ui/resource/FormView";
+import { formatMoney } from "../../lib/orgSettings";
 
 function money(cents: number): string {
-  return `$${(cents / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  return formatMoney(cents, { whole: true });
 }
 
 /** CRM's one hand-written screen (same justification as Accounting's
