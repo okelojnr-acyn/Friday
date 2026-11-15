@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import init, { PosCart, PosOfflineQueue } from "./engine/friday_pos_engine";
 import { api, ApiError } from "../../lib/api";
+import { useAuth } from "../../lib/auth";
 import { fetchProductCatalog, type Product } from "../../lib/inventory";
+import { formatMoney, useOrgSettings } from "../../lib/orgSettings";
+import type { PosRegister, PosShift } from "../../lib/posApi";
 import { pollPosSaleStatus, startPesapalPosPayment } from "../../lib/pos";
 import { useBarcodeScanner } from "../../lib/useBarcodeScanner";
-import { Button } from "../../ui/Button";
-import { Input } from "../../ui/Field";
-import { Badge } from "../../ui/Badge";
+import { Avatar } from "../../ui/Avatar";
 import { Icon } from "../../ui/Icon";
+import { initials } from "../../ui/resource/fieldFormat";
+import { chooseSerialDrawer, drawerMode, openDrawer, serialSupported, setDrawerMode, type DrawerMode } from "./drawer";
+import { PosNumpad } from "./PosNumpad";
+import { PosPayment, type Tender } from "./PosPayment";
+import { printReceipt } from "./receipt";
 import { ReturnsPanel } from "./ReturnsPanel";
 
 interface CartLine {
@@ -23,11 +29,6 @@ function lineTotalCents(line: CartLine): number {
   return Math.round((line.quantity * line.unit_price_cents * (10_000 - line.discount_bp)) / 10_000);
 }
 
-interface PaymentEntry {
-  method: string;
-  amount_cents: number;
-}
-
 interface Sale {
   client_sale_id: string;
   lines: CartLine[];
@@ -35,89 +36,105 @@ interface Sale {
   method: string;
   amount_cents: number;
   created_at_ms: number;
-  payments?: PaymentEntry[];
+  payments?: { method: string; amount_cents: number }[];
+  shift_id?: string;
 }
 
-const QUEUE_STORAGE_KEY = "friday.pos.offline_queue";
-const TAX_RATE_BP = 800; // 8% -- a flat dev default; a real deployment would read this from org settings
-const NUMPAD_KEYS = ["7", "8", "9", "4", "5", "6", "1", "2", "3", "+/-", "0", "."];
+type ShelfProduct = Product & { category?: string };
 
-/** The one genuinely custom screen in the product (see ARCHITECTURE.md):
- * a cart with live tax math and offline-first checkout isn't a CRUD form,
- * so it doesn't go through the generic ResourceSpec renderer. All of the
- * actual pricing/tax/queue logic lives in pos-engine (Rust, compiled to
- * WASM) -- this component is the register UI around it: scan a barcode,
- * search the catalog, or type a freeform line; select a line and type a
- * new quantity or price on the numpad (same interaction model as a real
- * register). */
-export function PosPage() {
+const QUEUE_STORAGE_KEY = "friday.pos.offline_queue";
+const LOW_STOCK = 5;
+
+/** The selling screen (owner's reference, 2026-11-15): the order with its
+ * keypad on the left, the shelf on the right, payment full-screen. All
+ * money maths stays in pos-engine (Rust/WASM); this is the register
+ * around it. Sales carry the open shift, so each till's drawer count is
+ * its own. */
+export function PosPage({
+  register,
+  shift,
+  onCloseRegister,
+  onSwitchTill,
+  onClockOut,
+  onPendingChange,
+}: {
+  register: PosRegister | null;
+  shift: PosShift;
+  onCloseRegister: () => void;
+  onSwitchTill: () => void;
+  onClockOut: () => void;
+  onPendingChange: (n: number) => void;
+}) {
+  const { session } = useAuth();
+  const settings = useOrgSettings();
+  const inclusive = settings.prices_include_tax;
+  const engineRate = inclusive ? 0 : settings.tax_rate_bp;
+  const taxLabel = `VAT ${settings.tax_rate_bp / 100}%${inclusive ? " (included)" : ""}`;
+
   const [ready, setReady] = useState(false);
   const cartRef = useRef<PosCart | null>(null);
   const queueRef = useRef<PosOfflineQueue | null>(null);
-
   const [lines, setLines] = useState<CartLine[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [search, setSearch] = useState("");
-  const [scanNotice, setScanNotice] = useState<string | null>(null);
   const [totals, setTotals] = useState({ subtotal: 0, tax: 0, total: 0 });
+  const [products, setProducts] = useState<ShelfProduct[]>([]);
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastSale, setLastSale] = useState<Sale | null>(null);
-
-  const [description, setDescription] = useState("");
-  const [unitPrice, setUnitPrice] = useState("");
 
   const [selected, setSelected] = useState<number | null>(null);
-  const [mode, setMode] = useState<"qty" | "price" | "discount">("qty");
+  const [mode, setMode] = useState<"qty" | "discount" | "price">("qty");
   const [buffer, setBuffer] = useState("");
-  const [showReturns, setShowReturns] = useState(false);
-  const [showSplit, setShowSplit] = useState(false);
-  const [splitCashInput, setSplitCashInput] = useState("");
-
-  // Pesapal is real async money movement, not something pos-engine's
-  // offline queue can speculatively record -- null means idle, "starting"
-  // is the brief window before a redirect_url comes back, "pending" is
-  // waiting on the customer + Pesapal's IPN, "paid"/"void" are terminal
-  // (see getPosSaleStatus's poll below).
-  const [pesapalFlow, setPesapalFlow] = useState<{
-    invoiceId: string;
-    status: "starting" | "pending" | "paid" | "void";
-  } | null>(null);
+  const [view, setView] = useState<"order" | "returns">("order");
+  const [paying, setPaying] = useState(false);
+  const [paid, setPaid] = useState<{ change: number; total: number; drawer: string } | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [customPrice, setCustomPrice] = useState("");
+  const [drawer, setDrawer] = useState<DrawerMode>(drawerMode());
+  const [pesapalFlow, setPesapalFlow] = useState<{ invoiceId: string; status: "starting" | "pending" | "paid" | "void" } | null>(null);
 
   useEffect(() => {
     init().then(() => {
-      // wasm-bindgen maps Rust's i64 to JS BigInt (a JS number can't
-      // represent all 64-bit integers precisely) -- every cents amount
-      // crossing the wasm boundary needs this conversion.
-      cartRef.current = new PosCart(BigInt(TAX_RATE_BP));
       const stored = localStorage.getItem(QUEUE_STORAGE_KEY);
       queueRef.current = stored ? PosOfflineQueue.restore_json(stored) : new PosOfflineQueue();
       setPendingCount(queueRef.current.len());
       setReady(true);
     });
-    fetchProductCatalog().then(setProducts);
+    fetchProductCatalog().then((p) => setProducts(p as ShelfProduct[]));
   }, []);
+
+  // The cart follows the org's tax rule; when the settings arrive the
+  // order is carried over into a cart with the right rate.
+  useEffect(() => {
+    if (!ready) return;
+    const old = cartRef.current ? (JSON.parse(cartRef.current.lines_json()) as CartLine[]) : [];
+    cartRef.current = new PosCart(BigInt(engineRate));
+    rebuildCart(old);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, engineRate]);
+
+  useEffect(() => onPendingChange(pendingCount), [pendingCount, onPendingChange]);
 
   function refreshCart() {
     const cart = cartRef.current;
     if (!cart) return;
     setLines(JSON.parse(cart.lines_json()));
+    const total = Number(cart.total_cents());
     setTotals({
       subtotal: Number(cart.subtotal_cents()),
-      tax: Number(cart.tax_cents()),
-      total: Number(cart.total_cents()),
+      // Prices with VAT inside: the engine adds none, and the VAT part of
+      // the total is shown.
+      tax: inclusive ? Math.round((total * settings.tax_rate_bp) / (10_000 + settings.tax_rate_bp)) : Number(cart.tax_cents()),
+      total,
     });
   }
 
-  /** pos-engine has no "update qty/price" method -- it's append/remove/
-   * clear only (see pos-engine/src/wasm.rs). Editing a line's qty/price
-   * here rebuilds the cart from the edited line list so the Rust engine
-   * stays the single source of truth for totals/tax, instead of this
-   * component re-deriving money math in JS. add_line always resets a
-   * line's discount to 0, so each line's existing discount_bp is
-   * reapplied via set_line_discount_bp afterward -- otherwise editing
-   * one line's quantity would silently wipe every other line's discount. */
+  /** pos-engine has append/remove/clear only, so editing a line rebuilds
+   * the cart and reapplies each line's discount. */
   function rebuildCart(newLines: CartLine[]) {
     const cart = cartRef.current;
     if (!cart) return;
@@ -142,47 +159,38 @@ export function PosPage() {
     setPendingCount(queue.len());
   }
 
-  function addLine() {
-    const cart = cartRef.current;
-    const price = Math.round(Number.parseFloat(unitPrice || "0") * 100);
-    if (!cart || !description.trim() || !Number.isFinite(price)) return;
-    cart.add_line(description.trim(), 1, BigInt(price), undefined, undefined);
-    setDescription("");
-    setUnitPrice("");
-    refreshCart();
-    setSelected(lines.length); // select the line just added
-    setMode("qty");
-    setBuffer("");
+  function flash(text: string) {
+    setNotice(text);
+    setTimeout(() => setNotice(null), 2500);
   }
 
-  function addFromCatalog(product: Product) {
+  function addProduct(product: Product) {
     const cart = cartRef.current;
     if (!cart) return;
-    cart.add_line(
-      product.name,
-      1,
-      BigInt(product.price_cents),
-      product.id,
-      product.cost_cents ? BigInt(product.cost_cents) : undefined,
-    );
-    setSearch("");
-    refreshCart();
-    setSelected(lines.length);
+    // Tapping a product already in the order adds one more of it.
+    const i = lines.findIndex((l) => l.product_id === product.id && l.discount_bp === 0);
+    if (i >= 0) {
+      rebuildCart(lines.map((l, j) => (j === i ? { ...l, quantity: l.quantity + 1 } : l)));
+      setSelected(i);
+    } else {
+      cart.add_line(product.name, 1, BigInt(product.price_cents), product.id, product.cost_cents ? BigInt(product.cost_cents) : undefined);
+      refreshCart();
+      setSelected(lines.length);
+    }
     setMode("qty");
     setBuffer("");
   }
 
-  function selectLine(i: number) {
-    setSelected(i);
-    setBuffer("");
-  }
-
-  function removeSelected() {
-    if (selected === null) return;
-    cartRef.current?.remove_line(selected);
-    setSelected(null);
-    setBuffer("");
+  function addCustom() {
+    const cart = cartRef.current;
+    const price = Math.round(Number.parseFloat(customPrice || "0") * 100);
+    if (!cart || !customName.trim() || !Number.isFinite(price) || price <= 0) return;
+    cart.add_line(customName.trim(), 1, BigInt(price), undefined, undefined);
     refreshCart();
+    setSelected(lines.length);
+    setCustomName("");
+    setCustomPrice("");
+    setCustomOpen(false);
   }
 
   function applyBuffer(next: string) {
@@ -190,52 +198,51 @@ export function PosPage() {
     if (selected === null) return;
     const parsed = next === "" || next === "." ? 0 : Number.parseFloat(next);
     const value = Number.isFinite(parsed) ? parsed : 0;
-
     if (mode === "discount") {
-      // The buffer is a percent-off, set directly on the line via the
-      // engine (pos-engine/src/cart.rs's set_line_discount_bp) -- the
-      // line's own unit_price_cents is never touched, so this can never
-      // compound against an already-discounted price the way the old
-      // mutate-unit_price_cents approach could.
       const pct = Math.min(Math.max(value, 0), 100);
-      const bp = next === "" ? 0 : Math.round(pct * 100);
-      cartRef.current?.set_line_discount_bp(selected, BigInt(bp));
+      cartRef.current?.set_line_discount_bp(selected, BigInt(next === "" ? 0 : Math.round(pct * 100)));
       refreshCart();
       return;
     }
-
-    const newLines = lines.map((l, i) => {
-      if (i !== selected) return l;
-      if (mode === "qty") return { ...l, quantity: next === "" ? l.quantity : value };
-      return { ...l, unit_price_cents: next === "" ? l.unit_price_cents : Math.round(value * 100) };
-    });
-    rebuildCart(newLines);
+    rebuildCart(
+      lines.map((l, i) => {
+        if (i !== selected) return l;
+        if (mode === "qty") return { ...l, quantity: next === "" ? l.quantity : value };
+        return { ...l, unit_price_cents: next === "" ? l.unit_price_cents : Math.round(value * 100) };
+      }),
+    );
   }
 
   function pressKey(key: string) {
     if (selected === null) return;
-    if (key === "+/-") return; // quantities/prices are never negative in this register
+    if (key === "+/-") {
+      flash("Returns go through Orders & returns");
+      return;
+    }
     if (key === "." && buffer.includes(".")) return;
     applyBuffer(buffer + key);
   }
 
   function backspace() {
     if (selected === null) return;
+    if (buffer === "" && mode === "qty") {
+      // Backspace on an untouched line removes it, as on a counter register.
+      cartRef.current?.remove_line(selected);
+      setSelected(lines.length > 1 ? Math.max(0, selected - 1) : null);
+      refreshCart();
+      return;
+    }
     applyBuffer(buffer.slice(0, -1));
   }
 
-  // Barcode scanner support: matches a scan against the cached catalog,
-  // regardless of which element has focus. See useBarcodeScanner's own
-  // doc comment for the scan-vs-typing detection this is built on.
   useBarcodeScanner((code) => {
     const match = products.find((p) => p.barcode && p.barcode === code);
     if (match) {
-      addFromCatalog(match);
-      setScanNotice(`Scanned: ${match.name}`);
+      addProduct(match);
+      flash(`Scanned: ${match.name}`);
     } else {
-      setScanNotice(`No product with barcode ${code}`);
+      flash(`No product with barcode ${code}`);
     }
-    setTimeout(() => setScanNotice(null), 2500);
   });
 
   async function syncPending() {
@@ -249,8 +256,7 @@ export function PosPage() {
         queue.mark_synced(sale.client_sale_id);
         persistQueue();
       } catch (err) {
-        // offline, or invoicing is down -- leave it queued and try the rest
-        if (!(err instanceof ApiError)) break;
+        if (!(err instanceof ApiError) || err.status === 0) break; // offline: try the rest later
       }
     }
     setSyncing(false);
@@ -261,31 +267,71 @@ export function PosPage() {
     syncPending();
     const onOnline = () => syncPending();
     window.addEventListener("online", onOnline);
-    return () => window.removeEventListener("online", onOnline);
+    const t = setInterval(syncPending, 30_000);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      clearInterval(t);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
-  async function checkout(method: "cash" | "card" | "split", payments?: PaymentEntry[]) {
+  async function onPaid(tenders: Tender[], change: number) {
     const cart = cartRef.current;
     const queue = queueRef.current;
     if (!cart || !queue || lines.length === 0) return;
-
     setError(null);
     let saleJson: string;
     try {
-      saleJson = cart.checkout_json("USD", method, Date.now(), payments ? JSON.stringify(payments) : undefined);
+      const method = tenders.length === 1 ? tenders[0].method : "split";
+      const payments =
+        tenders.length > 1 ? JSON.stringify(tenders.map((t) => ({ method: t.method, amount_cents: t.cents }))) : undefined;
+      saleJson = cart.checkout_json(settings.currency, method, Date.now(), payments);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not build sale");
+      setError(err instanceof Error ? err.message : "Could not build the sale");
       return;
     }
-    const sale: Sale = JSON.parse(saleJson);
-    queue.enqueue_json(saleJson);
+    const sale: Sale = { ...JSON.parse(saleJson), shift_id: shift.id };
+    queue.enqueue_json(JSON.stringify(sale));
     persistQueue();
+
+    const soldLines = lines;
+    const total = totals.total;
+    const tax = totals.tax;
     cart.clear();
     setSelected(null);
     setBuffer("");
     refreshCart();
-    setLastSale(sale);
+    setPaying(false);
+
+    // The drawer opens for cash only. A direct (serial) drawer opens now;
+    // with the printer's driver doing it, printing the receipt opens it.
+    let drawerNote = "";
+    const hasCash = tenders.some((t) => t.method === "cash") || change > 0;
+    if (hasCash) {
+      try {
+        const kicked = await openDrawer();
+        drawerNote = kicked ? "Drawer open" : drawer === "printer" ? "Drawer opens with the receipt" : "";
+      } catch (err) {
+        drawerNote = err instanceof Error ? err.message : "The drawer didn't open";
+      }
+    }
+    setPaid({ change, total, drawer: drawerNote });
+    if (hasCash && drawer === "printer") {
+      printReceipt({
+        businessName: settings.name,
+        registerName: register?.name ?? "Till",
+        cashier: session?.email ?? "",
+        number: sale.client_sale_id.slice(0, 8).toUpperCase(),
+        at: new Date(),
+        lines: soldLines.map((l) => ({ description: l.description, quantity: l.quantity, totalCents: lineTotalCents(l) })),
+        totalCents: total,
+        taxCents: tax,
+        taxLabel,
+        payments: tenders.map((t) => ({ method: t.method, cents: t.method === "cash" ? t.cents + change : t.cents })),
+        changeCents: change,
+        currency: settings.currency,
+      });
+    }
 
     try {
       await api.post("/api/invoicing/pos/sales", sale);
@@ -293,34 +339,25 @@ export function PosPage() {
       persistQueue();
     } catch (err) {
       setError(
-        err instanceof ApiError
-          ? `Sale saved locally; sync failed: ${err.message}`
-          : "Sale saved locally; will sync once back online.",
+        err instanceof ApiError && err.status !== 0
+          ? `Sale saved on this till; sending it failed: ${err.message}`
+          : "Sale saved on this till; it sends when back online.",
       );
     }
   }
 
   async function payWithPesapal() {
     const cart = cartRef.current;
-    if (!cart || lines.length === 0 || pesapalFlow?.status === "starting" || pesapalFlow?.status === "pending") return;
-
+    if (!cart || lines.length === 0) return;
     setError(null);
-    let saleJson: string;
+    let sale: Sale;
     try {
-      // No payments array -- Pesapal is a single tender, built the same
-      // way a plain cash/card sale is, just with method="pesapal" so the
-      // backend never mistakes this for an already-paid sale.
-      saleJson = cart.checkout_json("USD", "pesapal", Date.now());
+      sale = { ...JSON.parse(cart.checkout_json(settings.currency, "pesapal", Date.now())), shift_id: shift.id };
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not build sale");
+      setError(err instanceof Error ? err.message : "Could not build the sale");
       return;
     }
-    const sale: Sale = JSON.parse(saleJson);
-
-    // Deliberately not touching the cart/offline queue yet -- unlike
-    // checkout(), this can fail or be abandoned before any money moves,
-    // and there's nothing to "save locally and sync later" about a
-    // mobile-money charge that needs the customer online right now.
+    setPaying(false);
     setPesapalFlow({ invoiceId: "", status: "starting" });
     try {
       const { invoice_id, redirect_url } = await startPesapalPosPayment(sale);
@@ -332,10 +369,6 @@ export function PosPage() {
     }
   }
 
-  // Polls while a Pesapal payment is in flight -- the only way to know
-  // what happened is pesapal_webhook (apps/invoicing/app/webhooks.py)
-  // confirming it server-side; there's nothing to optimistically assume
-  // here the way cash/card can.
   useEffect(() => {
     if (!pesapalFlow || pesapalFlow.status !== "pending") return;
     const interval = setInterval(async () => {
@@ -344,302 +377,327 @@ export function PosPage() {
         if (result.status === "paid") {
           cartRef.current?.clear();
           setSelected(null);
-          setBuffer("");
           refreshCart();
           setPesapalFlow((cur) => (cur ? { ...cur, status: "paid" } : cur));
         } else if (result.status === "void") {
           setPesapalFlow((cur) => (cur ? { ...cur, status: "void" } : cur));
         }
       } catch {
-        // Transient poll failure -- try again next tick, same posture as
-        // checkout()'s offline-sync retry.
+        // keep polling
       }
     }, 3000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pesapalFlow?.invoiceId, pesapalFlow?.status]);
 
-  async function confirmSplit() {
-    const cashCents = Math.round(Number.parseFloat(splitCashInput || "0") * 100);
-    if (!Number.isFinite(cashCents) || cashCents <= 0 || cashCents >= totals.total) return;
-    await checkout("split", [
-      { method: "cash", amount_cents: cashCents },
-      { method: "card", amount_cents: totals.total - cashCents },
-    ]);
-    setShowSplit(false);
-    setSplitCashInput("");
+  const categories = useMemo(
+    () => [...new Set(products.map((p) => p.category?.trim()).filter((c): c is string => !!c))].sort(),
+    [products],
+  );
+  const inCart = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of lines) if (l.product_id) m.set(l.product_id, (m.get(l.product_id) ?? 0) + l.quantity);
+    return m;
+  }, [lines]);
+  const shelf = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return products.filter(
+      (p) =>
+        (!category || p.category === category) &&
+        (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode === q),
+    );
+  }, [products, search, category]);
+
+  if (!ready) {
+    return (
+      <div className="till-stage">
+        <div />
+        <div className="till-stage-center till-text">Starting the register…</div>
+        <div />
+      </div>
+    );
   }
 
-  const searchResults = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return [];
-    return products
-      .filter((p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q))
-      .slice(0, 6);
-  }, [search, products]);
+  if (paying) {
+    return (
+      <PosPayment
+        totalCents={totals.total}
+        taxCents={totals.tax}
+        taxLabel={taxLabel}
+        pesapal={payWithPesapal}
+        onCancel={() => setPaying(false)}
+        onPaid={onPaid}
+      />
+    );
+  }
 
-  if (!ready) return <div className="page spinner">Starting register...</div>;
-
-  return (
-    <div className="pos-screen">
-      <div className="pos-cart-pane">
-        <div className="pos-cart-header">
-          <span className="pos-cart-title">Register</span>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            {pendingCount > 0 ? (
-              <Badge tone="accent">{`${pendingCount} pending sync`}</Badge>
+  if (paid) {
+    return (
+      <div className="till-stage">
+        <div />
+        <div className="till-stage-center">
+          <div className="till-panel glass" style={{ textAlign: "center" }}>
+            <div className="till-text">Paid {formatMoney(paid.total)}</div>
+            {paid.change > 0 ? (
+              <>
+                <div className="till-text" style={{ marginTop: 8 }}>
+                  Give change
+                </div>
+                <div className="till-change">{formatMoney(paid.change)}</div>
+              </>
             ) : (
-              <Badge tone="success">Synced</Badge>
+              <div className="till-change" style={{ fontSize: 40 }}>
+                Thank you
+              </div>
             )}
-            <Button size="sm" variant="secondary" onClick={() => setShowReturns(true)}>
-              <Icon name="history" size={13} /> Returns
-            </Button>
-          </div>
-        </div>
-        {showReturns ? <ReturnsPanel onClose={() => setShowReturns(false)} /> : null}
-
-        <div className="pos-lines">
-          {lines.length === 0 ? (
-            <div className="empty-state">Cart is empty. Scan, search, or add an item on the right.</div>
-          ) : (
-            lines.map((line, i) => (
-              <div
-                key={i}
-                className={`pos-line${selected === i ? " selected" : ""}`}
-                onClick={() => selectLine(i)}
-              >
-                <div className="pos-line-main">
-                  <span className="pos-line-desc">{line.description}</span>
-                  <span className="pos-line-amount">${(lineTotalCents(line) / 100).toFixed(2)}</span>
-                </div>
-                <div className="pos-line-sub">
-                  {line.quantity} × ${(line.unit_price_cents / 100).toFixed(2)}
-                  {line.discount_bp > 0 ? (
-                    <Badge tone="accent">{`-${(line.discount_bp / 100).toFixed(0)}%`}</Badge>
-                  ) : null}
-                  {line.product_id ? <Icon name="box" size={11} /> : null}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-
-        <div className="pos-totals">
-          <div className="pos-totals-row">
-            <span>Subtotal</span>
-            <span>${(totals.subtotal / 100).toFixed(2)}</span>
-          </div>
-          <div className="pos-totals-row">
-            <span>Tax ({TAX_RATE_BP / 100}%)</span>
-            <span>${(totals.tax / 100).toFixed(2)}</span>
-          </div>
-          <div className="pos-totals-row pos-total-main">
-            <span>Total</span>
-            <span>${(totals.total / 100).toFixed(2)}</span>
-          </div>
-        </div>
-
-        {error ? <div className="error-banner">{error}</div> : null}
-        {lastSale ? (
-          <div className="field-label">
-            Last sale: ${(lastSale.amount_cents / 100).toFixed(2)} via {lastSale.method}
-          </div>
-        ) : null}
-
-        {pesapalFlow ? (
-          <div className="card card-padded" style={{ marginBottom: 8 }}>
-            <div className="field-label" style={{ marginBottom: 8 }}>
-              {pesapalFlow.status === "starting" ? "Starting Pesapal checkout..." : null}
-              {pesapalFlow.status === "pending"
-                ? "Waiting for the customer to complete payment on Pesapal..."
-                : null}
-              {pesapalFlow.status === "paid" ? "Payment received." : null}
-              {pesapalFlow.status === "void" ? "Payment failed or was cancelled." : null}
-            </div>
-            {pesapalFlow.status === "paid" || pesapalFlow.status === "void" ? (
-              <Button size="sm" variant="secondary" onClick={() => setPesapalFlow(null)}>
-                Dismiss
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-
-        {showSplit ? (
-          <div className="card card-padded" style={{ marginBottom: 8 }}>
-            <div className="field-label" style={{ marginBottom: 8 }}>
-              Split tender -- cash portion, rest charged to card
-            </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <Input
-                placeholder="Cash amount"
-                type="number"
-                step="0.01"
-                value={splitCashInput}
-                onChange={(e) => setSplitCashInput(e.target.value)}
-                autoFocus
-              />
-              <span className="field-label">
-                Card: $
-                {Math.max(0, totals.total / 100 - Number.parseFloat(splitCashInput || "0")).toFixed(2)}
-              </span>
-              <Button size="sm" variant="primary" onClick={confirmSplit}>
-                Confirm
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => setShowSplit(false)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        ) : null}
-
-        <div className="pos-pay-row">
-          <Button variant="secondary" disabled={lines.length === 0} onClick={() => checkout("cash")}>
-            Cash
-          </Button>
-          <Button variant="primary" disabled={lines.length === 0} onClick={() => checkout("card")}>
-            Charge
-          </Button>
-          <Button
-            variant="secondary"
-            disabled={lines.length === 0}
-            onClick={() => setShowSplit((s) => !s)}
-          >
-            Split
-          </Button>
-          <Button
-            variant="secondary"
-            disabled={lines.length === 0 || pesapalFlow?.status === "starting" || pesapalFlow?.status === "pending"}
-            onClick={payWithPesapal}
-          >
-            Mobile Money
-          </Button>
-        </div>
-      </div>
-
-      <div className="pos-entry-pane">
-        {scanNotice ? <div className="pos-scan-notice">
-          <Icon name="barcode" size={14} /> {scanNotice}
-        </div> : null}
-
-        <div className="card card-padded pos-add-card">
-          <div className="field-label" style={{ marginBottom: 8 }}>
-            <Icon name="barcode" size={13} /> Scan a barcode, or search the catalog
-          </div>
-          <div style={{ position: "relative" }}>
-            <Input
-              placeholder="Search products by name or SKU..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {searchResults.length > 0 ? (
-              <div className="pos-search-results">
-                {searchResults.map((p) => (
-                  <button key={p.id} className="pos-search-row" onClick={() => addFromCatalog(p)}>
-                    <span>{p.name}</span>
-                    <span className="field-label">
-                      ${(p.price_cents / 100).toFixed(2)}
-                      {p.track_inventory ? ` · ${p.on_hand_qty} on hand` : ""}
-                    </span>
-                  </button>
-                ))}
+            {paid.drawer ? (
+              <div className="till-chip ok" style={{ justifySelf: "center" }}>
+                {paid.drawer}
               </div>
             ) : null}
-          </div>
-          {products.length === 0 ? (
-            <div className="field-label" style={{ marginTop: 8 }}>
-              No product catalog yet -- install Inventory, or add items below.
-            </div>
-          ) : null}
-        </div>
-
-        <div className="card card-padded pos-add-card">
-          <div className="field-label" style={{ marginBottom: 8 }}>
-            New freeform item
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Input
-              placeholder="Description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-            <Input
-              placeholder="Price"
-              type="number"
-              step="0.01"
-              style={{ width: 110 }}
-              value={unitPrice}
-              onChange={(e) => setUnitPrice(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addLine()}
-            />
-            <Button onClick={addLine}>
-              <Icon name="plus" size={14} /> Add
-            </Button>
-          </div>
-        </div>
-
-        <div className="pos-numpad-wrap">
-          <div className="pos-mode-toggle">
-            <Button
-              size="sm"
-              variant={mode === "qty" ? "primary" : "secondary"}
-              onClick={() => {
-                setMode("qty");
-                setBuffer("");
-              }}
-              disabled={selected === null}
-            >
-              Qty
-            </Button>
-            <Button
-              size="sm"
-              variant={mode === "price" ? "primary" : "secondary"}
-              onClick={() => {
-                setMode("price");
-                setBuffer("");
-              }}
-              disabled={selected === null}
-            >
-              Price
-            </Button>
-            <Button
-              size="sm"
-              variant={mode === "discount" ? "primary" : "secondary"}
-              onClick={() => {
-                setMode("discount");
-                setBuffer("");
-              }}
-              disabled={selected === null}
-            >
-              <Icon name="percent" size={12} /> Disc
-            </Button>
-            <Button size="sm" variant="danger" onClick={removeSelected} disabled={selected === null}>
-              Remove
-            </Button>
-          </div>
-          <div className="pos-numpad">
-            {NUMPAD_KEYS.map((key) => (
+            {error ? (
+              <div className="till-error" style={{ margin: 0 }}>
+                {error}
+              </div>
+            ) : null}
+            <div className="till-panel-actions">
               <button
-                key={key}
-                className="pos-numpad-key"
-                disabled={selected === null}
-                onClick={() => pressKey(key)}
+                type="button"
+                className="till-btn"
+                onClick={() => openDrawer().catch((e) => flash(e instanceof Error ? e.message : "The drawer didn't open"))}
+                disabled={drawer !== "serial"}
+                title={drawer === "serial" ? "" : "Set up a direct drawer in the till menu"}
               >
-                {key}
+                Open drawer
+              </button>
+              <button type="button" className="till-btn primary" autoFocus onClick={() => (setPaid(null), setError(null))}>
+                New order
+              </button>
+            </div>
+          </div>
+        </div>
+        <div />
+        {notice ? <div className="till-notice glass">{notice}</div> : null}
+      </div>
+    );
+  }
+
+  const sel = selected !== null ? lines[selected] : null;
+  return (
+    <div className="till">
+      <header className="till-bar">
+        <div className="till-tabs glass">
+          <button type="button" className={`till-tab${view === "order" ? " active" : ""}`} onClick={() => setView("order")}>
+            Register
+          </button>
+          <button type="button" className={`till-tab${view === "returns" ? " active" : ""}`} onClick={() => setView("returns")}>
+            Orders &amp; returns
+          </button>
+        </div>
+        <span className="till-chip glass">
+          {register?.name ?? "Main till"}
+          {register?.location_name ? ` · ${register.location_name}` : ""}
+        </span>
+        {pendingCount > 0 ? (
+          <button type="button" className="till-chip warn" style={{ border: 0, cursor: "pointer" }} onClick={syncPending}>
+            {syncing ? "Sending…" : `${pendingCount} waiting to send`}
+          </button>
+        ) : (
+          <span className="till-chip ok">All sent</span>
+        )}
+        <label className="till-search">
+          <Icon name="search" size={18} />
+          <input placeholder="Search or scan a product…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </label>
+        <button type="button" className="till-user" onClick={() => setMenuOpen((o) => !o)} aria-haspopup="menu" aria-label="Till menu">
+          <Avatar label={initials(session?.email ?? "")} title={session?.email ?? ""} size={34} />
+          <span style={{ fontSize: 22, lineHeight: 1 }}>☰</span>
+        </button>
+        {menuOpen ? (
+          <div className="till-menu glass" role="menu" onMouseLeave={() => setMenuOpen(false)}>
+            <div className="till-text" style={{ padding: "8px 12px" }}>
+              {session?.email}
+            </div>
+            <button type="button" onClick={() => (setMenuOpen(false), onCloseRegister())}>
+              <Icon name="calculator" size={18} /> Close register
+            </button>
+            <button type="button" onClick={() => (setMenuOpen(false), onSwitchTill())}>
+              <Icon name="storefront" size={18} /> Switch till
+            </button>
+            <div className="till-text" style={{ padding: "8px 12px 2px" }}>
+              Cash drawer
+            </div>
+            {(["printer", "serial", "none"] as DrawerMode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                disabled={m === "serial" && !serialSupported()}
+                onClick={async () => {
+                  if (m === "serial") {
+                    try {
+                      await chooseSerialDrawer();
+                    } catch (e) {
+                      flash(e instanceof Error ? e.message : "No port chosen");
+                      return;
+                    }
+                  }
+                  setDrawerMode(m);
+                  setDrawer(m);
+                }}
+              >
+                {drawer === m ? "●" : "○"}{" "}
+                {m === "printer" ? "Opens when the receipt prints" : m === "serial" ? "Direct (USB / serial port)" : "No drawer"}
               </button>
             ))}
-            <button className="pos-numpad-key pos-numpad-backspace" disabled={selected === null} onClick={backspace}>
-              ⌫
+            <button type="button" onClick={() => (setMenuOpen(false), onClockOut())}>
+              <Icon name="logout" size={18} /> Clock out
             </button>
           </div>
-          <div className="field-label" style={{ textAlign: "center" }}>
-            {selected === null
-              ? "Select a line to edit its quantity or price"
-              : mode === "discount"
-                ? "Editing discount (% off)"
-                : `Editing ${mode}`}
-          </div>
+        ) : null}
+      </header>
+
+      {view === "returns" ? (
+        <div style={{ padding: 24, overflow: "auto" }}>
+          <ReturnsPanel shiftId={shift.id} onClose={() => setView("order")} />
         </div>
-      </div>
+      ) : (
+        <div className="till-body">
+          <section className="till-order" aria-label="Order">
+            <div className="till-lines">
+              {lines.length === 0 ? (
+                <div className="till-empty">Scan a barcode or tap a product to start an order.</div>
+              ) : (
+                lines.map((line, i) => (
+                  <div
+                    key={i}
+                    className={`till-line${selected === i ? " selected" : ""}`}
+                    onClick={() => (setSelected(i), setBuffer(""))}
+                  >
+                    <span className="till-line-name">{line.description}</span>
+                    <span className="till-line-amount">{formatMoney(lineTotalCents(line))}</span>
+                    <span className="till-line-sub">
+                      <b>{line.quantity}</b> × {formatMoney(line.unit_price_cents)}
+                      {line.discount_bp > 0 ? ` · ${line.discount_bp / 100}% off` : ""}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="till-totals">
+              <div className="till-totals-row">
+                <span>{taxLabel}</span>
+                <span>{formatMoney(totals.tax)}</span>
+              </div>
+              <div className="till-total">
+                <span>Total</span>
+                <span>{formatMoney(totals.total)}</span>
+              </div>
+            </div>
+            {error ? <div className="till-error">{error}</div> : null}
+            {pesapalFlow ? (
+              <div className="till-error" style={{ background: "rgba(224,122,53,.12)", color: "#9a4a12" }}>
+                {pesapalFlow.status === "starting" && "Starting Pesapal checkout…"}
+                {pesapalFlow.status === "pending" && "Waiting for the customer to pay on Pesapal…"}
+                {pesapalFlow.status === "paid" && "Pesapal payment received."}
+                {pesapalFlow.status === "void" && "Pesapal payment failed or was cancelled."}
+                {pesapalFlow.status === "paid" || pesapalFlow.status === "void" ? (
+                  <button type="button" onClick={() => setPesapalFlow(null)} style={{ marginLeft: 8 }}>
+                    OK
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="till-hint">
+              {sel
+                ? mode === "qty"
+                  ? `Quantity of ${sel.description} · ⌫ removes the line`
+                  : mode === "price"
+                    ? `New price for ${sel.description}`
+                    : `Discount on ${sel.description} (% off)`
+                : "Tap a line to change its quantity, price or discount"}
+            </div>
+            <PosNumpad
+              onKey={pressKey}
+              onBackspace={backspace}
+              modes={[
+                { id: "qty", label: "Qty" },
+                { id: "discount", label: "%" },
+                { id: "price", label: "Price" },
+              ]}
+              activeMode={mode}
+              onMode={(m) => (setMode(m as typeof mode), setBuffer(""))}
+              disabled={selected === null}
+              allowSign
+            />
+            <button type="button" className="till-pay" disabled={lines.length === 0} onClick={() => setPaying(true)}>
+              <span>Payment</span>
+              <span>{formatMoney(totals.total)}</span>
+            </button>
+          </section>
+
+          <section className="till-shelf" aria-label="Products">
+            <div className="till-cats">
+              <button type="button" className={`till-cat glass${category === "" ? " active" : ""}`} onClick={() => setCategory("")}>
+                All
+              </button>
+              {categories.map((c) => (
+                <button key={c} type="button" className={`till-cat glass${category === c ? " active" : ""}`} onClick={() => setCategory(c)}>
+                  {c}
+                </button>
+              ))}
+            </div>
+            <div className="till-grid">
+              {shelf.map((p) => {
+                const n = inCart.get(p.id);
+                const low = p.track_inventory && p.on_hand_qty <= LOW_STOCK;
+                return (
+                  <button key={p.id} type="button" className="till-tile glass" onClick={() => addProduct(p)}>
+                    {n ? <span className="till-tile-count">{n}</span> : null}
+                    <span className="till-tile-name">{p.name}</span>
+                    <span>
+                      <span className="till-tile-price">{formatMoney(p.price_cents)}</span>
+                      {p.track_inventory ? (
+                        <span className={`till-tile-stock${low ? " low" : ""}`} style={{ display: "block" }}>
+                          {p.on_hand_qty} in stock
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                );
+              })}
+              {customOpen ? (
+                <div className="till-tile glass" style={{ gridColumn: "span 2", gap: 8 }}>
+                  <input className="till-input" placeholder="Item" value={customName} onChange={(e) => setCustomName(e.target.value)} autoFocus />
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      className="till-input"
+                      placeholder="Price"
+                      inputMode="decimal"
+                      value={customPrice}
+                      onChange={(e) => setCustomPrice(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && addCustom()}
+                      style={{ flex: 1, minWidth: 0 }}
+                    />
+                    <button type="button" className="till-btn primary" style={{ flex: "none", width: 90, height: 48 }} onClick={addCustom}>
+                      Add
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="till-tile add glass" onClick={() => setCustomOpen(true)}>
+                  + Item not on the shelf
+                </button>
+              )}
+              {products.length === 0 ? (
+                <div className="till-empty" style={{ gridColumn: "1 / -1" }}>
+                  No products yet. Add them in Inventory, or import a list (Settings → Import).
+                </div>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      )}
+      {notice ? <div className="till-notice glass">{notice}</div> : null}
     </div>
   );
 }

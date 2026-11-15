@@ -5,11 +5,8 @@ import { useAuth } from "../../lib/auth";
 import { ApiError } from "../../lib/api";
 import { Button } from "../../ui/Button";
 import { FieldWrap, Input } from "../../ui/Field";
-import { Card } from "../../ui/Card";
 import { Icon } from "../../ui/Icon";
-import { Avatar } from "../../ui/Avatar";
-import { initials } from "../../ui/resource/fieldFormat";
-import { PosPage } from "./PosPage";
+import { PosTill } from "./PosTill";
 
 /** The auth gate *and* the biometric cashier clock-in gate, deliberately
  * one component -- a shared register device means "is there a valid
@@ -38,7 +35,11 @@ export function RequirePosAuth() {
 
 function PosClockInGate() {
   const { session, logout } = useAuth();
-  const [clockedIn, setClockedIn] = useState(false);
+  // `npm run dev` only: /pos.html?preview skips the passkey, for looking
+  // at the till's screens against a local mock. Never in a build.
+  const [clockedIn, setClockedIn] = useState(
+    import.meta.env.DEV && new URLSearchParams(window.location.search).has("preview"),
+  );
 
   if (!session) return null;
 
@@ -47,31 +48,12 @@ function PosClockInGate() {
   }
 
   return (
-    <div>
-      <header className="topbar">
-        <div className="topbar-left">
-          <span className="topbar-brand">Friday POS</span>
-        </div>
-        <div className="topbar-right">
-          <span className="topbar-user" title={session.email}>
-            <Avatar label={initials(session.email)} title={session.email} size={26} />
-            {session.email}
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              logout();
-              setClockedIn(false);
-            }}
-            title="Clock out"
-          >
-            <Icon name="logout" size={16} /> Clock out
-          </Button>
-        </div>
-      </header>
-      <PosPage />
-    </div>
+    <PosTill
+      onClockOut={() => {
+        logout();
+        setClockedIn(false);
+      }}
+    />
   );
 }
 
@@ -158,9 +140,15 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
   }
 
   return (
-    <div style={{ display: "flex", justifyContent: "center", paddingTop: "15vh" }}>
-      <Card style={{ width: 380, textAlign: "center" }}>
-        <h1 style={{ fontSize: 20, marginTop: 0 }}>Clock in to the register</h1>
+    <div className="till-stage">
+      <div className="till-stage-head">
+        <span />
+        <div className="till-stage-title">Clock in</div>
+        <span />
+      </div>
+      <div className="till-stage-center">
+      <div className="till-panel glass" style={{ textAlign: "center", fontSize: 16 }}>
+        <p className="till-text" style={{ marginTop: 0 }}>Use this till's fingerprint, face or Windows Hello PIN.</p>
         {error ? <div className="error-banner">{error}</div> : null}
 
         {mode === "scan" ? (
@@ -226,7 +214,9 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
             </p>
           </form>
         )}
-      </Card>
+      </div>
+      </div>
+      <div />
     </div>
   );
 }

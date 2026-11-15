@@ -3,6 +3,7 @@ import { AuthProvider } from "../../lib/auth";
 import { OrgSettingsProvider } from "../../lib/orgSettings";
 import { LoginPage } from "../../shell/LoginPage";
 import { RequirePosAuth } from "./PosClockIn";
+import "./pos.css";
 
 /** POS's own trimmed route tree -- mirrors web/src/minions/MinionsApp.tsx:
  * reuses LoginPage and AuthProvider completely unchanged (same kernel,

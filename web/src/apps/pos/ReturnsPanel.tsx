@@ -9,6 +9,8 @@ import { formatMoney } from "../../lib/orgSettings";
 
 interface ReturnsPanelProps {
   onClose: () => void;
+  /** The open shift, so the refund comes out of this till's count. */
+  shiftId?: string;
 }
 
 /** Look up a past sale by receipt number and refund it in full. A
@@ -16,7 +18,7 @@ interface ReturnsPanelProps {
  * return isn't "negative items in today's cart," it's "undo a specific
  * past sale"), so it's its own modal rather than a mode of PosPage's
  * cart state. */
-export function ReturnsPanel({ onClose }: ReturnsPanelProps) {
+export function ReturnsPanel({ onClose, shiftId }: ReturnsPanelProps) {
   const [number, setNumber] = useState("");
   const [sale, setSale] = useState<PosSale | null>(null);
   const [refunded, setRefunded] = useState<PosSale | null>(null);
@@ -43,7 +45,7 @@ export function ReturnsPanel({ onClose }: ReturnsPanelProps) {
     setLoading(true);
     setError(null);
     try {
-      setRefunded(await returnPosSale(sale.number));
+      setRefunded(await returnPosSale(sale.number, shiftId));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not refund that sale");
     } finally {

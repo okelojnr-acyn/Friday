@@ -51,6 +51,8 @@ class Product(Base):
     kind: Mapped[str] = mapped_column(String(16), nullable=False, default="product")
     sku: Mapped[str] = mapped_column(Text, nullable=False, default="")
     barcode: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Shelf grouping on the till (Groceries, Dairy, ...); free text.
+    category: Mapped[str] = mapped_column(Text, nullable=False, default="")
     price_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     cost_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     on_hand_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

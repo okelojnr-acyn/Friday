@@ -10,6 +10,7 @@ class ProductCreate(BaseModel):
     kind: str = "product"
     sku: str = ""
     barcode: str = ""
+    category: str = ""
     price_cents: int = 0
     cost_cents: int = 0
     on_hand_qty: int = 0
@@ -26,6 +27,7 @@ class ProductUpdate(BaseModel):
     kind: str | None = None
     sku: str | None = None
     barcode: str | None = None
+    category: str | None = None
     price_cents: int | None = None
     cost_cents: int | None = None
     reorder_point: int | None = None
@@ -43,6 +45,7 @@ class ProductOut(BaseModel):
     kind: str
     sku: str
     barcode: str
+    category: str = ""
     price_cents: int
     cost_cents: int
     on_hand_qty: int
