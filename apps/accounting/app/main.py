@@ -176,12 +176,17 @@ async def _get_journal_entry(session: AsyncSession, principal: Principal, entry_
 
 @journal_router.get("", response_model=list[JournalEntryOut])
 async def list_journal_entries(
+    source_ref: str | None = None,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_org_session),
 ):
-    rows = await session.execute(
-        select(JournalEntry).where(JournalEntry.org_id == _org(principal)).order_by(JournalEntry.entry_date.desc())
-    )
+    """All entries, newest first; `?source_ref=` narrows to one reference
+    (Guss checks "guss:<entry id>" before sending, so a retry never books
+    an entry twice)."""
+    query = select(JournalEntry).where(JournalEntry.org_id == _org(principal))
+    if source_ref is not None:
+        query = query.where(JournalEntry.source_ref == source_ref)
+    rows = await session.execute(query.order_by(JournalEntry.entry_date.desc()))
     return [JournalEntryOut.from_model(e) for e in rows.scalars().all()]
 
 
@@ -218,7 +223,8 @@ async def create_journal_entry(
         number=f"JE-{now:%Y%m}-{uuid.uuid4().hex[:6].upper()}",
         entry_date=body.entry_date,
         memo=body.memo,
-        source="manual",
+        source=body.source,
+        source_ref=body.source_ref,
         status="draft",
         created_at=now,
         updated_at=now,
