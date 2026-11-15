@@ -26,7 +26,23 @@ type healthReport struct {
 	Status string                     `json:"status"`
 	Kernel componentHealth            `json:"kernel"`
 	Apps   map[string]componentHealth `json:"apps"`
+	// Events not yet accepted by their subscriber; stuck = older than 10
+	// minutes (informational: a down app already shows in Apps).
+	Events *eventHealth `json:"events,omitempty"`
 }
+
+type eventHealth struct {
+	Pending int `json:"pending"`
+	Stuck   int `json:"stuck"`
+}
+
+// EventCountsFunc reports pending and stuck event deliveries.
+type EventCountsFunc func(ctx context.Context) (pending, stuck int, err error)
+
+// WithEventCounts adds event delivery counts to the health report.
+var healthEventCounts EventCountsFunc
+
+func WithEventCounts(f EventCountsFunc) { healthEventCounts = f }
 
 // HealthHandler is the install-wide readiness check: the kernel's own
 // DB plus every app's GET /health (which itself runs a real query, see
@@ -64,6 +80,11 @@ func HealthHandler(apps []registry.App, db Pinger, client *http.Client) http.Han
 			}(app)
 		}
 		wg.Wait()
+		if healthEventCounts != nil {
+			if p, s, err := healthEventCounts(ctx); err == nil {
+				report.Events = &eventHealth{Pending: p, Stuck: s}
+			}
+		}
 
 		healthy := report.Kernel.Status == "ok"
 		for _, h := range report.Apps {

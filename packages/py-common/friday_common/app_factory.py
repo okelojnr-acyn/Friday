@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -66,4 +67,18 @@ def create_app(service_name: str, version: str = "0.1.0") -> FastAPI:
         return [r.to_json() for r in all_resources()]
 
     app.include_router(system)
+    # Sends this app's outbox (events.publish_event) and retries anything
+    # the kernel didn't take. Not started by test clients (no lifespan).
+    @app.on_event("startup")
+    async def _start_outbox() -> None:
+        from .events import run_outbox
+
+        app.state.outbox_task = asyncio.create_task(run_outbox())
+
+    @app.on_event("shutdown")
+    async def _stop_outbox() -> None:
+        task = getattr(app.state, "outbox_task", None)
+        if task:
+            task.cancel()
+
     return app

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException
 from friday_common.importer import ImportField, ImportTarget, import_router
 from friday_common import (
+    first_delivery,
     FieldSpec,
     Principal,
     ResourceSpec,
@@ -373,6 +374,9 @@ async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_sess
     payload = body.get("payload", {})
     org_id = uuid.UUID(body["org_id"])
     await set_org_context(session, str(org_id))
+    # The kernel retries until a delivery succeeds; a repeat is skipped.
+    if not await first_delivery(session, body):
+        return
     now = datetime.now(UTC)
     reference = str(payload.get("invoice_number", ""))
 

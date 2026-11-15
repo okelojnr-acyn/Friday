@@ -14,7 +14,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
-from friday_common import get_session, require_kernel_token, set_org_context
+from friday_common import first_delivery, get_session, require_kernel_token, set_org_context
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,6 +54,9 @@ async def invoice_paid(body: dict, session: AsyncSession = Depends(get_session))
     payload = body.get("payload", {})
     org_id = uuid.UUID(body["org_id"])
     await set_org_context(session, str(org_id))
+    # The kernel retries until a delivery succeeds; a repeat is skipped.
+    if not await first_delivery(session, body):
+        return
 
     invoice_id = payload.get("invoice_id") or ""
     if invoice_id and await _already_posted(session, org_id, "invoicing", invoice_id):
@@ -133,6 +136,9 @@ async def pos_sale_cogs(body: dict, session: AsyncSession = Depends(get_session)
     payload = body.get("payload", {})
     org_id = uuid.UUID(body["org_id"])
     await set_org_context(session, str(org_id))
+    # The kernel retries until a delivery succeeds; a repeat is skipped.
+    if not await first_delivery(session, body):
+        return
 
     invoice_number = payload.get("invoice_number") or ""
     if invoice_number and await _already_posted(session, org_id, "pos", invoice_number):
@@ -201,6 +207,9 @@ async def payroll_paid(body: dict, session: AsyncSession = Depends(get_session))
     payload = body.get("payload", {})
     org_id = uuid.UUID(body["org_id"])
     await set_org_context(session, str(org_id))
+    # The kernel retries until a delivery succeeds; a repeat is skipped.
+    if not await first_delivery(session, body):
+        return
 
     payroll_run_id = payload.get("payroll_run_id") or ""
     if payroll_run_id and await _already_posted(session, org_id, "payroll", payroll_run_id):

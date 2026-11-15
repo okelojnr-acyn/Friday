@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from friday_common import (
+    first_delivery,
     FieldSpec,
     Principal,
     ResourceSpec,
@@ -379,6 +380,9 @@ async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_sess
     payload = body.get("payload", {})
     org_id = uuid.UUID(body["org_id"])
     await set_org_context(session, str(org_id))
+    # The kernel retries until a delivery succeeds; a repeat is skipped.
+    if not await first_delivery(session, body):
+        return
 
     invoice_number = payload.get("invoice_number") or ""
     if not invoice_number:

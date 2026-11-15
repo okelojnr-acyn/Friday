@@ -12,6 +12,8 @@ from pathlib import Path
 
 import asyncpg
 
+COMMON_MIGRATIONS = Path(__file__).parent / "migrations"
+
 
 async def run_migrations(dsn: str, schema: str, migrations_dir: Path) -> list[str]:
     conn = await asyncpg.connect(dsn)
@@ -24,9 +26,14 @@ async def run_migrations(dsn: str, schema: str, migrations_dir: Path) -> list[st
                 applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
         """)
-        for f in sorted(migrations_dir.glob("*.sql")):
+        # Shared tables every app has (friday_common/migrations, e.g. the
+        # event outbox), then the app's own. Shared ones are recorded as
+        # "common/<file>" so their names never clash with an app's.
+        common = [(f"common/{f.name}", f) for f in sorted(COMMON_MIGRATIONS.glob("*.sql"))]
+        own = [(f.name, f) for f in sorted(migrations_dir.glob("*.sql"))]
+        for name, f in common + own:
             already = await conn.fetchval(
-                f'SELECT 1 FROM "{schema}".schema_migrations WHERE filename = $1', f.name
+                f'SELECT 1 FROM "{schema}".schema_migrations WHERE filename = $1', name
             )
             if already:
                 continue
@@ -37,9 +44,9 @@ async def run_migrations(dsn: str, schema: str, migrations_dir: Path) -> list[st
                 await conn.execute(f'SET LOCAL search_path TO "{schema}", public')
                 await conn.execute(sql)
                 await conn.execute(
-                    f'INSERT INTO "{schema}".schema_migrations (filename) VALUES ($1)', f.name
+                    f'INSERT INTO "{schema}".schema_migrations (filename) VALUES ($1)', name
                 )
-            applied.append(f.name)
+            applied.append(name)
     finally:
         await conn.close()
     return applied
