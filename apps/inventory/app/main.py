@@ -1,8 +1,9 @@
+import hashlib
 import math
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from friday_common.importer import ImportField, ImportTarget, import_router
 from friday_common import (
     first_delivery,
@@ -21,6 +22,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
+    ProductImage,
     PRODUCT_KINDS,
     PURCHASE_ORDER_STATUSES,
     REASONS,
@@ -219,6 +221,7 @@ async def create_product(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_org_session),
 ):
+    await _check_variant_of(session, principal, body.variant_of)
     now = datetime.now(UTC)
     product = Product(org_id=_org(principal), created_at=now, updated_at=now, **_product_fields(body))
     session.add(product)
@@ -239,6 +242,28 @@ async def create_product(
     await session.commit()
     await session.refresh(product)
     return product
+
+
+async def _check_variant_of(
+    session: AsyncSession, principal: Principal, variant_of: uuid.UUID | None, self_id: uuid.UUID | None = None
+) -> None:
+    """A variant points at a product of the same org that isn't itself a
+    variant (one level: Sugar -> 1 kg, not Sugar -> 1 kg -> brown)."""
+    if variant_of is None:
+        return
+    if self_id is not None and variant_of == self_id:
+        raise HTTPException(422, "a product can't be a variant of itself")
+    parent = await session.get(Product, variant_of)
+    if parent is None or str(parent.org_id) != principal.org_id:
+        raise HTTPException(422, "variant_of: that product isn't in this organisation")
+    if parent.variant_of is not None:
+        raise HTTPException(422, "variant_of: pick the main product, not another variant")
+    if self_id is not None:
+        has_variants = (
+            await session.execute(select(Product.id).where(Product.variant_of == self_id).limit(1))
+        ).first()
+        if has_variants:
+            raise HTTPException(422, "this product has variants of its own, so it can't be a variant")
 
 
 async def _get_owned(session: AsyncSession, principal: Principal, product_id: uuid.UUID) -> Product:
@@ -270,6 +295,8 @@ async def update_product(
         raise HTTPException(422, f"kind must be one of {PRODUCT_KINDS}")
     if "valuation_method" in changes and changes["valuation_method"] not in VALUATION_METHODS:
         raise HTTPException(422, f"valuation_method must be one of {VALUATION_METHODS}")
+    if "variant_of" in changes:
+        await _check_variant_of(session, principal, changes["variant_of"], product.id)
     for field_name, value in changes.items():
         setattr(product, field_name, value)
     if product.kind == "service":
@@ -278,6 +305,80 @@ async def update_product(
     await session.commit()
     await session.refresh(product)
     return product
+
+
+IMAGE_TYPES = {"image/webp", "image/jpeg", "image/png"}
+MAX_IMAGE_BYTES = 400 * 1024
+
+
+@products_router.put("/{product_id}/image", response_model=ProductOut)
+async def put_product_image(
+    product_id: uuid.UUID,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The product's photo, as the raw image body. The web app resizes it
+    to 512 px first; 400 KB is the ceiling."""
+    if principal.role == "viewer":
+        raise HTTPException(403, "viewers can't change photos")
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type not in IMAGE_TYPES:
+        raise HTTPException(415, "send a WebP, JPEG or PNG image")
+    data = await request.body()
+    if not data:
+        raise HTTPException(422, "the image is empty")
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "the photo is over 400 KB; it should be resized before upload")
+    product = await _get_owned(session, principal, product_id)
+    now = datetime.now(UTC)
+    image = await session.get(ProductImage, product.id)
+    if image is None:
+        session.add(ProductImage(product_id=product.id, org_id=product.org_id, content_type=content_type, data=data, updated_at=now))
+    else:
+        image.content_type, image.data, image.updated_at = content_type, data, now
+    product.image_sha = hashlib.sha256(data).hexdigest()[:16]
+    product.updated_at = now
+    await session.commit()
+    await session.refresh(product)
+    return product
+
+
+@products_router.delete("/{product_id}/image", response_model=ProductOut)
+async def delete_product_image(
+    product_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    if principal.role == "viewer":
+        raise HTTPException(403, "viewers can't change photos")
+    product = await _get_owned(session, principal, product_id)
+    image = await session.get(ProductImage, product.id)
+    if image is not None:
+        await session.delete(image)
+    product.image_sha = ""
+    product.updated_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(product)
+    return product
+
+
+@products_router.get("/{product_id}/image")
+async def get_product_image(
+    product_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The photo. Fetched with ?v=<image_sha>, so it can be cached for good."""
+    await _get_owned(session, principal, product_id)
+    image = await session.get(ProductImage, product_id)
+    if image is None:
+        raise HTTPException(404, "no photo")
+    return Response(
+        content=image.data,
+        media_type=image.content_type,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
 @products_router.post("/bulk", response_model=list[ProductOut], status_code=201)
@@ -293,6 +394,7 @@ async def bulk_create_products(
     now = datetime.now(UTC)
     created: list[Product] = []
     for item in body.products:
+        await _check_variant_of(session, principal, item.variant_of)
         product = Product(org_id=_org(principal), created_at=now, updated_at=now, **_product_fields(item))
         session.add(product)
         created.append(product)

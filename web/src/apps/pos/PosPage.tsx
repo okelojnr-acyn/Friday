@@ -14,7 +14,10 @@ import { chooseSerialDrawer, drawerMode, openDrawer, serialSupported, setDrawerM
 import { PosNumpad } from "./PosNumpad";
 import { PosPayment, type Tender } from "./PosPayment";
 import { printReceipt } from "./receipt";
+import { ProductTile, VariantPicker } from "./ProductTile";
+import { ProductEditor } from "../inventory/ProductEditor";
 import { ReturnsPanel } from "./ReturnsPanel";
+import { categoryTint } from "../../lib/productImages";
 
 interface CartLine {
   description: string;
@@ -40,10 +43,9 @@ interface Sale {
   shift_id?: string;
 }
 
-type ShelfProduct = Product & { category?: string };
+type ShelfProduct = Product;
 
 const QUEUE_STORAGE_KEY = "friday.pos.offline_queue";
-const LOW_STOCK = 5;
 
 /** The selling screen (owner's reference, 2026-11-15): the order with its
  * keypad on the left, the shelf on the right, payment full-screen. All
@@ -390,23 +392,50 @@ export function PosPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pesapalFlow?.invoiceId, pesapalFlow?.status]);
 
+  // Variants hang off their main product; the shelf shows one tile for
+  // the main product and asks which. A variant takes its main product's
+  // category when it has none of its own.
+  const variantsOf = useMemo(() => {
+    const m = new Map<string, ShelfProduct[]>();
+    for (const p of products) {
+      if (p.variant_of) m.set(p.variant_of, [...(m.get(p.variant_of) ?? []), p]);
+    }
+    for (const list of m.values()) list.sort((a, b) => a.price_cents - b.price_cents);
+    return m;
+  }, [products]);
+  const byId = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  const categoryOf = (p: ShelfProduct) =>
+    (p.category?.trim() || (p.variant_of ? byId.get(p.variant_of)?.category?.trim() : "") || "").trim();
   const categories = useMemo(
-    () => [...new Set(products.map((p) => p.category?.trim()).filter((c): c is string => !!c))].sort(),
-    [products],
+    () => [...new Set(products.map(categoryOf).filter((c) => !!c))].sort(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [products, byId],
   );
   const inCart = useMemo(() => {
     const m = new Map<string, number>();
-    for (const l of lines) if (l.product_id) m.set(l.product_id, (m.get(l.product_id) ?? 0) + l.quantity);
+    for (const l of lines) {
+      if (!l.product_id) continue;
+      m.set(l.product_id, (m.get(l.product_id) ?? 0) + l.quantity);
+      const parent = byId.get(l.product_id)?.variant_of;
+      if (parent) m.set(parent, (m.get(parent) ?? 0) + l.quantity);
+    }
     return m;
-  }, [lines]);
+  }, [lines, byId]);
   const shelf = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return products.filter(
-      (p) =>
-        (!category || p.category === category) &&
-        (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode === q),
-    );
-  }, [products, search, category]);
+    return products.filter((p) => {
+      if (category && categoryOf(p) !== category) return false;
+      if (!q) return !p.variant_of; // browsing: main products only
+      // Searching: every match, variants included (a scan names one).
+      if (variantsOf.has(p.id)) return false;
+      return p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode === q;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products, search, category, variantsOf]);
+  const [choosing, setChoosing] = useState<ShelfProduct | null>(null);
+  // Owners and admins can add a product (photo, variants) from the till.
+  const canManageProducts = session?.role === "owner" || session?.role === "admin";
+  const [newProduct, setNewProduct] = useState(false);
 
   if (!ready) {
     return (
@@ -641,30 +670,37 @@ export function PosPage({
                 All
               </button>
               {categories.map((c) => (
-                <button key={c} type="button" className={`till-cat glass${category === c ? " active" : ""}`} onClick={() => setCategory(c)}>
+                <button
+                  key={c}
+                  type="button"
+                  className={`till-cat glass${category === c ? " active" : ""}`}
+                  style={{ ["--cat-bar" as string]: categoryTint(c, categories).bar, ["--cat-soft" as string]: categoryTint(c, categories).soft }}
+                  onClick={() => setCategory(category === c ? "" : c)}
+                >
                   {c}
                 </button>
               ))}
             </div>
             <div className="till-grid">
               {shelf.map((p) => {
-                const n = inCart.get(p.id);
-                const low = p.track_inventory && p.on_hand_qty <= LOW_STOCK;
+                const variants = variantsOf.get(p.id) ?? [];
                 return (
-                  <button key={p.id} type="button" className="till-tile glass" onClick={() => addProduct(p)}>
-                    {n ? <span className="till-tile-count">{n}</span> : null}
-                    <span className="till-tile-name">{p.name}</span>
-                    <span>
-                      <span className="till-tile-price">{formatMoney(p.price_cents)}</span>
-                      {p.track_inventory ? (
-                        <span className={`till-tile-stock${low ? " low" : ""}`} style={{ display: "block" }}>
-                          {p.on_hand_qty} in stock
-                        </span>
-                      ) : null}
-                    </span>
-                  </button>
+                  <ProductTile
+                    key={p.id}
+                    product={p}
+                    category={categoryOf(p)}
+                    categories={categories}
+                    count={inCart.get(p.id) ?? 0}
+                    variants={variants}
+                    onPick={() => (variants.length ? setChoosing(p) : addProduct(p))}
+                  />
                 );
               })}
+              {canManageProducts ? (
+                <button type="button" className="till-tile add glass" onClick={() => setNewProduct(true)}>
+                  + New product
+                </button>
+              ) : null}
               {customOpen ? (
                 <div className="till-tile glass" style={{ gridColumn: "span 2", gap: 8 }}>
                   <input className="till-input" placeholder="Item" value={customName} onChange={(e) => setCustomName(e.target.value)} autoFocus />
@@ -697,6 +733,28 @@ export function PosPage({
           </section>
         </div>
       )}
+      {newProduct ? (
+        <ProductEditor
+          all={products}
+          onClose={() => setNewProduct(false)}
+          onSaved={(changed) => {
+            const got = changed as unknown as ShelfProduct[];
+            setProducts((cur) => [...got.filter((g) => !cur.some((c) => c.id === g.id)), ...cur.map((c) => got.find((g) => g.id === c.id) ?? c)]);
+            flash(`Added ${got[0]?.name ?? "the product"}`);
+          }}
+        />
+      ) : null}
+      {choosing ? (
+        <VariantPicker
+          product={choosing}
+          variants={variantsOf.get(choosing.id) ?? []}
+          onPick={(v) => {
+            addProduct({ ...v, name: v.variant_name ? `${choosing.name} ${v.variant_name}` : v.name });
+            setChoosing(null);
+          }}
+          onClose={() => setChoosing(null)}
+        />
+      ) : null}
       {notice ? <div className="till-notice glass">{notice}</div> : null}
     </div>
   );

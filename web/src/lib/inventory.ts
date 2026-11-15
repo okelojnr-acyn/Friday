@@ -8,6 +8,9 @@ export interface Product {
   sku: string;
   barcode: string;
   category?: string;
+  image_sha?: string;
+  variant_of?: string | null;
+  variant_name?: string;
   price_cents: number;
   cost_cents: number;
   on_hand_qty: number;

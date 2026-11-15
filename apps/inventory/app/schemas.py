@@ -11,6 +11,8 @@ class ProductCreate(BaseModel):
     sku: str = ""
     barcode: str = ""
     category: str = ""
+    variant_of: uuid.UUID | None = None
+    variant_name: str = ""
     price_cents: int = 0
     cost_cents: int = 0
     on_hand_qty: int = 0
@@ -28,6 +30,8 @@ class ProductUpdate(BaseModel):
     sku: str | None = None
     barcode: str | None = None
     category: str | None = None
+    variant_of: uuid.UUID | None = None
+    variant_name: str | None = None
     price_cents: int | None = None
     cost_cents: int | None = None
     reorder_point: int | None = None
@@ -46,6 +50,9 @@ class ProductOut(BaseModel):
     sku: str
     barcode: str
     category: str = ""
+    image_sha: str = ""
+    variant_of: uuid.UUID | None = None
+    variant_name: str = ""
     price_cents: int
     cost_cents: int
     on_hand_qty: int
