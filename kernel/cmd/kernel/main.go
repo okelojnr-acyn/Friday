@@ -133,6 +133,8 @@ func main() {
 	mux.HandleFunc("GET /guss/svc/people", gussHandlers.People)
 	mux.Handle("POST /guss/chat", requireAuth(http.HandlerFunc(gussHandlers.Chat)))
 	mux.Handle("GET /guss/report", requireAuth(http.HandlerFunc(gussHandlers.Report)))
+	mux.Handle("GET /guss/voids", requireAuth(http.HandlerFunc(gussHandlers.Voids)))
+	mux.Handle("POST /guss/voids/{number}", requireAuth(http.HandlerFunc(gussHandlers.DecideVoid)))
 
 	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(apps, eventsToken))
 	mux.Handle("GET /health", gateway.HealthHandler(apps, pool, nil))

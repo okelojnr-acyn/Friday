@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "../lib/api";
 import {
+  decideGussVoid,
   getGussAccess,
   linkGussTelegram,
+  listGussVoids,
   newGussServiceKey,
   setGussAccess,
   unlinkGussTelegram,
   type GussAccess,
   type GussAccessLevel,
+  type GussVoidRequest,
 } from "../lib/guss";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -28,6 +31,105 @@ const ROLE_LABEL: Record<string, string> = {
 
 function message(err: unknown, fallback: string) {
   return err instanceof ApiError ? err.message : fallback;
+}
+
+/** Void requests from Guss (staff asking for an entry to stop counting),
+ * for owners and admins to decide here instead of in Telegram. Nothing
+ * is deleted either way: an approved entry stays in Guss's history,
+ * marked voided. */
+function GussApprovals() {
+  const [requests, setRequests] = useState<GussVoidRequest[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [reply, setReply] = useState<string | null>(null);
+  const [busy, setBusy] = useState<number | null>(null);
+
+  function load() {
+    listGussVoids()
+      .then((r) => setRequests(r.requests))
+      .catch((err) =>
+        setError(message(err, "Could not load requests from Guss")),
+      );
+  }
+  useEffect(load, []);
+
+  async function decide(number: number, approve: boolean) {
+    setBusy(number);
+    setError(null);
+    try {
+      setReply((await decideGussVoid(number, approve)).reply);
+      load();
+    } catch (err) {
+      setError(message(err, "Could not send the decision"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        borderTop: "1px solid var(--border)",
+        marginTop: 14,
+        paddingTop: 12,
+      }}
+    >
+      <div style={{ fontWeight: 500, marginBottom: 4 }}>
+        Waiting for approval
+      </div>
+      <p className="field-label" style={{ marginBottom: 8 }}>
+        Entries staff asked Guss to stop counting. Approved ones stay in
+        Guss&apos;s history, marked voided.
+      </p>
+      {error ? (
+        <div className="error-banner" style={{ marginBottom: 8 }}>
+          {error}
+        </div>
+      ) : null}
+      {reply ? (
+        <div style={{ marginBottom: 8 }}>
+          <Badge tone="success">{reply}</Badge>
+        </div>
+      ) : null}
+      {requests === null ? (
+        <div className="field-label">Loading...</div>
+      ) : requests.length === 0 ? (
+        <div className="field-label">Nothing waiting.</div>
+      ) : (
+        requests.map((r) => (
+          <div
+            key={r.number}
+            style={{
+              padding: "8px 0",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            <div style={{ wordBreak: "break-word" }}>{r.entry}</div>
+            <div className="field-label" style={{ margin: "4px 0 6px" }}>
+              {r.requested_by}: {r.reason}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={busy !== null}
+                onClick={() => decide(r.number, true)}
+              >
+                Approve
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy !== null}
+                onClick={() => decide(r.number, false)}
+              >
+                Reject
+              </Button>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
 }
 
 /** Guss inside Friday: which apps Guss may read or change, its key, and
@@ -167,6 +269,8 @@ export function GussAccessCard({ canManage }: { canManage: boolean }) {
           </code>
         </div>
       ) : null}
+
+      {canManage ? <GussApprovals /> : null}
 
       <div
         style={{

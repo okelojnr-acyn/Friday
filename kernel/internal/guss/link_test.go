@@ -1,6 +1,12 @@
 package guss
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/acyn-innovation/friday/kernel/internal/auth"
+)
 
 func TestParseServiceKey(t *testing.T) {
 	org := "7adf296c-2b09-4c1e-9a3b-0123456789ab"
@@ -38,5 +44,12 @@ func TestGussRoleFollowsFridayChainOfCommand(t *testing.T) {
 		if got := GussRole(friday); got != want {
 			t.Errorf("GussRole(%q) = %q, want %q", friday, got, want)
 		}
+	}
+}
+
+func TestActorCarriesTheFridayPersonAndRole(t *testing.T) {
+	a := actor(&auth.Claims{Role: "admin", Email: "joe@shop.test", RegisteredClaims: jwt.RegisteredClaims{Subject: "u9"}})
+	if a["id"] != "friday:u9" || a["name"] != "joe@shop.test" || a["role"] != "manager" {
+		t.Fatalf("actor = %v", a)
 	}
 }
