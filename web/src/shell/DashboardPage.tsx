@@ -7,9 +7,10 @@ import { Gauge } from "../ui/Gauge";
 import { StatCard } from "../ui/StatCard";
 import { AppTile } from "../ui/AppTile";
 import { Icon, type IconName } from "../ui/Icon";
+import { formatMoney } from "../lib/orgSettings";
 
 function money(cents: number): string {
-  return `$${Math.round(cents / 100).toLocaleString()}`;
+  return formatMoney(cents, { whole: true });
 }
 
 function timeAgo(iso: unknown): string {

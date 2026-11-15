@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "../../lib/auth";
+import { OrgSettingsProvider } from "../../lib/orgSettings";
 import { LoginPage } from "../../shell/LoginPage";
 import { RequirePosAuth } from "./PosClockIn";
 
@@ -13,11 +14,13 @@ import { RequirePosAuth } from "./PosClockIn";
 export default function PosApp() {
   return (
     <AuthProvider>
+      <OrgSettingsProvider>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<RequirePosAuth />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </OrgSettingsProvider>
     </AuthProvider>
   );
 }

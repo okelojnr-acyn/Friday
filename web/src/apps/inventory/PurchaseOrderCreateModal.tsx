@@ -8,6 +8,7 @@ import { amountInputToCents } from "../../ui/resource/fieldFormat";
 import { createRecord } from "../../lib/resourceApi";
 import { ApiError } from "../../lib/api";
 import type { FieldSpec, RecordRow } from "../../lib/types";
+import { formatMoney } from "../../lib/orgSettings";
 
 interface Line {
   productId: unknown;
@@ -169,7 +170,7 @@ export function PurchaseOrderCreateModal({ onClose, onSaved }: PurchaseOrderCrea
 
       <div className="invoice-total-row">
         <span>Total cost</span>
-        <span>${(totalCents / 100).toFixed(2)}</span>
+        <span>{formatMoney(totalCents)}</span>
       </div>
     </Modal>
   );

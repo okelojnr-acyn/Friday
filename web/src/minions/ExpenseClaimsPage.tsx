@@ -5,6 +5,7 @@ import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { FieldWrap, Input } from "../ui/Field";
 import { Badge, statusTone } from "../ui/Badge";
+import { formatMoney } from "../lib/orgSettings";
 
 export function ExpenseClaimsPage() {
   const [claims, setClaims] = useState<ExpenseClaim[] | null>(null);
@@ -92,7 +93,7 @@ export function ExpenseClaimsPage() {
                 </span>
               </span>
               <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span>${(c.amount_cents / 100).toFixed(2)}</span>
+                <span>{formatMoney(c.amount_cents, { currency: c.currency })}</span>
                 <Badge tone={statusTone(c.status)}>{c.status}</Badge>
               </span>
             </div>

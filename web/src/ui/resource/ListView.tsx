@@ -5,6 +5,7 @@ import { Badge } from "../Badge";
 import { PriorityFlag } from "../PriorityFlag";
 import { formatCellValue, initials, isOverdue, isPersonField, isPriorityField, sumCents } from "./fieldFormat";
 import { resolveReferenceLabel } from "../../lib/referenceCache";
+import { formatMoney } from "../../lib/orgSettings";
 
 interface ListViewProps {
   spec: ResourceSpec;
@@ -95,7 +96,7 @@ export function ListView({ spec, records, onRowClick }: ListViewProps) {
             <tr style={{ cursor: "default" }}>
               {columns.map((f) => (
                 <td key={f.name} className={f.type === "currency" ? "cell-currency" : undefined}>
-                  {f.type === "currency" ? `$${(sumCents(records, f) / 100).toFixed(2)}` : ""}
+                  {f.type === "currency" ? formatMoney(sumCents(records, f)) : ""}
                 </td>
               ))}
             </tr>

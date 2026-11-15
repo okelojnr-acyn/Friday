@@ -18,10 +18,10 @@ import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import { FieldWrap, Input, Select } from "../../ui/Field";
 import { Icon } from "../../ui/Icon";
+import { formatMoney } from "../../lib/orgSettings";
 
 function fmt(cents: number): string {
-  const sign = cents < 0 ? "-" : "";
-  return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
+  return formatMoney(cents);
 }
 
 function startOfYear(): string {
