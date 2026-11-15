@@ -20,3 +20,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["friday_common*"]
+
+[tool.setuptools.package-data]
+friday_common = ["migrations/*.sql"]

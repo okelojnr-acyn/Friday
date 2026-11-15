@@ -20,7 +20,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from friday_common import get_integration_config, require_kernel_token, set_org_context
+from friday_common import first_delivery, get_integration_config, require_kernel_token, set_org_context
 from friday_common.db import get_session
 from friday_common.integrations import PesapalProvider, StripeProvider
 from sqlalchemy import select
@@ -39,6 +39,9 @@ async def crm_opportunity_won(body: dict, session: AsyncSession = Depends(get_se
     org_id = uuid.UUID(body["org_id"])
     now = datetime.now(UTC)
     await set_org_context(session, str(org_id))
+    # The kernel retries until a delivery succeeds; a repeat is skipped.
+    if not await first_delivery(session, body):
+        return
 
     # Match an existing customer by email within this org, or create one.
     customer = None

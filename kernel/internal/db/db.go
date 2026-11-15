@@ -30,6 +30,18 @@ func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 // a migration framework dependency: a handful of numbered SQL files is all
 // a project this size needs, and it's trivially readable by anyone.
 func Migrate(ctx context.Context, pool *pgxpool.Pool, dir string) error {
+	// One migrator at a time: two kernels starting together (or test
+	// packages sharing a database) would otherwise both apply a new file.
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("migrations lock: %w", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(7302190411)`); err != nil {
+		return fmt.Errorf("migrations lock: %w", err)
+	}
+	defer conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(7302190411)`)
+
 	if _, err := pool.Exec(ctx, `
 		CREATE SCHEMA IF NOT EXISTS core;
 		CREATE TABLE IF NOT EXISTS core.schema_migrations (

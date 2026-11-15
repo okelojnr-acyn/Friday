@@ -189,7 +189,10 @@ func main() {
 	}))
 	mux.Handle("POST /guss/voids/{number}", requireAuth(http.HandlerFunc(gussHandlers.DecideVoid)))
 
-	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(apps, eventsToken))
+	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(pool, eventsToken))
+	// Sends queued events to subscribers, retrying until each accepts.
+	go (&gateway.Deliverer{Pool: pool, Apps: apps, Token: eventsToken}).Run(ctx)
+	gateway.WithEventCounts(gateway.EventCounts(pool))
 	mux.Handle("GET /health", gateway.HealthHandler(apps, pool, nil))
 
 	for _, app := range apps {
