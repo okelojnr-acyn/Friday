@@ -114,6 +114,7 @@ jobs:
           - { image: friday-accounting, dockerfile: infra/python-app.Dockerfile, app: accounting, port: "8006" }
           - { image: friday-minions, dockerfile: infra/python-app.Dockerfile, app: minions, port: "8007" }
           - { image: friday-fleets, dockerfile: infra/python-app.Dockerfile, app: fleets, port: "8008" }
+          - { image: friday-web, dockerfile: infra/web.Dockerfile, app: "", port: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -140,6 +141,54 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
+  deploy-smoke:
+    # Runs deploy/compose.yml (what a customer server runs) from the
+    # images just published, before the release is marked: every service
+    # healthy, web and kernel answering through Caddy over HTTPS, the
+    # runtime config carrying the domain, and bootstrap idempotent.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [publish]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write .env
+        run: |
+          {
+            echo "FRIDAY_VERSION=${{ github.sha }}"
+            echo "FRIDAY_DOMAIN=localhost"
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "JWT_SECRET=$(openssl rand -hex 32)"
+            echo "KERNEL_EVENTS_TOKEN=$(openssl rand -hex 32)"
+          } > .env
+      - run: docker compose -f compose.yml --env-file .env config -q
+      - run: docker compose -f compose.yml --env-file .env up -d
+      - name: Every service healthy
+        run: |
+          for i in $(seq 1 60); do
+            unhealthy=$(docker compose -f compose.yml --env-file .env ps --format '{{.Service}} {{.Health}}' | awk '$2 != "" && $2 != "healthy"')
+            [ -z "$unhealthy" ] && break
+            sleep 5
+          done
+          docker compose -f compose.yml --env-file .env ps
+          [ -z "$unhealthy" ] || { echo "not healthy: $unhealthy"; docker compose -f compose.yml --env-file .env logs --tail 50; exit 1; }
+      - name: Web and kernel through Caddy
+        run: |
+          for i in $(seq 1 30); do curl -skf https://localhost/kernel/healthz && break; sleep 2; done
+          curl -skf https://localhost/kernel/health | tee /dev/stderr | grep -q '"status":"ok"'
+          curl -skf https://localhost/ | grep -q '<div id="root">'
+          curl -skf https://localhost/config.js | grep -q 'kernelUrl: "https://localhost/kernel"'
+      - name: Bootstrap is idempotent
+        run: |
+          first=$(docker compose -f compose.yml --env-file .env exec -T kernel ./kernel bootstrap "Smoke Shop" smoke@example.com)
+          again=$(docker compose -f compose.yml --env-file .env exec -T kernel ./kernel bootstrap "Smoke Shop" smoke@example.com)
+          echo "$first / $again"
+          [ -n "$first" ] && [ "$first" = "$again" ]
+      - if: failure()
+        run: docker compose -f compose.yml --env-file .env logs --tail 100
+
   notify-release:
     # Only once every other job has actually passed on main -- this marks
     # the commit as the recommended Friday version for every Friday
@@ -150,7 +199,7 @@ jobs:
     # ...and only once its images are published, so a marked release can
     # always be pulled.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [publish]
+    needs: [publish, deploy-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Mark this commit as the recommended Friday release

@@ -27,6 +27,12 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "bootstrap" {
+		if err := runBootstrap(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	ctx := context.Background()
 
 	databaseURL := envOr("DATABASE_URL", "postgres://friday:friday@localhost:5432/friday")
