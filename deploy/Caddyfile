@@ -1,0 +1,11 @@
+{$FRIDAY_DOMAIN} {
+	encode zstd gzip
+	# The kernel (auth, apps API) under /kernel; the browser and the kernel
+	# share one origin, so there is nothing cross-origin to configure.
+	handle_path /kernel/* {
+		reverse_proxy kernel:8080
+	}
+	handle {
+		reverse_proxy web:80
+	}
+}

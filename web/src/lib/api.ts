@@ -4,7 +4,7 @@ import { loadSession, clearSession } from "./session";
 // only to the kernel"). /api/{app}/* is reverse-proxied by
 // kernel/internal/gateway/proxy.go, which strips the "/api/{app}" prefix
 // and forwards the bearer token through unchanged.
-const KERNEL_URL = import.meta.env.VITE_KERNEL_URL ?? "http://localhost:8080";
+import { KERNEL_URL } from "./runtimeConfig";
 
 export class ApiError extends Error {
   status: number;

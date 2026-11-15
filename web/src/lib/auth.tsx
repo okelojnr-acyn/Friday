@@ -9,7 +9,7 @@ import { ApiError } from "./api";
 import { clearSession, loadSession, saveSession } from "./session";
 import type { Session } from "./types";
 
-const KERNEL_URL = import.meta.env.VITE_KERNEL_URL ?? "http://localhost:8080";
+import { KERNEL_URL } from "./runtimeConfig";
 
 interface AuthResponse {
   token: string;

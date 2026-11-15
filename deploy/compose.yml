@@ -1,0 +1,144 @@
+# Friday on one server: the tested images from GHCR pinned to a release,
+# Postgres with a named volume, and Caddy terminating TLS for one domain
+# (the web app at /, the kernel at /kernel). Only ports 80 and 443 are
+# published. Friday Host writes this file and .env to /opt/friday on a
+# customer's VPS; it also runs by hand:
+#
+#   cp deploy/.env.example deploy/.env   # fill it in
+#   docker compose -f deploy/compose.yml --env-file deploy/.env up -d
+#   docker compose -f deploy/compose.yml --env-file deploy/.env exec kernel \
+#     ./kernel bootstrap "Acme Shop" owner@example.com
+
+name: friday
+
+x-app: &app
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen('http://localhost:' + os.environ['APP_PORT'] + '/healthz', timeout=3)"]
+    interval: 15s
+    timeout: 5s
+    retries: 10
+    start_period: 30s
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql+asyncpg://friday:${POSTGRES_PASSWORD:?}@postgres:5432/friday
+  JWT_SECRET: ${JWT_SECRET:?}
+  KERNEL_INTERNAL_URL: http://kernel:8080/internal
+  KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:?}
+  CORS_ORIGINS: '["https://${FRIDAY_DOMAIN:?}"]'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: friday
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: friday
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U friday"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  kernel:
+    image: ghcr.io/okelojnr-acyn/friday-kernel:${FRIDAY_VERSION:?}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://friday:${POSTGRES_PASSWORD:?}@postgres:5432/friday
+      JWT_SECRET: ${JWT_SECRET:?}
+      KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:?}
+      MIGRATIONS_DIR: migrations
+      CORS_ORIGIN: https://${FRIDAY_DOMAIN:?}
+      KERNEL_PUBLIC_URL: https://${FRIDAY_DOMAIN:?}/kernel
+      WEBAUTHN_RP_ID: ${FRIDAY_DOMAIN:?}
+      WEBAUTHN_RP_NAME: ${FRIDAY_NAME:-Friday}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      APP_CRM_URL: http://crm:8001
+      APP_INVOICING_URL: http://invoicing:8002
+      APP_PROJECTS_URL: http://projects:8003
+      APP_INVENTORY_URL: http://inventory:8004
+      APP_WEB3_URL: http://web3:8005
+      APP_ACCOUNTING_URL: http://accounting:8006
+      APP_MINIONS_URL: http://minions:8007
+      APP_FLEETS_URL: http://fleets:8008
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  crm:
+    <<: *app
+    image: ghcr.io/okelojnr-acyn/friday-crm:${FRIDAY_VERSION:?}
+    environment: { <<: *app-env, SERVICE_NAME: friday-crm, DB_SCHEMA: crm }
+  invoicing:
+    <<: *app
+    image: ghcr.io/okelojnr-acyn/friday-invoicing:${FRIDAY_VERSION:?}
+    environment: { <<: *app-env, SERVICE_NAME: friday-invoicing, DB_SCHEMA: invoicing }
+  projects:
+    <<: *app
+    image: ghcr.io/okelojnr-acyn/friday-projects:${FRIDAY_VERSION:?}
+    environment: { <<: *app-env, SERVICE_NAME: friday-projects, DB_SCHEMA: projects }
+  inventory:
+    <<: *app
+    image: ghcr.io/okelojnr-acyn/friday-inventory:${FRIDAY_VERSION:?}
+    environment: { <<: *app-env, SERVICE_NAME: friday-inventory, DB_SCHEMA: inventory }
+  web3:
+    <<: *app
+    image: ghcr.io/okelojnr-acyn/friday-web3:${FRIDAY_VERSION:?}
+    environment: { <<: *app-env, SERVICE_NAME: friday-web3, DB_SCHEMA: web3 }
+  accounting:
+    <<: *app
+    image: ghcr.io/okelojnr-acyn/friday-accounting:${FRIDAY_VERSION:?}
+    environment: { <<: *app-env, SERVICE_NAME: friday-accounting, DB_SCHEMA: accounting }
+  minions:
+    <<: *app
+    image: ghcr.io/okelojnr-acyn/friday-minions:${FRIDAY_VERSION:?}
+    environment: { <<: *app-env, SERVICE_NAME: friday-minions, DB_SCHEMA: minions }
+  fleets:
+    <<: *app
+    image: ghcr.io/okelojnr-acyn/friday-fleets:${FRIDAY_VERSION:?}
+    environment: { <<: *app-env, SERVICE_NAME: friday-fleets, DB_SCHEMA: fleets }
+
+  web:
+    image: ghcr.io/okelojnr-acyn/friday-web:${FRIDAY_VERSION:?}
+    restart: unless-stopped
+    environment:
+      FRIDAY_KERNEL_URL: https://${FRIDAY_DOMAIN:?}/kernel
+
+  # TLS for FRIDAY_DOMAIN (Let's Encrypt on this server), the web app at
+  # /, the kernel at /kernel. The only service with published ports.
+  caddy:
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    environment:
+      FRIDAY_DOMAIN: ${FRIDAY_DOMAIN:?}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+      - kernel
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
