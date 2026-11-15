@@ -109,6 +109,9 @@ func (h *Handlers) client() *http.Client {
 }
 
 // call forwards one request to Guss and returns its {"reply": ...}.
+// Upstream failures are 424, never 502: Cloudflare (in front of the
+// kernel) swaps 502s for its own page without CORS headers, so the
+// browser only saw "can't reach the server" instead of Guss's reason.
 func (h *Handlers) call(ctx context.Context, c config, method, path string, body any) (string, int, error) {
 	base, err := validURL(c.URL)
 	if err != nil {
@@ -121,13 +124,13 @@ func (h *Handlers) call(ctx context.Context, c config, method, path string, body
 	}
 	req, err := http.NewRequestWithContext(ctx, method, base.String()+path, rd)
 	if err != nil {
-		return "", http.StatusBadGateway, err
+		return "", http.StatusFailedDependency, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := h.client().Do(req)
 	if err != nil {
-		return "", http.StatusBadGateway, errors.New("couldn't reach Guss; check it's running and its address on the Integrations page")
+		return "", http.StatusFailedDependency, errors.New("couldn't reach Guss; check it's running and its address on the Integrations page")
 	}
 	defer resp.Body.Close()
 	var out struct {
@@ -137,13 +140,13 @@ func (h *Handlers) call(ctx context.Context, c config, method, path string, body
 	json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out)
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
-		return "", http.StatusBadGateway, errors.New("Guss refused the token saved on the Integrations page")
+		return "", http.StatusFailedDependency, errors.New("Guss refused the token saved on the Integrations page")
 	case resp.StatusCode >= 400:
 		msg := out.Error
 		if msg == "" {
 			msg = fmt.Sprintf("Guss answered %d", resp.StatusCode)
 		}
-		status := http.StatusBadGateway
+		status := http.StatusFailedDependency
 		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusTooManyRequests {
 			status = resp.StatusCode
 		}

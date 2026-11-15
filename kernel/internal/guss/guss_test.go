@@ -52,7 +52,7 @@ func TestDefaultClientRefusesLoopback(t *testing.T) {
 	defer srv.Close()
 	h := &Handlers{}
 	_, status, err := h.call(context.Background(), config{URL: srv.URL, Token: "t"}, http.MethodGet, "/api/report?window=day", nil)
-	if err == nil || status != http.StatusBadGateway {
+	if err == nil || status != http.StatusFailedDependency {
 		t.Fatalf("status=%d err=%v", status, err)
 	}
 }
@@ -88,7 +88,7 @@ func TestCallForwardsTokenAndMapsErrors(t *testing.T) {
 	}
 	if _, status, err = h.call(context.Background(), c, http.MethodPost, "/api/chat",
 		map[string]string{"conversation_id": "x", "text": "bad-token"}); err == nil ||
-		status != http.StatusBadGateway || !strings.Contains(err.Error(), "token") {
+		status != http.StatusFailedDependency || !strings.Contains(err.Error(), "token") {
 		t.Fatalf("bad token: status=%d err=%v", status, err)
 	}
 	if _, status, err = h.call(context.Background(), c, http.MethodPost, "/api/chat",
