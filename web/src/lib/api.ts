@@ -8,9 +8,12 @@ import { KERNEL_URL } from "./runtimeConfig";
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** The error body's other fields (e.g. a machine-readable `code`). */
+  data: Record<string, unknown>;
+  constructor(status: number, message: string, data: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
+    this.data = data;
   }
 }
 

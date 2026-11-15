@@ -25,7 +25,7 @@ async function kernelFetch<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const payload = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, payload.error ?? res.statusText);
+    throw new ApiError(res.status, payload.error ?? res.statusText, payload);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -159,10 +159,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       publicKey: PublicKeyCredentialRequestOptionsJSON;
     }>("/auth/passkey/login-options");
     const responseJSON = await startAuthentication({ optionsJSON: publicKey });
-    const resp = await kernelFetch<AuthResponse>(`/auth/passkey/login-verify?session_id=${session_id}`, {
-      method: "POST",
-      body: JSON.stringify(responseJSON),
-    });
+    let resp: AuthResponse;
+    try {
+      resp = await kernelFetch<AuthResponse>(`/auth/passkey/login-verify?session_id=${session_id}`, {
+        method: "POST",
+        body: JSON.stringify(responseJSON),
+      });
+    } catch (err) {
+      // A passkey the server never stored (a set-up that failed half way):
+      // ask the browser and OS to forget it, so the prompt stops offering
+      // it. Chrome 132+; elsewhere this is skipped and the message explains.
+      if (err instanceof ApiError && err.data.code === "unknown_credential") {
+        const signal = (
+          PublicKeyCredential as unknown as {
+            signalUnknownCredential?: (o: { rpId: string; credentialId: string }) => Promise<void>;
+          }
+        ).signalUnknownCredential;
+        await signal?.({ rpId: window.location.hostname, credentialId: String(err.data.credential_id) }).catch(() => {});
+      }
+      throw err;
+    }
     applyAuthResponse(resp);
   }, [applyAuthResponse]);
 
