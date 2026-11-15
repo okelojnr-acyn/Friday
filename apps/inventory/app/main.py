@@ -1,3 +1,4 @@
+import math
 import uuid
 from datetime import UTC, datetime
 
@@ -15,7 +16,7 @@ from friday_common import (
     resource,
     set_org_context,
 )
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
@@ -372,28 +373,46 @@ async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_sess
     org_id = uuid.UUID(body["org_id"])
     await set_org_context(session, str(org_id))
     now = datetime.now(UTC)
+    reference = str(payload.get("invoice_number", ""))
 
+    # One total per product: a sale can carry the same product on two
+    # lines (one discounted). Quantities round to whole units (stock is
+    # counted in units).
+    per_product: dict[str, int] = {}
     for line in payload.get("lines", []):
         product_id = line.get("product_id")
         if not product_id:
             continue
-        product = await session.get(Product, uuid.UUID(product_id))
-        if product is None or str(product.org_id) != str(org_id) or not product.track_inventory:
+        q = float(line.get("quantity", 0) or 0)
+        per_product[product_id] = per_product.get(product_id, 0) + int(math.copysign(math.floor(abs(q) + 0.5), q))
+
+    for product_id, qty in per_product.items():
+        if qty == 0:
             continue
-        qty = int(line.get("quantity", 0))
-        product.on_hand_qty -= qty
-        product.updated_at = now
-        session.add(
-            StockMove(
-                org_id=org_id,
-                product_id=product.id,
-                product_name=product.name,
-                qty_delta=-qty,
-                reason="pos_sale",
-                reference=payload.get("invoice_number", ""),
-                warehouse_id=product.default_warehouse_id,
-                created_at=now,
-            )
+        try:
+            pid = uuid.UUID(product_id)
+        except ValueError:
+            continue
+        # The move first: it exists once per sale and product
+        # (stock_moves_pos_sale_once), so a repeated delivery stops here.
+        made = await session.execute(
+            text(
+                """
+                INSERT INTO stock_moves (id, org_id, product_id, product_name, qty_delta, reason, reference, warehouse_id, created_at)
+                SELECT gen_random_uuid(), org_id, id, name, :delta, 'pos_sale', :ref, default_warehouse_id, :now
+                FROM products WHERE id = :pid AND org_id = :org AND track_inventory
+                ON CONFLICT (org_id, product_id, reference) WHERE reason = 'pos_sale' AND reference <> '' DO NOTHING
+                RETURNING id
+                """
+            ),
+            {"delta": -qty, "ref": reference, "now": now, "pid": pid, "org": org_id},
+        )
+        if made.first() is None:
+            continue  # not a tracked product of this org, or already applied
+        # Atomic: two tills selling the same item at once both count.
+        await session.execute(
+            text("UPDATE products SET on_hand_qty = on_hand_qty - :qty, updated_at = :now WHERE id = :pid AND org_id = :org"),
+            {"qty": qty, "now": now, "pid": pid, "org": org_id},
         )
     await session.commit()
 
