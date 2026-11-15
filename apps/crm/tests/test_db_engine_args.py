@@ -20,3 +20,10 @@ def test_pgbouncer_transaction_pooling_settings():
     name_func = connect_args["prepared_statement_name_func"]
     assert name_func() != name_func()
     assert "ssl" not in connect_args
+
+
+def test_plain_postgres_urls_use_asyncpg():
+    for raw in ("postgres://u:p@db.example:5432/x?sslmode=verify-full", "postgresql://u:p@db.example/x"):
+        url, _ = engine_args(raw)
+        assert url.drivername == "postgresql+asyncpg"
+        assert url.host == "db.example" and url.password == "p"

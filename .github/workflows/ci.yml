@@ -214,6 +214,34 @@ jobs:
           unzip -l export.zip | grep -q 'core/memberships.csv'
           ! unzip -l export.zip | grep -q 'integration_credentials\|webauthn\|otp_codes\|guss_service'
           unzip -l export.zip | grep -c '\.csv$' 
+      - name: Friday on its own Postgres (plan 2.4)
+        # A separate PostgreSQL 14 with TLS on the compose network stands
+        # in for a customer's database: dbcheck passes, every service
+        # comes back healthy on it, Friday's tables land there, and the
+        # backup dump reads it.
+        run: |
+          mkdir -p extcerts
+          openssl req -new -x509 -days 1 -nodes -subj /CN=extdb -keyout extcerts/server.key -out extcerts/server.crt 2>/dev/null
+          sudo chown 70:70 extcerts/server.key extcerts/server.crt && sudo chmod 600 extcerts/server.key
+          EXTPW=$(openssl rand -hex 16)
+          docker run -d --name extdb --network friday_default -e POSTGRES_USER=shop -e POSTGRES_PASSWORD=$EXTPW -e POSTGRES_DB=shop             -v "$PWD/extcerts:/certs:ro" postgres:14-alpine -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+          for i in $(seq 1 30); do docker exec extdb pg_isready -U shop && break; sleep 2; done
+          echo "FRIDAY_DATABASE_URL=postgres://shop:$EXTPW@extdb:5432/shop?sslmode=require" >> .env
+          docker compose -f compose.yml --env-file .env run --rm --no-deps -T kernel ./kernel dbcheck | tee /dev/stderr | grep -q '^ok tls'
+          docker compose -f compose.yml --env-file .env up -d
+          for i in $(seq 1 60); do
+            unhealthy=$(docker compose -f compose.yml --env-file .env ps --format '{{.Service}} {{.Health}}' | awk '$2 != "" && $2 != "healthy"')
+            [ -z "$unhealthy" ] && break
+            sleep 5
+          done
+          [ -z "$unhealthy" ] || { echo "not healthy: $unhealthy"; exit 1; }
+          org=$(docker compose -f compose.yml --env-file .env exec -T kernel ./kernel bootstrap "Own DB Shop" owndb@example.com)
+          [ ${#org} -eq 36 ]
+          docker exec extdb psql -U shop -d shop -tAc "SELECT name FROM core.orgs" | grep -q 'Own DB Shop'
+          for s in crm invoicing projects inventory web3 accounting minions fleets; do
+            docker exec extdb psql -U shop -d shop -tAc "SELECT count(*) FROM $s.schema_migrations" | grep -qv '^0$'
+          done
+          docker compose -f compose.yml --env-file .env exec -T postgres sh -c 'pg_dump -Fc "$FRIDAY_DATABASE_URL"' | wc -c | awk '$1 > 10000 {ok=1} END {exit !ok}'
       - if: failure()
         run: docker compose -f compose.yml --env-file .env logs --tail 100
 

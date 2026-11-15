@@ -40,6 +40,9 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "dbcheck" {
+		os.Exit(runDBCheck())
+	}
 	if len(os.Args) > 1 && os.Args[1] == "bootstrap" {
 		if err := runBootstrap(os.Args[2:]); err != nil {
 			log.Fatal(err)
