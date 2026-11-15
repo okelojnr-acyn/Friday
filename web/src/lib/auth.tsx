@@ -71,7 +71,9 @@ interface AuthContextValue {
   verifyPosCode: (email: string, code: string, fullName: string) => Promise<string>;
   /** Usernameless passkey login -- the browser's own passkey picker
    * decides which account, no email prompt at all. */
-  loginWithPasskey: () => Promise<void>;
+  /** `onlyIds`: offer only these passkeys (a till's known cashiers), so a
+   * broken passkey left on the device is never offered. */
+  loginWithPasskey: (opts?: { onlyIds?: string[] }) => Promise<string>;
   /** Adds a passkey to the *current* session's account (call right
    * after signup, or later from a settings screen). `platformOnly`
    * constrains the registration to a real fingerprint/Face ID (not a
@@ -80,7 +82,7 @@ interface AuthContextValue {
    * passkey to my account" flow, which stays unconstrained. */
   /** `token` overrides the current session's, for a caller that just
    * signed someone in and can't wait for React to re-render. */
-  addPasskey: (opts?: { platformOnly?: boolean; token?: string }) => Promise<void>;
+  addPasskey: (opts?: { platformOnly?: boolean; token?: string }) => Promise<string>;
   logout: () => void;
 }
 
@@ -153,12 +155,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applyAuthResponse],
   );
 
-  const loginWithPasskey = useCallback(async () => {
+  const loginWithPasskey = useCallback(async (opts?: { onlyIds?: string[] }) => {
     const { session_id, publicKey } = await kernelPost<{
       session_id: string;
       publicKey: PublicKeyCredentialRequestOptionsJSON;
     }>("/auth/passkey/login-options");
-    const responseJSON = await startAuthentication({ optionsJSON: publicKey });
+    const only = opts?.onlyIds ?? [];
+    const optionsJSON = only.length
+      ? { ...publicKey, allowCredentials: only.map((id) => ({ id, type: "public-key" as const })) }
+      : publicKey;
+    const responseJSON = await startAuthentication({ optionsJSON });
     let resp: AuthResponse;
     try {
       resp = await kernelFetch<AuthResponse>(`/auth/passkey/login-verify?session_id=${session_id}`, {
@@ -180,6 +186,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw err;
     }
     applyAuthResponse(resp);
+    return responseJSON.id;
   }, [applyAuthResponse]);
 
   const addPasskey = useCallback(
@@ -193,11 +200,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         publicKey: PublicKeyCredentialCreationOptionsJSON;
       }>(`/auth/passkey/register-options${query}`, undefined, authHeader);
       const responseJSON = await startRegistration({ optionsJSON: publicKey });
+      const newId = responseJSON.id;
       await kernelFetch(`/auth/passkey/register-verify?session_id=${session_id}`, {
         method: "POST",
         headers: authHeader,
         body: JSON.stringify(responseJSON),
       });
+      return newId;
     },
     [session],
   );

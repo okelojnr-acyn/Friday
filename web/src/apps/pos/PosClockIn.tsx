@@ -81,6 +81,38 @@ function PosClockInGate() {
  * cancel) throws the same generic error either way, so there's no
  * reliable signal to branch on automatically; asking is simpler and
  * more honest than guessing. */
+// Passkeys that have worked, or were set up, on this till. Scan offers
+// only these, so a broken passkey left in Windows Hello by a set-up that
+// failed half way is never offered again (owner, 2026-11-15).
+const DEVICE_PASSKEYS_KEY = "friday.pos.device_passkeys";
+
+function devicePasskeys(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(DEVICE_PASSKEYS_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberPasskey(id: string) {
+  if (!id) return;
+  try {
+    const ids = [id, ...devicePasskeys().filter((x) => x !== id)].slice(0, 50);
+    localStorage.setItem(DEVICE_PASSKEYS_KEY, JSON.stringify(ids));
+  } catch {
+    // storage blocked: scan just offers every passkey, as before
+  }
+}
+
+function forgetPasskey(id: string) {
+  try {
+    localStorage.setItem(DEVICE_PASSKEYS_KEY, JSON.stringify(devicePasskeys().filter((x) => x !== id)));
+  } catch {
+    // ignore
+  }
+}
+
 function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
   const { loginWithPasskey, requestPosCode, verifyPosCode, addPasskey } = useAuth();
   const [mode, setMode] = useState<"scan" | "new-email" | "new-code">("scan");
@@ -109,14 +141,24 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
     return fallback;
   }
 
-  async function onScan() {
+  async function onScan(anyPasskey = false) {
     setError(null);
     setSubmitting(true);
+    const known = anyPasskey ? [] : devicePasskeys();
     try {
-      await loginWithPasskey();
+      rememberPasskey(await loginWithPasskey({ onlyIds: known }));
       onClockedIn();
     } catch (err) {
-      setError(passkeyMessage(err, "Could not verify that fingerprint -- try again"));
+      if (err instanceof ApiError && err.data.code === "unknown_credential") {
+        forgetPasskey(String(err.data.credential_id));
+      }
+      if (known.length && err instanceof DOMException && err.name === "NotAllowedError") {
+        setError(
+          "No sign-in from this till was used. If you haven't clocked in on this till before, choose \"Use another passkey\" below.",
+        );
+      } else {
+        setError(passkeyMessage(err, "Could not verify that fingerprint -- try again"));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -148,7 +190,7 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
       // Friday Host sign-in), which registered the fingerprint to the
       // wrong person, or failed outright (owner report, 2026-11-15).
       const token = await verifyPosCode(email, code, fullName);
-      await addPasskey({ platformOnly: true, token });
+      rememberPasskey(await addPasskey({ platformOnly: true, token }));
       onClockedIn();
     } catch (err) {
       setError(passkeyMessage(err, "Could not verify that code or register your fingerprint"));
@@ -168,7 +210,7 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
             <Button
               type="button"
               variant="primary"
-              onClick={onScan}
+              onClick={() => onScan()}
               disabled={submitting || !browserSupportsWebAuthn()}
             >
               <Icon name="key" size={14} /> {submitting ? "Verifying..." : "Scan to clock in"}
@@ -178,6 +220,11 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
             ) : null}
             <p className="field-label">
               Fingerprint not working? Use your Windows Hello PIN in the same prompt.
+            </p>
+            <p className="field-label">
+              <a href="#" onClick={(e) => (e.preventDefault(), onScan(true))}>
+                Use another passkey
+              </a>
             </p>
             <p className="field-label" style={{ marginTop: 4 }}>
               <a href="#" onClick={(e) => (e.preventDefault(), setMode("new-email"))}>
