@@ -77,6 +77,14 @@ export function pluralize(name: string): string {
   return name + "s";
 }
 
+// Routes whose path isn't the resource name + "s". Found 2026-11-16: the
+// Units of Measure page answered "Not Found" (unit_of_measures). Every
+// other registered resource was checked against its app's routes.
+const PATH_OVERRIDES: Record<string, string> = {
+  "inventory.unit_of_measure": "units_of_measure",
+  "invoicing.pos_shift": "pos/shifts",
+};
+
 export function resourceBasePath(app: string, resourceName: string): string {
-  return `/api/${app}/${pluralize(resourceName)}`;
+  return `/api/${app}/${PATH_OVERRIDES[`${app}.${resourceName}`] ?? pluralize(resourceName)}`;
 }
