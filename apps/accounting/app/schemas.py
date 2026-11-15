@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -42,6 +43,11 @@ class JournalEntryCreate(BaseModel):
     entry_date: date
     memo: str = ""
     lines: list[JournalLineIn] = Field(min_length=2)
+    # "guss" for entries the shop assistant sends; anything else is a
+    # person typing it in. Other sources (invoicing, pos, payroll) are
+    # only ever set by those apps' own event handlers, never via this API.
+    source: Literal["manual", "guss"] = "manual"
+    source_ref: str = Field(default="", max_length=200)
 
 
 class JournalEntryStatusUpdate(BaseModel):

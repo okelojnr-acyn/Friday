@@ -172,3 +172,29 @@ async def test_org_isolation_on_journal_entries(client, as_principal, principal)
     as_principal(make_principal())
     assert (await client.get(f"/journal_entries/{created['id']}")).status_code == 404
     assert (await client.get("/journal_entries")).json() == []
+
+
+async def test_guss_entries_keep_their_reference_and_can_be_found_by_it(client):
+    cash = await _account_id(client, "1010")
+    revenue = await _account_id(client, "4000")
+    body = {
+        "entry_date": "2026-11-15",
+        "memo": "Guss: sold 3 rice",
+        "source": "guss",
+        "source_ref": "guss:abc",
+        "lines": [
+            {"account_id": cash, "debit_cents": 36000},
+            {"account_id": revenue, "credit_cents": 36000},
+        ],
+    }
+    resp = await client.post("/journal_entries", json=body)
+    assert resp.status_code == 201, resp.text
+    assert (resp.json()["source"], resp.json()["source_ref"], resp.json()["status"]) == ("guss", "guss:abc", "draft")
+
+    found = (await client.get("/journal_entries", params={"source_ref": "guss:abc"})).json()
+    assert [e["memo"] for e in found] == ["Guss: sold 3 rice"]
+    assert (await client.get("/journal_entries", params={"source_ref": "guss:other"})).json() == []
+
+    # Apps' own sources can't be claimed through the API.
+    resp = await client.post("/journal_entries", json={**body, "source": "payroll"})
+    assert resp.status_code == 422
