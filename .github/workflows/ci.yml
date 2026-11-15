@@ -11,6 +11,24 @@ jobs:
     defaults:
       run:
         working-directory: kernel
+    services:
+      # For the tests that need a real database (they skip without
+      # KERNEL_TEST_DATABASE_URL), e.g. internal/auth/webauthn_db_test.go.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: friday
+          POSTGRES_PASSWORD: friday
+          POSTGRES_DB: kerneltest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U friday"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      KERNEL_TEST_DATABASE_URL: postgres://friday:friday@localhost:5432/kerneltest?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

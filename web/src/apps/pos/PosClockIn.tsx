@@ -143,8 +143,12 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
     setError(null);
     setSubmitting(true);
     try {
-      await verifyPosCode(email, code, fullName);
-      await addPasskey({ platformOnly: true });
+      // Pass the cashier's own new token: `addPasskey` from this render
+      // still holds the till's previous session (often the owner's
+      // Friday Host sign-in), which registered the fingerprint to the
+      // wrong person, or failed outright (owner report, 2026-11-15).
+      const token = await verifyPosCode(email, code, fullName);
+      await addPasskey({ platformOnly: true, token });
       onClockedIn();
     } catch (err) {
       setError(passkeyMessage(err, "Could not verify that code or register your fingerprint"));
@@ -172,6 +176,9 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
             {!browserSupportsWebAuthn() ? (
               <p className="field-label">This device/browser doesn't support passkeys.</p>
             ) : null}
+            <p className="field-label">
+              Fingerprint not working? Use your Windows Hello PIN in the same prompt.
+            </p>
             <p className="field-label" style={{ marginTop: 4 }}>
               <a href="#" onClick={(e) => (e.preventDefault(), setMode("new-email"))}>
                 New cashier? Set up your fingerprint
@@ -214,6 +221,9 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
             <Button type="submit" variant="primary" disabled={submitting}>
               {submitting ? "Verifying..." : "Verify and register fingerprint"}
             </Button>
+            <p className="field-label">
+              Fingerprint not working? Use your Windows Hello PIN in the same prompt.
+            </p>
           </form>
         )}
       </Card>

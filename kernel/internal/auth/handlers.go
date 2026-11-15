@@ -348,10 +348,10 @@ func (h *Handlers) PasskeyRegisterOptions(w http.ResponseWriter, r *http.Request
 		return
 	}
 	ctx := r.Context()
-	user, err := loadWebauthnUser(ctx, h.Pool, claims.Subject, claims.Email, "")
+	user, err := resolveWebauthnUser(ctx, h.Pool, claims)
 	if err != nil {
 		log.Printf("passkey register options (user %s): load user: %v", claims.Subject, err)
-		writeError(w, http.StatusInternalServerError, "db error")
+		writePasskeyError(w, err)
 		return
 	}
 	log.Printf("passkey register options requested (user %s, purpose %q)", claims.Subject, r.URL.Query().Get("purpose"))
@@ -384,14 +384,21 @@ func (h *Handlers) PasskeyRegisterOptions(w http.ResponseWriter, r *http.Request
 	hintOpt := webauthn.WithPublicKeyCredentialHints([]protocol.PublicKeyCredentialHints{
 		protocol.PublicKeyCredentialHintClientDevice,
 	})
-	creation, session, err := h.WebAuthn.BeginRegistration(user, registrationOpt, hintOpt)
+	// excludeCredentials lists this person's existing passkeys, so a
+	// device that already has one says so in its own prompt (the
+	// browser's InvalidStateError, which PosClockIn explains) instead of
+	// making a second credential.
+	exclude := webauthn.WithExclusions(webauthn.Credentials(user.credentials).CredentialDescriptors())
+	creation, session, err := h.WebAuthn.BeginRegistration(user, registrationOpt, hintOpt, exclude)
 	if err != nil {
+		log.Printf("passkey register options (user %s): BeginRegistration: %v", user.id, err)
 		writeError(w, http.StatusBadRequest, "could not start passkey registration: "+err.Error())
 		return
 	}
 	sessionID, err := storeWebauthnChallenge(ctx, h.Pool, "registration", session)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db error")
+		log.Printf("passkey register options (user %s): store challenge: %v", user.id, err)
+		writeError(w, http.StatusServiceUnavailable, "could not start fingerprint set-up right now -- try again in a moment")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "publicKey": creation.Response})
@@ -417,10 +424,10 @@ func (h *Handlers) PasskeyRegisterVerify(w http.ResponseWriter, r *http.Request)
 	// Every failure below is logged with the caller's user id (2026-11-10:
 	// "passkey creation fails" reports had zero server-side evidence --
 	// these paths returned errors without logging anything).
-	user, err := loadWebauthnUser(ctx, h.Pool, claims.Subject, claims.Email, "")
+	user, err := resolveWebauthnUser(ctx, h.Pool, claims)
 	if err != nil {
 		log.Printf("passkey register verify (user %s): load user: %v", claims.Subject, err)
-		writeError(w, http.StatusInternalServerError, "db error")
+		writePasskeyError(w, err)
 		return
 	}
 	session, err := consumeWebauthnChallenge(ctx, h.Pool, sessionID, "registration")
@@ -436,13 +443,24 @@ func (h *Handlers) PasskeyRegisterVerify(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusUnauthorized, "passkey registration could not be verified: "+err.Error())
 		return
 	}
-	if err := storeWebauthnCredential(ctx, h.Pool, claims.Subject, cred, r.URL.Query().Get("device_label")); err != nil {
-		log.Printf("passkey register verify (user %s): store credential: %v", claims.Subject, err)
-		writeError(w, http.StatusInternalServerError, "db error")
+	if err := storeWebauthnCredential(ctx, h.Pool, user.id, cred, r.URL.Query().Get("device_label")); err != nil {
+		log.Printf("passkey register verify (user %s): store credential: %v", user.id, err)
+		writePasskeyError(w, err)
 		return
 	}
-	log.Printf("passkey registered for user %s", claims.Subject)
+	log.Printf("passkey registered for user %s", user.id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// writePasskeyError answers a registration failure with what the person
+// can do about it. Only an unexpected database failure stays generic.
+func writePasskeyError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errNoKernelAccount), errors.Is(err, errCredentialTaken):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		writeError(w, http.StatusServiceUnavailable, "could not save your fingerprint sign-in right now -- try again in a moment")
+	}
 }
 
 func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {

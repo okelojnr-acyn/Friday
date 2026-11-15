@@ -68,7 +68,7 @@ interface AuthContextValue {
    * new org/business, unlike verifyCode's signup branch). fullName is
    * only used the first time, joining a brand new account. See
    * PosVerifyCode. */
-  verifyPosCode: (email: string, code: string, fullName: string) => Promise<void>;
+  verifyPosCode: (email: string, code: string, fullName: string) => Promise<string>;
   /** Usernameless passkey login -- the browser's own passkey picker
    * decides which account, no email prompt at all. */
   loginWithPasskey: () => Promise<void>;
@@ -78,7 +78,9 @@ interface AuthContextValue {
    * security key) -- used by POS clock-in registration
    * (web/src/apps/pos/PosClockIn.tsx); omit for the general "add a
    * passkey to my account" flow, which stays unconstrained. */
-  addPasskey: (opts?: { platformOnly?: boolean }) => Promise<void>;
+  /** `token` overrides the current session's, for a caller that just
+   * signed someone in and can't wait for React to re-render. */
+  addPasskey: (opts?: { platformOnly?: boolean; token?: string }) => Promise<void>;
   logout: () => void;
 }
 
@@ -146,6 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (email: string, code: string, fullName: string) => {
       const resp = await kernelPost<AuthResponse>("/auth/pos/verify", { email, code, full_name: fullName });
       applyAuthResponse(resp);
+      return resp.token;
     },
     [applyAuthResponse],
   );
@@ -164,9 +167,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [applyAuthResponse]);
 
   const addPasskey = useCallback(
-    async (opts?: { platformOnly?: boolean }) => {
-      if (!session) throw new Error("addPasskey requires an active session");
-      const authHeader = { Authorization: `Bearer ${session.token}` };
+    async (opts?: { platformOnly?: boolean; token?: string }) => {
+      const token = opts?.token ?? session?.token;
+      if (!token) throw new Error("addPasskey requires an active session");
+      const authHeader = { Authorization: `Bearer ${token}` };
       const query = opts?.platformOnly ? "?purpose=pos" : "";
       const { session_id, publicKey } = await kernelPost<{
         session_id: string;
