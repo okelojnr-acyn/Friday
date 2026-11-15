@@ -16,6 +16,7 @@ import (
 	"github.com/acyn-innovation/friday/kernel/internal/integrations"
 	"github.com/acyn-innovation/friday/kernel/internal/mail"
 	"github.com/acyn-innovation/friday/kernel/internal/org"
+	"github.com/acyn-innovation/friday/kernel/internal/orgexport"
 	"github.com/acyn-innovation/friday/kernel/internal/registry"
 )
 
@@ -27,6 +28,18 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
+	if len(os.Args) > 2 && os.Args[1] == "export" {
+		// kernel export <org id> > export.zip
+		ctx := context.Background()
+		pool, err := db.Connect(ctx, envOr("DATABASE_URL", "postgres://friday:friday@localhost:5432/friday"))
+		if err != nil {
+			log.Fatalf("db connect: %v", err)
+		}
+		if err := orgexport.Write(ctx, pool, os.Args[2], os.Getenv("FRIDAY_VERSION"), os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "bootstrap" {
 		if err := runBootstrap(os.Args[2:]); err != nil {
 			log.Fatal(err)
@@ -140,6 +153,14 @@ func main() {
 	mux.Handle("POST /guss/chat", requireAuth(http.HandlerFunc(gussHandlers.Chat)))
 	mux.Handle("GET /guss/report", requireAuth(http.HandlerFunc(gussHandlers.Report)))
 	mux.Handle("GET /guss/voids", requireAuth(http.HandlerFunc(gussHandlers.Voids)))
+	mux.Handle("POST /admin/orgs/{id}/export", requireAuth(orgexport.Handler(pool, os.Getenv("FRIDAY_VERSION"),
+		func(r *http.Request) (string, string, string, bool) {
+			c, ok := auth.FromContext(r.Context())
+			if !ok {
+				return "", "", "", false
+			}
+			return c.OrgID, c.Role, c.Via, true
+		})))
 	mux.Handle("POST /guss/voids/{number}", requireAuth(http.HandlerFunc(gussHandlers.DecideVoid)))
 
 	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(apps, eventsToken))
