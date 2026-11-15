@@ -39,7 +39,7 @@ export function MembersSettingsPage() {
   function load() {
     listMembers()
       .then(setMembers)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load members"));
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load admins"));
   }
 
   useEffect(load, []);
@@ -91,14 +91,19 @@ export function MembersSettingsPage() {
   return (
     <div className="page">
       <div className="page-header">
-        <h1 className="page-title">Members</h1>
+        <div>
+          <h1 className="page-title">Admins</h1>
+          <p className="field-label" style={{ margin: "4px 0 0", maxWidth: "60ch" }}>
+            The people who run Friday: owners, admins and managers. Staff (cashiers, field staff) are managed in Minions.
+          </p>
+        </div>
       </div>
       {error ? <div className="error-banner" style={{ marginBottom: 16 }}>{error}</div> : null}
 
       {canManage ? (
         <div className="card card-padded" style={{ marginBottom: 16 }}>
           <div className="field-label" style={{ marginBottom: 8 }}>
-            Invite someone new
+            Invite an admin or manager
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
             <FieldWrap label="Email">
