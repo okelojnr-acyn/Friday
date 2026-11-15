@@ -215,6 +215,16 @@ func storeWebauthnCredential(ctx context.Context, pool *pgxpool.Pool, userID str
 	return err
 }
 
+// webauthnCredentialKnown reports whether a credential id is stored.
+func webauthnCredentialKnown(ctx context.Context, pool *pgxpool.Pool, credentialID []byte) bool {
+	var known bool
+	err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM core.webauthn_credentials WHERE credential_id = $1)`,
+		base64.RawURLEncoding.EncodeToString(credentialID)).Scan(&known)
+	// On a database error, fall through to the full check, which fails
+	// with its own logged reason.
+	return err != nil || known
+}
+
 func updateWebauthnSignCount(ctx context.Context, pool *pgxpool.Pool, credentialID []byte, signCount uint32) error {
 	_, err := pool.Exec(ctx, `
 		UPDATE core.webauthn_credentials SET sign_count = $1 WHERE credential_id = $2

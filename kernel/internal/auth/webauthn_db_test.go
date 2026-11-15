@@ -5,8 +5,10 @@ package auth
 // otherwise, so `go test ./...` on a laptop without Postgres still passes.
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -213,5 +215,44 @@ func TestFridayHostSSOTokenResolvesByEmailWithinItsOrg(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &body)
 	if rec.Code != http.StatusConflict || body["error"] == "db error" {
 		t.Fatalf("unknown person: want 409 with guidance, got %d %v", rec.Code, body)
+	}
+}
+
+// The owner's 2026-11-15 sign-in failure: Windows Hello offered a passkey
+// left over from a registration the server never stored.
+func TestLoginWithAPasskeyTheServerNeverStoredSaysSo(t *testing.T) {
+	pool := testPool(t)
+	h := testHandlers(t, pool)
+
+	rec := httptest.NewRecorder()
+	h.PasskeyLoginOptions(rec, httptest.NewRequest(http.MethodPost, "/auth/passkey/login-options", nil))
+	var opts struct {
+		SessionID string `json:"session_id"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &opts)
+	if opts.SessionID == "" {
+		t.Fatalf("login options: %d %s", rec.Code, rec.Body)
+	}
+
+	b64 := base64.RawURLEncoding.EncodeToString
+	rawID := []byte("orphan-" + randHex(8))
+	clientData := []byte(`{"type":"webauthn.get","challenge":"abc","origin":"http://localhost:5173"}`)
+	authData := make([]byte, 37) // rpIdHash, flags, sign count
+	authData[32] = 0x05          // user present + verified
+	body, _ := json.Marshal(map[string]any{
+		"id": b64(rawID), "rawId": b64(rawID), "type": "public-key",
+		"response": map[string]string{
+			"clientDataJSON":    b64(clientData),
+			"authenticatorData": b64(authData),
+			"signature":         b64([]byte("sig")),
+			"userHandle":        b64([]byte("30cd17cc-ce2a-4b95-a93f-82bf58b2d570")),
+		},
+	})
+	rec = httptest.NewRecorder()
+	h.PasskeyLoginVerify(rec, httptest.NewRequest(http.MethodPost, "/auth/passkey/login-verify?session_id="+opts.SessionID, bytes.NewReader(body)))
+	var out map[string]string
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	if rec.Code != http.StatusUnauthorized || out["code"] != "unknown_credential" || out["credential_id"] != b64(rawID) {
+		t.Fatalf("got %d %v", rec.Code, out)
 	}
 }

@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"encoding/base64"
 	"errors"
 	"log"
 	"net/http"
@@ -299,12 +300,34 @@ func (h *Handlers) PasskeyLoginVerify(w http.ResponseWriter, r *http.Request) {
 		return loadWebauthnUser(ctx, h.Pool, userID, email, fullName)
 	}
 
+	parsed, err := protocol.ParseCredentialRequestResponse(r)
+	if err != nil {
+		log.Printf("passkey login: parse response: %v", err)
+		writeError(w, http.StatusBadRequest, "the browser's passkey answer couldn't be read; try again")
+		return
+	}
+	// A passkey this server never stored: the device made it but saving
+	// it failed (2026-11-15: Windows Hello kept two such passkeys from the
+	// "db error" registrations and offered one of them at sign-in). Say
+	// so, and hand back its id so the page can ask the browser to forget
+	// it (WebAuthn signalUnknownCredential).
+	if !webauthnCredentialKnown(ctx, h.Pool, parsed.RawID) {
+		credID := base64.RawURLEncoding.EncodeToString(parsed.RawID)
+		log.Printf("passkey login: unknown credential %s", credID)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{
+			"error":         "this device offered a passkey Friday doesn't have (left over from a set-up that didn't finish). Choose your other passkey in the prompt, or set up your fingerprint again",
+			"code":          "unknown_credential",
+			"credential_id": credID,
+		})
+		return
+	}
+
 	// Logged in full, not just a generic "could not be verified" --
 	// this is the one error this codebase previously had zero
 	// visibility into: a real report of "works once, then every
 	// subsequent login fails" had no server-side evidence to diagnose
 	// from, only the client's own generic message.
-	user, cred, err := h.WebAuthn.FinishPasskeyLogin(resolveUser, *session, r)
+	user, cred, err := h.WebAuthn.ValidatePasskeyLogin(resolveUser, *session, parsed)
 	if err != nil {
 		log.Printf("passkey login: FinishPasskeyLogin: %v", err)
 		writeError(w, http.StatusUnauthorized, "passkey authentication could not be verified")
