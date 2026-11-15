@@ -23,8 +23,13 @@ x-app: &app
     retries: 10
     start_period: 30s
 
+# FRIDAY_DATABASE_URL (optional, postgres://...): run Friday on a Postgres
+# the customer already has (plan 2.4); check it first with
+# `docker compose run --rm --no-deps kernel ./kernel dbcheck`. The bundled
+# postgres service still runs (it's small) so nothing depends on a profile
+# being set; it just holds no data.
 x-app-env: &app-env
-  DATABASE_URL: postgresql+asyncpg://friday:${POSTGRES_PASSWORD:?}@postgres:5432/friday
+  DATABASE_URL: ${FRIDAY_DATABASE_URL:-postgresql+asyncpg://friday:${POSTGRES_PASSWORD:?}@postgres:5432/friday}
   JWT_SECRET: ${JWT_SECRET:?}
   KERNEL_INTERNAL_URL: http://kernel:8080/internal
   KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:?}
@@ -38,6 +43,8 @@ services:
       POSTGRES_USER: friday
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
       POSTGRES_DB: friday
+      # For backups: pg_dump runs here against whichever database is in use.
+      FRIDAY_DATABASE_URL: ${FRIDAY_DATABASE_URL:-}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -50,7 +57,7 @@ services:
     image: ghcr.io/okelojnr-acyn/friday-kernel:${FRIDAY_VERSION:?}
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgres://friday:${POSTGRES_PASSWORD:?}@postgres:5432/friday
+      DATABASE_URL: ${FRIDAY_DATABASE_URL:-postgres://friday:${POSTGRES_PASSWORD:?}@postgres:5432/friday}
       JWT_SECRET: ${JWT_SECRET:?}
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:?}
       MIGRATIONS_DIR: migrations

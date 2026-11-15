@@ -30,7 +30,14 @@ def engine_args(database_url: str) -> tuple[URL, dict]:
       transaction pooling (the next transaction may land on a different
       server connection). Disabled per SQLAlchemy's documented PgBouncer
       recipe, with unique statement names so concurrent ones can't clash.
+
+    A plain `postgres://` or `postgresql://` URL (what a customer pastes
+    for "run Friday on my Postgres", plan 2.4, and what the kernel reads
+    from the same FRIDAY_DATABASE_URL) is switched to the asyncpg driver.
     """
+    for prefix in ("postgres://", "postgresql://"):
+        if database_url.startswith(prefix):
+            database_url = "postgresql+asyncpg://" + database_url[len(prefix):]
     url = make_url(database_url)
     query = dict(url.query)
     connect_args: dict = {
