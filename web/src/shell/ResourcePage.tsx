@@ -12,6 +12,9 @@ import { FormView } from "../ui/resource/FormView";
 import { CUSTOM_CREATE_SCREENS } from "./customCreateScreens";
 import { BulkAddProductsPanel } from "../apps/inventory/BulkAddProductsPanel";
 import { ImportCsvPanel } from "../ui/resource/ImportCsvPanel";
+import { ProductCards } from "../apps/inventory/ProductCards";
+import { ProductEditor } from "../apps/inventory/ProductEditor";
+import type { Product } from "../lib/inventory";
 
 export function ResourcePage() {
   const { app = "", resource = "" } = useParams();
@@ -23,6 +26,10 @@ export function ResourcePage() {
   const [editing, setEditing] = useState<RecordRow | "new" | null>(null);
   const [bulkAdding, setBulkAdding] = useState(false);
   const [importingCsv, setImportingCsv] = useState(false);
+  // Inventory products show as photo cards by category; the table stays
+  // one click away.
+  const isProducts = app === "inventory" && resource === "product";
+  const [productCards, setProductCards] = useState(true);
 
   useEffect(() => {
     setSchema(null);
@@ -139,6 +146,16 @@ export function ResourcePage() {
                 </Button>
               ))
             : null}
+          {isProducts ? (
+            <>
+              <Button size="sm" className="btn-pill" variant={productCards ? "primary" : "secondary"} onClick={() => setProductCards(true)}>
+                Cards
+              </Button>
+              <Button size="sm" className="btn-pill" variant={productCards ? "secondary" : "primary"} onClick={() => setProductCards(false)}>
+                Table
+              </Button>
+            </>
+          ) : null}
           {app === "inventory" && resource === "product" ? (
             <Button variant="secondary" size="sm" className="btn-pill" onClick={() => setBulkAdding(true)}>
               <Icon name="barcode" size={14} /> Bulk add
@@ -157,13 +174,22 @@ export function ResourcePage() {
 
       {!visibleRecords ? (
         <div className="spinner">Loading...</div>
+      ) : isProducts && productCards ? (
+        <ProductCards records={visibleRecords} onOpen={setEditing} />
       ) : view === "kanban" ? (
         <KanbanView spec={spec} records={visibleRecords} onCardClick={setEditing} onMove={handleMove} />
       ) : (
         <ListView spec={spec} records={visibleRecords} onRowClick={setEditing} />
       )}
 
-      {editing === "new" && CUSTOM_CREATE_SCREENS[`${app}.${resource}`] ? (
+      {editing && isProducts ? (
+        <ProductEditor
+          product={editing === "new" ? undefined : (editing as unknown as Product)}
+          all={(records ?? []) as unknown as Product[]}
+          onClose={() => setEditing(null)}
+          onSaved={(changed) => changed.forEach(handleSaved)}
+        />
+      ) : editing === "new" && CUSTOM_CREATE_SCREENS[`${app}.${resource}`] ? (
         (() => {
           const CustomCreate = CUSTOM_CREATE_SCREENS[`${app}.${resource}`];
           return <CustomCreate onClose={() => setEditing(null)} onSaved={handleSaved} />;

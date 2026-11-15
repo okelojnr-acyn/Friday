@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -53,6 +53,13 @@ class Product(Base):
     barcode: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # Shelf grouping on the till (Groceries, Dairy, ...); free text.
     category: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Changes with the photo (0010); "" = no photo.
+    image_sha: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # A variant names the product it is a variant of (0010).
+    variant_of: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+    variant_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     price_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     cost_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     on_hand_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -86,6 +93,18 @@ class Product(Base):
 
 
 REASONS = ("manual_adjustment", "pos_sale", "received", "sale", "write_off")
+
+
+class ProductImage(Base):
+    __tablename__ = "product_images"
+
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), primary_key=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class StockMove(Base):
