@@ -180,6 +180,11 @@ export function PosPayment({
               </div>
             ))}
           </div>
+          {lines[selected]?.method === "card" ? (
+            <p className="till-text">
+              Take the card or tap on the PDQ (Pesapal or your bank's). Validate once it prints approved; it works offline too.
+            </p>
+          ) : null}
           {lines[selected]?.method === "mpesa" ? (
             <p className="till-text">
               Paid to your till or paybill number: check the M-Pesa message for this amount before you validate. With

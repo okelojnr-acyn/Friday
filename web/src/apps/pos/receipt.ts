@@ -24,7 +24,7 @@ export interface Receipt {
 const METHOD_LABEL: Record<string, string> = {
   cash: "Cash",
   mpesa: "M-Pesa (till/paybill)",
-  card: "Card",
+  card: "Card (PDQ)",
   pesapal: "Pesapal",
   other: "Other",
 };
