@@ -73,6 +73,20 @@ export default defineConfig({
     VitePWA({
       injectRegister: null,
       registerType: "autoUpdate",
+      // This worker is registered by Minions with scope "/", so it sees
+      // every page of the site. Only Minions pages may be answered from
+      // its cache: Friday's own pages (index.html) and the POS (pos.html,
+      // which has its own network-first worker) always come from the
+      // network. Owner, 2026-11-16: Units of Measure kept flipping back to
+      // "Not Found" because this worker served a cached index.html from
+      // before the fix. Hashed JS/CSS can stay precached; their names
+      // change with every release.
+      workbox: {
+        navigateFallback: "minions.html",
+        navigateFallbackAllowlist: [/^\/minions/],
+        globIgnores: ["index.html", "pos.html"],
+        cleanupOutdatedCaches: true,
+      },
       manifest: {
         name: "Friday Minions",
         short_name: "Minions",
