@@ -3,6 +3,7 @@ import { AuthProvider } from "../../lib/auth";
 import { OrgSettingsProvider } from "../../lib/orgSettings";
 import { LoginPage } from "../../shell/LoginPage";
 import { RequirePosAuth } from "./PosClockIn";
+import { NewVersionBanner } from "../../ui/NewVersionBanner";
 import "./pos.css";
 
 /** POS's own trimmed route tree -- mirrors web/src/minions/MinionsApp.tsx:
@@ -21,6 +22,7 @@ export default function PosApp() {
         <Route path="/" element={<RequirePosAuth />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <NewVersionBanner />
       </OrgSettingsProvider>
     </AuthProvider>
   );
