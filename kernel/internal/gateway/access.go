@@ -24,12 +24,14 @@ func EnforceAccess(app string, next http.Handler) http.Handler {
 			need = "read"
 		}
 		if !Allows(claims.Access[app], need) {
+			msg := claims.Via + " has no " + need + " access to " + app +
+				" (an admin sets it in Friday: Integrations, Guss)"
+			if claims.Via == auth.PosVia {
+				msg = "a cashier PIN sign-in only reaches the till; clock in with your fingerprint for this"
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": claims.Via + " has no " + need + " access to " + app +
-					" (an admin sets it in Friday: Integrations, Guss)",
-			})
+			json.NewEncoder(w).Encode(map[string]string{"error": msg})
 			return
 		}
 		next.ServeHTTP(w, r)

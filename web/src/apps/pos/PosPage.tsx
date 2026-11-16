@@ -58,6 +58,8 @@ export function PosPage({
   onCloseRegister,
   onSwitchTill,
   onClockOut,
+  onSwitchCashier,
+  onPinSettings,
   onPendingChange,
 }: {
   register: PosRegister | null;
@@ -65,6 +67,8 @@ export function PosPage({
   onCloseRegister: () => void;
   onSwitchTill: () => void;
   onClockOut: () => void;
+  onSwitchCashier: () => void;
+  onPinSettings: () => void;
   onPendingChange: (n: number) => void;
 }) {
   const { session } = useAuth();
@@ -552,6 +556,12 @@ export function PosPage({
             </button>
             <button type="button" onClick={() => (setMenuOpen(false), onSwitchTill())}>
               <Icon name="storefront" size={18} /> Switch till
+            </button>
+            <button type="button" onClick={() => (setMenuOpen(false), onSwitchCashier())}>
+              <Icon name="users" size={18} /> Switch cashier
+            </button>
+            <button type="button" onClick={() => (setMenuOpen(false), onPinSettings())}>
+              <Icon name="shield-check" size={18} /> Cashier PIN
             </button>
             <div className="till-text" style={{ padding: "8px 12px 2px" }}>
               Cash drawer
