@@ -80,7 +80,8 @@ def document_for(inv: Invoice, cfg: dict, credit_note_of: int = 0) -> SaleDocume
         lines.append(
             SaleLine(
                 name=line.description,
-                quantity=Decimal(line.quantity),
+                # A unit KRA has no code for goes out in the base unit.
+                quantity=Decimal(line.quantity) * Decimal(line.etims_qty_factor or 1),
                 unit_price_cents=line.unit_price_cents,
                 total_cents=line.total_cents,
                 vat_cents=vat,

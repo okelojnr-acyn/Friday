@@ -2,19 +2,24 @@ import { useState } from "react";
 import { Modal } from "../../ui/Modal";
 import { Button } from "../../ui/Button";
 import { Icon } from "../../ui/Icon";
-import { FieldWrap, Input } from "../../ui/Field";
+import { FieldWrap, Input, Select } from "../../ui/Field";
 import { ReferenceInput } from "../../ui/resource/ReferenceInput";
 import { amountInputToCents } from "../../ui/resource/fieldFormat";
 import { createRecord } from "../../lib/resourceApi";
 import { ApiError } from "../../lib/api";
 import type { FieldSpec, RecordRow } from "../../lib/types";
 import { formatMoney } from "../../lib/orgSettings";
+import { useUnits } from "../../lib/units";
 
 interface Line {
   productId: unknown;
   description: string;
   quantity: string;
   unitCost: string;
+  /** "" = the product's purchase unit. */
+  uomId: string;
+  /** Base units in one, for a pack (carton of 24). */
+  factor: string;
 }
 
 const SUPPLIER_FIELD: FieldSpec = {
@@ -40,7 +45,7 @@ const PRODUCT_FIELD: FieldSpec = {
 };
 
 function emptyLine(): Line {
-  return { productId: null, description: "", quantity: "1", unitCost: "" };
+  return { productId: null, description: "", quantity: "1", unitCost: "", uomId: "", factor: "" };
 }
 
 interface PurchaseOrderCreateModalProps {
@@ -57,6 +62,7 @@ export function PurchaseOrderCreateModal({ onClose, onSaved }: PurchaseOrderCrea
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const { units, byId: unitById } = useUnits();
 
   const totalCents = lines.reduce(
     (sum, l) => sum + (Number(l.quantity) || 0) * amountInputToCents(l.unitCost || "0"),
@@ -90,6 +96,8 @@ export function PurchaseOrderCreateModal({ onClose, onSaved }: PurchaseOrderCrea
           product_id: l.productId || null,
           description: l.description,
           quantity: Number(l.quantity) || 1,
+          ...(l.uomId ? { uom_id: l.uomId } : {}),
+          ...(l.uomId && unitById.get(l.uomId)?.ratio == null && Number(l.factor) > 0 ? { uom_factor: Number(l.factor) } : {}),
           unit_cost_cents: amountInputToCents(l.unitCost || "0"),
         })),
       });
@@ -143,6 +151,31 @@ export function PurchaseOrderCreateModal({ onClose, onSaved }: PurchaseOrderCrea
               onChange={(e) => updateLine(i, { quantity: e.target.value })}
               style={{ width: 64 }}
             />
+            <Select
+              aria-label="Unit"
+              value={line.uomId}
+              onChange={(e) => updateLine(i, { uomId: e.target.value, factor: "" })}
+              style={{ width: 130 }}
+            >
+              <option value="">Purchase unit</option>
+              {units
+                .filter((u) => u.active)
+                .map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+            </Select>
+            {line.uomId && unitById.get(line.uomId)?.ratio == null ? (
+              <Input
+                type="number"
+                placeholder="Holds"
+                title="How many of the product's stock unit one of these holds"
+                value={line.factor}
+                onChange={(e) => updateLine(i, { factor: e.target.value })}
+                style={{ width: 72 }}
+              />
+            ) : null}
             <Input
               type="number"
               step="0.01"

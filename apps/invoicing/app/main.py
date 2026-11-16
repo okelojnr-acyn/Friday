@@ -1,5 +1,6 @@
 import logging
 import uuid
+from decimal import Decimal
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -548,7 +549,12 @@ def _etims_line_fields(line: dict) -> dict:
         return str(line.get(key) or "").strip()[:limit]
 
     vat = line.get("vat_cents")
+    factor = line.get("uom_factor")
+    efactor = line.get("etims_qty_factor")
     return {
+        "uom_name": text_field("uom", 12),
+        "uom_factor": Decimal(str(factor)) if isinstance(factor, (int, float, str)) and str(factor) else None,
+        "etims_qty_factor": Decimal(str(efactor)) if isinstance(efactor, (int, float)) and efactor > 0 else Decimal(1),
         "tax_code": text_field("tax_code", 4).upper(),
         "vat_cents": int(vat) if isinstance(vat, (int, float)) else 0,
         "item_code": text_field("etims_item_code", 20),
@@ -868,6 +874,9 @@ async def return_pos_sale(
                 item_class=line.item_class,
                 quantity_unit=line.quantity_unit,
                 packaging_unit=line.packaging_unit,
+                uom_name=line.uom_name,
+                uom_factor=line.uom_factor,
+                etims_qty_factor=line.etims_qty_factor,
             )
         )
     # A credit note on eTIMS names the same buyer as the sale.
