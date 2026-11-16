@@ -15,6 +15,11 @@ export interface Product {
   cost_cents: number;
   on_hand_qty: number;
   track_inventory: boolean;
+  /** eTIMS tax type A-E; "" = the business's default rate. */
+  tax_code?: string;
+  etims_item_class?: string;
+  etims_packaging_unit?: string;
+  etims_item_code?: string;
 }
 
 /** Best-effort: the inventory app may not be installed for this org, in

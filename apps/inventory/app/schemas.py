@@ -22,6 +22,9 @@ class ProductCreate(BaseModel):
     uom_id: uuid.UUID | None = None
     uom_conversion_factor: Decimal = Decimal(1)
     valuation_method: str = "standard"
+    tax_code: str = Field(default="", pattern="^[A-E]?$")
+    etims_item_class: str = Field(default="", pattern="^[0-9]{0,10}$")
+    etims_packaging_unit: str = Field(default="NT", pattern="^[A-Z0-9]{1,5}$")
 
 
 class ProductUpdate(BaseModel):
@@ -40,6 +43,9 @@ class ProductUpdate(BaseModel):
     uom_id: uuid.UUID | None = None
     uom_conversion_factor: Decimal | None = None
     valuation_method: str | None = None
+    tax_code: str | None = Field(default=None, pattern="^[A-E]?$")
+    etims_item_class: str | None = Field(default=None, pattern="^[0-9]{0,10}$")
+    etims_packaging_unit: str | None = Field(default=None, pattern="^[A-Z0-9]{1,5}$")
 
 
 class ProductOut(BaseModel):
@@ -62,6 +68,11 @@ class ProductOut(BaseModel):
     uom_id: uuid.UUID | None
     uom_conversion_factor: Decimal
     valuation_method: str
+    tax_code: str = ""
+    etims_item_class: str = ""
+    etims_packaging_unit: str = "NT"
+    etims_item_code: str = ""
+    etims_registered_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

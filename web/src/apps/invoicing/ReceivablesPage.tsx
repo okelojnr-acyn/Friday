@@ -61,6 +61,9 @@ export function ReceivablesPage() {
         <div>
           <h1 className="page-title">Receivables</h1>
           <nav style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+            <Link to="/etims" className="btn btn-sm btn-pill btn-secondary">
+              eTIMS filing
+            </Link>
             <Link to="/invoicing/quote" className="btn btn-sm btn-pill btn-secondary">
               Quotes
             </Link>

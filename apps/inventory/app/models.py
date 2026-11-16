@@ -88,6 +88,14 @@ class Product(Base):
     # 0005_warehouses_and_uom.sql's comment. "standard" (cost_cents
     # as-is) is the only method any code path actually uses today.
     valuation_method: Mapped[str] = mapped_column(String(16), nullable=False, default="standard")
+    # KRA eTIMS (0011): tax type A-E ("" = the business's default rate),
+    # item classification, packaging unit, and the item code eTIMS knows
+    # the product by once registered.
+    tax_code: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_item_class: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_packaging_unit: Mapped[str] = mapped_column(Text, nullable=False, default="NT")
+    etims_item_code: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

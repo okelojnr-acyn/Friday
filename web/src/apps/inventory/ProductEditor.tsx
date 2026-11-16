@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from "react";
 import { api, ApiError } from "../../lib/api";
 import type { Product } from "../../lib/inventory";
-import { formatMoney } from "../../lib/orgSettings";
+import { PACKAGING_UNITS } from "../../lib/etims";
+import { formatMoney, useOrgSettings } from "../../lib/orgSettings";
 import { removeProductImage, uploadProductImage, useProductImage } from "../../lib/productImages";
 import type { RecordRow } from "../../lib/types";
 import { Button } from "../../ui/Button";
-import { Checkbox, FieldWrap, Input } from "../../ui/Field";
+import { Checkbox, FieldWrap, Input, Select } from "../../ui/Field";
 import { Modal } from "../../ui/Modal";
 import "./inventory.css";
 
@@ -34,6 +35,12 @@ export function ProductEditor({
   const [sku, setSku] = useState(product?.sku ?? "");
   const [barcode, setBarcode] = useState(product?.barcode ?? "");
   const [track, setTrack] = useState(product?.track_inventory ?? true);
+  const [taxCode, setTaxCode] = useState(product?.tax_code ?? "");
+  const [itemClass, setItemClass] = useState(product?.etims_item_class ?? "");
+  const [pkgUnit, setPkgUnit] = useState(product?.etims_packaging_unit || "NT");
+  const settings = useOrgSettings();
+  const rates = settings.tax?.rates ?? [];
+  const defaultRate = rates.find((r) => r.code === (settings.tax?.default_code || "B"));
   const [startStock, setStartStock] = useState("");
   const [sha, setSha] = useState(product?.image_sha ?? "");
   const [file, setFile] = useState<File | null>(null);
@@ -77,6 +84,9 @@ export function ProductEditor({
         sku: sku.trim(),
         barcode: barcode.trim(),
         track_inventory: track,
+        tax_code: taxCode,
+        etims_item_class: itemClass.trim(),
+        etims_packaging_unit: pkgUnit,
       };
       let saved = isNew
         ? await api.post<Product>("/api/inventory/products", { ...body, on_hand_qty: Number.parseInt(startStock || "0", 10) || 0 })
@@ -212,6 +222,38 @@ export function ProductEditor({
           </FieldWrap>
           <FieldWrap label="Cost">
             <Input inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value)} />
+          </FieldWrap>
+          <FieldWrap label="Tax type">
+            <Select value={taxCode} onChange={(e) => setTaxCode(e.target.value)}>
+              <option value="">
+                Business default{defaultRate ? ` (${defaultRate.code} · ${defaultRate.rate_bp / 100}%)` : ""}
+              </option>
+              {rates.map((r) => (
+                <option key={r.code} value={r.code}>
+                  {r.code} · {r.name} ({r.rate_bp / 100}%)
+                </option>
+              ))}
+            </Select>
+          </FieldWrap>
+          <FieldWrap label="eTIMS item classification">
+            <Input
+              inputMode="numeric"
+              name="etims-item-class"
+              autoComplete="off"
+              value={itemClass}
+              maxLength={10}
+              onChange={(e) => setItemClass(e.target.value.replace(/\D/g, ""))}
+              placeholder="KRA code, e.g. 5022110801"
+            />
+          </FieldWrap>
+          <FieldWrap label="eTIMS packaging">
+            <Select value={pkgUnit} onChange={(e) => setPkgUnit(e.target.value)}>
+              {Object.entries(PACKAGING_UNITS).map(([code, label]) => (
+                <option key={code} value={code}>
+                  {code} · {label}
+                </option>
+              ))}
+            </Select>
           </FieldWrap>
           {isNew ? (
             <FieldWrap label="Stock now">

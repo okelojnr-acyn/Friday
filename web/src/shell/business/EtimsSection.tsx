@@ -13,6 +13,7 @@ interface EtimsSettings {
   device_serial: string;
   vscu_url: string;
   cmc_key_set: boolean;
+  automation_available: boolean;
   updated_at: string | null;
   tax_pin: string;
 }
@@ -78,6 +79,20 @@ export function EtimsSection({ canEdit }: { canEdit: boolean }) {
     <div className="card card-padded form-grid">
       {error ? <div className="error-banner">{error}</div> : null}
       {notice ? <div className="field-label">{notice}</div> : null}
+      <div style={{ display: "grid", gap: 8 }}>
+        <h2 style={{ fontSize: 18, margin: 0 }}>How sales reach KRA</h2>
+        <p style={{ maxWidth: "60ch", margin: 0 }}>
+          {v.enabled
+            ? "Friday sends each sale to KRA and prints KRA's receipt number and signature."
+            : "By hand: enter each sale in KRA's eTIMS portal, then record the invoice number eTIMS gives back in Friday."}
+        </p>
+        <div>
+          <Link to="/etims" className="btn btn-secondary btn-sm">
+            Open eTIMS filing
+          </Link>
+        </div>
+      </div>
+      <h2 style={{ fontSize: 18, margin: "8px 0 0" }}>Automatic sending (OSCU or VSCU)</h2>
       <p className="field-label" style={{ maxWidth: "60ch", margin: 0 }}>
         KRA approves the device and gives you the branch ID and device serial. Initialising the device returns the CMC
         key. Test on the sandbox before switching to production.
@@ -153,13 +168,19 @@ export function EtimsSection({ canEdit }: { canEdit: boolean }) {
         </div>
       ) : null}
       <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <Checkbox checked={v.enabled} onChange={(e) => set("enabled", e.target.checked)} />
-        Turn on eTIMS for this business
+        <Checkbox
+          checked={v.enabled}
+          disabled={!v.automation_available && !v.enabled}
+          onChange={(e) => set("enabled", e.target.checked)}
+        />
+        Send sales to KRA automatically
       </label>
-      <p className="field-label" style={{ maxWidth: "60ch", margin: 0 }}>
-        Sending sales to KRA is the next step being built. Until then these settings are stored and checked, and no sale
-        is reported.
-      </p>
+      {!v.automation_available ? (
+        <p className="field-label" style={{ maxWidth: "60ch", margin: 0 }}>
+          Not available on this server yet: it opens after the production checks. Until then, file by hand and keep these
+          details ready.
+        </p>
+      ) : null}
       <SaveRow canEdit={canEdit} saving={saving} onSave={() => save()} />
     </div>
   );
