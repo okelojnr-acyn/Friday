@@ -1,11 +1,13 @@
 import { useMemo, useRef, useState } from "react";
 import { api, ApiError } from "../../lib/api";
 import type { Product } from "../../lib/inventory";
-import { formatMoney } from "../../lib/orgSettings";
+import { PACKAGING_UNITS } from "../../lib/etims";
+import { fixedFactor, fmtQty, unitLabel, useUnits, type Unit } from "../../lib/units";
+import { formatMoney, useOrgSettings } from "../../lib/orgSettings";
 import { removeProductImage, uploadProductImage, useProductImage } from "../../lib/productImages";
 import type { RecordRow } from "../../lib/types";
 import { Button } from "../../ui/Button";
-import { Checkbox, FieldWrap, Input } from "../../ui/Field";
+import { Checkbox, FieldWrap, Input, Select } from "../../ui/Field";
 import { Modal } from "../../ui/Modal";
 import "./inventory.css";
 
@@ -34,7 +36,25 @@ export function ProductEditor({
   const [sku, setSku] = useState(product?.sku ?? "");
   const [barcode, setBarcode] = useState(product?.barcode ?? "");
   const [track, setTrack] = useState(product?.track_inventory ?? true);
+  const [taxCode, setTaxCode] = useState(product?.tax_code ?? "");
+  const [itemClass, setItemClass] = useState(product?.etims_item_class ?? "");
+  const [pkgUnit, setPkgUnit] = useState(product?.etims_packaging_unit || "NT");
+  const settings = useOrgSettings();
+  const rates = settings.tax?.rates ?? [];
+  const defaultRate = rates.find((r) => r.code === (settings.tax?.default_code || "B"));
   const [startStock, setStartStock] = useState("");
+  // Units: stock in the base unit; bought and sold in their own units.
+  const { units, byId: unitById } = useUnits();
+  const piece = units.find((u) => u.code === "pc");
+  const [baseId, setBaseId] = useState(product?.base_uom_id ?? "");
+  const [purchaseId, setPurchaseId] = useState(product?.purchase_uom_id ?? "");
+  const [salesId, setSalesId] = useState(product?.sales_uom_id ?? "");
+  const [purchaseFactor, setPurchaseFactor] = useState(product?.purchase_factor ? String(product.purchase_factor) : "");
+  const [salesFactor, setSalesFactor] = useState(product?.sales_factor ? String(product.sales_factor) : "");
+  const base = unitById.get(baseId) ?? piece;
+  const purchaseUnit = unitById.get(purchaseId) ?? base;
+  const salesUnit = unitById.get(salesId) ?? base;
+  const baseLabel = unitLabel(base) || "units";
   const [sha, setSha] = useState(product?.image_sha ?? "");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -77,9 +97,13 @@ export function ProductEditor({
         sku: sku.trim(),
         barcode: barcode.trim(),
         track_inventory: track,
+        ...unitFields(),
+        tax_code: taxCode,
+        etims_item_class: itemClass.trim(),
+        etims_packaging_unit: pkgUnit,
       };
       let saved = isNew
-        ? await api.post<Product>("/api/inventory/products", { ...body, on_hand_qty: Number.parseInt(startStock || "0", 10) || 0 })
+        ? await api.post<Product>("/api/inventory/products", { ...body, on_hand_qty: Number.parseFloat(startStock || "0") || 0 })
         : await api.patch<Product>(`/api/inventory/products/${product!.id}`, body);
       if (file) {
         const newSha = await uploadProductImage(saved.id, file);
@@ -118,6 +142,19 @@ export function ProductEditor({
     }
   }
 
+  /** The unit fields to save; none until the units have loaded. */
+  function unitFields(): Record<string, unknown> {
+    if (!base) return {};
+    const out: Record<string, unknown> = {
+      base_uom_id: base.id,
+      purchase_uom_id: purchaseUnit?.id ?? base.id,
+      sales_uom_id: salesUnit?.id ?? base.id,
+    };
+    if (fixedFactor(base, purchaseUnit) == null) out.purchase_factor = Number.parseFloat(purchaseFactor) || undefined;
+    if (fixedFactor(base, salesUnit) == null) out.sales_factor = Number.parseFloat(salesFactor) || undefined;
+    return out;
+  }
+
   function variantBody(parent: Product, v: typeof nv) {
     return {
       name: `${parent.name} ${v.name.trim()}`,
@@ -128,7 +165,17 @@ export function ProductEditor({
       sku: v.sku.trim(),
       barcode: v.barcode.trim(),
       track_inventory: parent.track_inventory,
-      on_hand_qty: Number.parseInt(v.stock || "0", 10) || 0,
+      on_hand_qty: Number.parseFloat(v.stock || "0") || 0,
+      // A variant is counted, bought and sold in its main product's units.
+      ...(parent.base_uom_id
+        ? {
+            base_uom_id: parent.base_uom_id,
+            purchase_uom_id: parent.purchase_uom_id,
+            purchase_factor: parent.purchase_factor,
+            sales_uom_id: parent.sales_uom_id,
+            sales_factor: parent.sales_factor,
+          }
+        : {}),
     };
   }
 
@@ -213,13 +260,78 @@ export function ProductEditor({
           <FieldWrap label="Cost">
             <Input inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value)} />
           </FieldWrap>
+          <FieldWrap label="Tax type">
+            <Select value={taxCode} onChange={(e) => setTaxCode(e.target.value)}>
+              <option value="">
+                Business default{defaultRate ? ` (${defaultRate.code} · ${defaultRate.rate_bp / 100}%)` : ""}
+              </option>
+              {rates.map((r) => (
+                <option key={r.code} value={r.code}>
+                  {r.code} · {r.name} ({r.rate_bp / 100}%)
+                </option>
+              ))}
+            </Select>
+          </FieldWrap>
+          <FieldWrap label="eTIMS item classification">
+            <Input
+              inputMode="numeric"
+              name="etims-item-class"
+              autoComplete="off"
+              value={itemClass}
+              maxLength={10}
+              onChange={(e) => setItemClass(e.target.value.replace(/\D/g, ""))}
+              placeholder="KRA code, e.g. 5022110801"
+            />
+          </FieldWrap>
+          <FieldWrap label="eTIMS packaging">
+            <Select value={pkgUnit} onChange={(e) => setPkgUnit(e.target.value)}>
+              {Object.entries(PACKAGING_UNITS).map(([code, label]) => (
+                <option key={code} value={code}>
+                  {code} · {label}
+                </option>
+              ))}
+            </Select>
+          </FieldWrap>
+          {base ? (
+            <div className="wide inv-units">
+              <div className="field-label" style={{ fontWeight: 600 }}>Units</div>
+              <UnitRow label="Stock kept in" units={units} value={base.id} onChange={setBaseId} />
+              <UnitRow
+                label="Bought in"
+                units={units}
+                value={purchaseUnit?.id ?? base.id}
+                onChange={(id) => {
+                  setPurchaseId(id);
+                  setPurchaseFactor("");
+                }}
+                base={base}
+                factor={purchaseFactor}
+                onFactor={setPurchaseFactor}
+              />
+              <UnitRow
+                label="Sold in"
+                units={units}
+                value={salesUnit?.id ?? base.id}
+                onChange={(id) => {
+                  setSalesId(id);
+                  setSalesFactor("");
+                }}
+                base={base}
+                factor={salesFactor}
+                onFactor={setSalesFactor}
+              />
+              <p className="field-label" style={{ margin: 0 }}>
+                Price is per {unitLabel(salesUnit) || "unit"}; cost is per {baseLabel}.
+              </p>
+            </div>
+          ) : null}
           {isNew ? (
-            <FieldWrap label="Stock now">
-              <Input inputMode="numeric" value={startStock} onChange={(e) => setStartStock(e.target.value)} placeholder="0" />
+            <FieldWrap label={`Stock now (${baseLabel})`}>
+              <Input inputMode="decimal" value={startStock} onChange={(e) => setStartStock(e.target.value)} placeholder="0" />
             </FieldWrap>
           ) : (
             <FieldWrap label="In stock">
-              <Input value={String(product!.on_hand_qty)} disabled />
+              <Input value={`${fmtQty(product!.on_hand_qty)} ${unitLabel(unitById.get(product!.base_uom_id ?? ""))}`} disabled />
             </FieldWrap>
           )}
           <label className="wide" style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 15 }}>
@@ -270,5 +382,56 @@ export function ProductEditor({
         </div>
       </div>
     </Modal>
+  );
+}
+
+/** One unit choice. With `base`, says how many base units the unit holds:
+ * worked out when the two convert (kg and g), typed for a pack (a carton
+ * of 24). */
+function UnitRow({
+  label,
+  units,
+  value,
+  onChange,
+  base,
+  factor,
+  onFactor,
+}: {
+  label: string;
+  units: Unit[];
+  value: string;
+  onChange: (id: string) => void;
+  base?: Unit;
+  factor?: string;
+  onFactor?: (f: string) => void;
+}) {
+  const shown = units.filter((u) => u.active || u.id === value);
+  const unit = units.find((u) => u.id === value);
+  const fixed = base ? fixedFactor(base, unit) : null;
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      <span style={{ width: 110 }}>{label}</span>
+      <Select value={value} onChange={(e) => onChange(e.target.value)} style={{ flex: "1 1 160px", minWidth: 0 }}>
+        {shown.map((u) => (
+          <option key={u.id} value={u.id}>
+            {u.name}
+            {u.abbreviation && u.abbreviation !== u.name ? ` (${u.abbreviation})` : ""}
+          </option>
+        ))}
+      </Select>
+      {base && unit && unit.id !== base.id ? (
+        fixed != null ? (
+          <span className="field-label">
+            1 {unitLabel(unit)} = {fmtQty(fixed)} {unitLabel(base)}
+          </span>
+        ) : (
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            1 {unitLabel(unit)} =
+            <Input inputMode="decimal" value={factor ?? ""} onChange={(e) => onFactor?.(e.target.value)} placeholder="24" style={{ width: 80 }} />
+            {unitLabel(base)}
+          </span>
+        )
+      ) : null}
+    </div>
   );
 }

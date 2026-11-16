@@ -33,6 +33,7 @@ export function PosPayment({
   pesapal,
   onCancel,
   onPaid,
+  buyer,
 }: {
   totalCents: number;
   taxLabel: string;
@@ -40,6 +41,8 @@ export function PosPayment({
   pesapal?: () => void;
   onCancel: () => void;
   onPaid: (tenders: Tender[], changeCents: number) => void;
+  /** The buyer's KRA PIN, for a business buying (BuyerPin). */
+  buyer?: React.ReactNode;
 }) {
   const [lines, setLines] = useState<Tender[]>([{ method: "cash", cents: totalCents }]);
   const [selected, setSelected] = useState(0);
@@ -137,6 +140,7 @@ export function PosPayment({
               {taxLabel}: {formatMoney(taxCents)}
             </div>
           </div>
+          {buyer}
           <div className="till-methods">
             {["cash", "mpesa", "card"].map((m) => (
               <button

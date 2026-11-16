@@ -3,9 +3,11 @@ import type { Product } from "../../lib/inventory";
 import type { RecordRow } from "../../lib/types";
 import { formatMoney } from "../../lib/orgSettings";
 import { categoryTint, useProductImage } from "../../lib/productImages";
+import { fmtQty, unitLabel, useUnits } from "../../lib/units";
 import "./inventory.css";
 
-const LOW = (p: Product) => p.track_inventory && p.on_hand_qty <= 5;
+// Low: at or under the reorder point when one is set, else 5.
+const LOW = (p: Product) => p.track_inventory && p.on_hand_qty <= (p.reorder_point ? p.reorder_point : 5);
 
 function initials(name: string) {
   return name
@@ -19,6 +21,8 @@ function initials(name: string) {
 
 function Card({ p, variants, categories, onOpen }: { p: Product; variants: Product[]; categories: string[]; onOpen: () => void }) {
   const photo = useProductImage(p);
+  const { byId: unitById } = useUnits();
+  const unit = unitLabel(unitById.get(p.base_uom_id ?? ""));
   const tint = categoryTint(p.category, categories);
   const priced = variants.length ? variants : [p];
   const from = Math.min(...priced.map((v) => v.price_cents));
@@ -42,7 +46,7 @@ function Card({ p, variants, categories, onOpen }: { p: Product; variants: Produ
           <span className="inv-card-price">
             {from === to ? formatMoney(from) : `${formatMoney(from)} – ${formatMoney(to)}`}
           </span>
-          {tracked ? <span className={`inv-card-stock${low ? " low" : ""}`}>{stock} in stock</span> : <span className="inv-card-stock">Not tracked</span>}
+          {tracked ? <span className={`inv-card-stock${low ? " low" : ""}`}>{fmtQty(stock)}{unit && unit !== "pc" ? ` ${unit}` : ""} in stock</span> : <span className="inv-card-stock">Not tracked</span>}
         </span>
         <span className="inv-card-row">
           {p.sku ? <span className="inv-card-sku">{p.sku}</span> : <span />}

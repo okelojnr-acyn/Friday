@@ -92,7 +92,8 @@ func TestTaxProfileDrivesTheTillRateAndEtimsHidesTheKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Settings{Pool: pool}
-	e := &Etims{Pool: pool}
+	e := &Etims{Pool: pool, InternalToken: "tok", Automation: true}
+	manual := &Etims{Pool: pool}
 	call := func(h func(http.ResponseWriter, *http.Request), method, role, body string) (int, map[string]any) {
 		r := httptest.NewRequest(method, "/", bytes.NewBufferString(body))
 		r = r.WithContext(auth.WithClaims(r.Context(), &auth.Claims{OrgID: orgID, Role: role, RegisteredClaims: jwt.RegisteredClaims{Subject: "u"}}))
@@ -143,6 +144,10 @@ func TestTaxProfileDrivesTheTillRateAndEtimsHidesTheKey(t *testing.T) {
 	if code, _ := call(e.Put, http.MethodPut, "owner", `{"branch_id":"1"}`); code != 400 {
 		t.Fatalf("one-digit branch: %d", code)
 	}
+	// Until the server allows automation, sales are filed by hand.
+	if code, _ := call(manual.Put, http.MethodPut, "owner", `{"enabled":true,"device_serial":"KRA-001"}`); code != 400 {
+		t.Fatalf("enabled without automation: %d", code)
+	}
 	code, v = call(e.Put, http.MethodPut, "owner", `{"enabled":true,"device_serial":"KRA-001","cmc_key":"secret-cmc"}`)
 	if code != 200 || v["cmc_key_set"] != true || v["enabled"] != true {
 		t.Fatalf("save eTIMS: %d %v", code, v)
@@ -159,6 +164,25 @@ func TestTaxProfileDrivesTheTillRateAndEtimsHidesTheKey(t *testing.T) {
 	pool.QueryRow(ctx, `SELECT cmc_key FROM core.org_etims WHERE org_id = $1`, orgID).Scan(&stored)
 	if stored != "secret-cmc" {
 		t.Fatal("CMC key not stored")
+	}
+	// Friday's own apps read the key with the internal token only.
+	internal := func(token string) (int, map[string]any) {
+		r := httptest.NewRequest(http.MethodGet, "/internal/etims/"+orgID, nil)
+		r.SetPathValue("org_id", orgID)
+		if token != "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		w := httptest.NewRecorder()
+		e.GetInternal(w, r)
+		var out map[string]any
+		json.Unmarshal(w.Body.Bytes(), &out)
+		return w.Code, out
+	}
+	if code, _ := internal("wrong"); code != http.StatusUnauthorized {
+		t.Fatalf("internal with a wrong token: %d", code)
+	}
+	if code, out := internal("tok"); code != 200 || out["cmc_key"] != "secret-cmc" || out["tax_pin"] != "P051234567X" {
+		t.Fatalf("internal: %d %v", code, out)
 	}
 	code, v = call(e.Put, http.MethodPut, "owner", `{"clear_cmc_key":true}`)
 	if code != 200 || v["cmc_key_set"] != false {

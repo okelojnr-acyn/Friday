@@ -2,7 +2,20 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from pydantic import BaseModel, Field, PlainSerializer
+
+
+def _qty_json(d: Decimal) -> int | float:
+    """Quantities go out as numbers: whole ones as integers (what every
+    caller read before 0012), fractions (0.5 kg) as decimals."""
+    d = Decimal(d)
+    return int(d) if d == d.to_integral_value() else float(d)
+
+
+# A quantity or a unit factor: up to three (factors six) decimals.
+Qty = Annotated[Decimal, PlainSerializer(_qty_json, return_type=int | float, when_used="json")]
 
 
 class ProductCreate(BaseModel):
@@ -15,13 +28,21 @@ class ProductCreate(BaseModel):
     variant_name: str = ""
     price_cents: int = 0
     cost_cents: int = 0
-    on_hand_qty: int = 0
-    reorder_point: int = 0
+    on_hand_qty: Qty = Decimal(0)
+    reorder_point: Qty = Decimal(0)
     track_inventory: bool = True
     default_warehouse_id: uuid.UUID | None = None
     uom_id: uuid.UUID | None = None
     uom_conversion_factor: Decimal = Decimal(1)
     valuation_method: str = "standard"
+    base_uom_id: uuid.UUID | None = None
+    purchase_uom_id: uuid.UUID | None = None
+    purchase_factor: Qty | None = None
+    sales_uom_id: uuid.UUID | None = None
+    sales_factor: Qty | None = None
+    tax_code: str = Field(default="", pattern="^[A-E]?$")
+    etims_item_class: str = Field(default="", pattern="^[0-9]{0,10}$")
+    etims_packaging_unit: str = Field(default="NT", pattern="^[A-Z0-9]{1,5}$")
 
 
 class ProductUpdate(BaseModel):
@@ -34,12 +55,20 @@ class ProductUpdate(BaseModel):
     variant_name: str | None = None
     price_cents: int | None = None
     cost_cents: int | None = None
-    reorder_point: int | None = None
+    reorder_point: Qty | None = None
     track_inventory: bool | None = None
     default_warehouse_id: uuid.UUID | None = None
     uom_id: uuid.UUID | None = None
     uom_conversion_factor: Decimal | None = None
     valuation_method: str | None = None
+    base_uom_id: uuid.UUID | None = None
+    purchase_uom_id: uuid.UUID | None = None
+    purchase_factor: Qty | None = None
+    sales_uom_id: uuid.UUID | None = None
+    sales_factor: Qty | None = None
+    tax_code: str | None = Field(default=None, pattern="^[A-E]?$")
+    etims_item_class: str | None = Field(default=None, pattern="^[0-9]{0,10}$")
+    etims_packaging_unit: str | None = Field(default=None, pattern="^[A-Z0-9]{1,5}$")
 
 
 class ProductOut(BaseModel):
@@ -55,13 +84,23 @@ class ProductOut(BaseModel):
     variant_name: str = ""
     price_cents: int
     cost_cents: int
-    on_hand_qty: int
-    reorder_point: int
+    on_hand_qty: Qty
+    reorder_point: Qty
     track_inventory: bool
     default_warehouse_id: uuid.UUID | None
     uom_id: uuid.UUID | None
     uom_conversion_factor: Decimal
     valuation_method: str
+    base_uom_id: uuid.UUID | None = None
+    purchase_uom_id: uuid.UUID | None = None
+    purchase_factor: Qty = Decimal(1)
+    sales_uom_id: uuid.UUID | None = None
+    sales_factor: Qty = Decimal(1)
+    tax_code: str = ""
+    etims_item_class: str = ""
+    etims_packaging_unit: str = "NT"
+    etims_item_code: str = ""
+    etims_registered_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -88,8 +127,20 @@ class WarehouseOut(BaseModel):
 
 
 class UnitOfMeasureCreate(BaseModel):
-    name: str = Field(min_length=1)
-    abbreviation: str = ""
+    name: str = Field(min_length=1, max_length=40)
+    abbreviation: str = Field(default="", max_length=10)
+    category: str = "unit"
+    # None: a pack whose size each product sets.
+    ratio: Decimal | None = None
+    etims_code: str = Field(default="", max_length=5)
+
+
+class UnitOfMeasurePatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=40)
+    abbreviation: str | None = Field(default=None, max_length=10)
+    active: bool | None = None
+    ratio: Decimal | None = None
+    etims_code: str | None = Field(default=None, max_length=5)
 
 
 class UnitOfMeasureOut(BaseModel):
@@ -97,6 +148,12 @@ class UnitOfMeasureOut(BaseModel):
     org_id: uuid.UUID
     name: str
     abbreviation: str
+    code: str = ""
+    category: str = "unit"
+    ratio: Qty | None = None
+    etims_code: str = ""
+    active: bool = True
+    products_using: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -107,7 +164,8 @@ class ProductBulkCreate(BaseModel):
 
 
 class StockAdjust(BaseModel):
-    delta: int
+    # In the product's base unit.
+    delta: Qty
     reason: str = "manual_adjustment"
     reference: str = ""
     warehouse_id: uuid.UUID | None = None
@@ -118,7 +176,7 @@ class StockMoveOut(BaseModel):
     org_id: uuid.UUID
     product_id: uuid.UUID
     product_name: str
-    qty_delta: int
+    qty_delta: Qty
     reason: str
     reference: str
     warehouse_id: uuid.UUID | None
@@ -147,12 +205,17 @@ class SupplierOut(BaseModel):
 class PurchaseOrderLineIn(BaseModel):
     product_id: uuid.UUID | None = None
     description: str = ""
-    quantity: int = 1
+    quantity: Qty = Decimal(1)
+    # The unit the line is ordered in; left out, the product's purchase unit.
+    uom_id: uuid.UUID | None = None
+    # Base units in one of that unit; set from the product when left out.
+    uom_factor: Qty | None = None
     unit_cost_cents: int = 0
 
 
 class PurchaseOrderLineOut(PurchaseOrderLineIn):
     id: uuid.UUID
+    uom_name: str = ""
     total_cost_cents: int
 
     model_config = {"from_attributes": True}
@@ -196,6 +259,9 @@ class PurchaseOrderOut(BaseModel):
                     product_id=line.product_id,
                     description=line.description,
                     quantity=line.quantity,
+                    uom_id=line.uom_id,
+                    uom_name=line.uom_name,
+                    uom_factor=line.uom_factor,
                     unit_cost_cents=line.unit_cost_cents,
                     total_cost_cents=line.total_cost_cents,
                 )

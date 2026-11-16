@@ -28,6 +28,11 @@ pub struct LineItem {
     /// call each other outside the kernel event bus).
     #[serde(default)]
     pub unit_cost_cents: Option<i64>,
+    /// Fields the till adds after checkout (tax code, VAT, unit of
+    /// measure, ...). The engine does not read them; it keeps them, so a
+    /// sale waiting offline still carries them when it syncs.
+    #[serde(flatten, default)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl LineItem {
@@ -72,6 +77,7 @@ impl Cart {
             unit_price_cents,
             product_id,
             discount_bp: 0,
+            extra: Default::default(),
             unit_cost_cents,
         });
     }

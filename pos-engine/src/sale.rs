@@ -43,6 +43,10 @@ pub struct Sale {
     /// later still lands in its own shift's drawer count.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shift_id: Option<String>,
+    /// Fields the till adds after checkout (buyer's KRA PIN, ...), kept
+    /// through the offline queue unread, like LineItem::extra.
+    #[serde(flatten, default)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Sale {
@@ -56,6 +60,7 @@ impl Sale {
             created_at_ms: now_ms,
             payments: None,
             shift_id: None,
+            extra: Default::default(),
         }
     }
 }
@@ -112,6 +117,22 @@ mod tests {
 
         queue.mark_synced(&sale.client_sale_id);
         assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn fields_the_till_adds_survive_the_queue() {
+        let mut cart = Cart::new();
+        cart.add_line("Sugar".into(), 0.5, 18000, Some("p1".into()), None);
+        let sale = Sale::from_cart(&cart, "KES", "cash", 1);
+        let mut v: serde_json::Value = serde_json::to_value(&sale).unwrap();
+        v["buyer_pin"] = "P051234567X".into();
+        v["lines"][0]["tax_code"] = "B".into();
+        let mut queue = OfflineQueue::new();
+        queue.enqueue(serde_json::from_value(v).unwrap());
+        let out = serde_json::to_value(queue.pending()).unwrap();
+        assert_eq!(out[0]["buyer_pin"], "P051234567X");
+        assert_eq!(out[0]["lines"][0]["tax_code"], "B");
+        assert_eq!(out[0]["lines"][0]["quantity"], 0.5);
     }
 
     #[test]
