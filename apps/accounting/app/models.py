@@ -11,7 +11,7 @@ class Base(DeclarativeBase):
 
 
 ACCOUNT_TYPES = ("asset", "liability", "equity", "income", "expense")
-JOURNAL_SOURCES = ("manual", "invoicing", "pos", "payroll")
+JOURNAL_SOURCES = ("manual", "invoicing", "pos", "payroll", "guss", "inventory")
 JOURNAL_STATUSES = ("draft", "posted")
 FISCAL_PERIOD_STATUSES = ("open", "closed")
 BANK_TRANSACTION_STATUSES = ("unmatched", "matched")

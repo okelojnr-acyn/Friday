@@ -69,9 +69,24 @@ async def publish_pos_sale_recorded(org_id: str, inv: Invoice, charged_cents: in
     )
 
 
+def vat_of(inv: Invoice) -> tuple[int, dict[str, int]]:
+    """The VAT in a document and per eTIMS tax type: what the till worked
+    out per line (vat_cents), or a typed invoice's own per-line tax. The
+    till's reconciling line is not an item and carries none. Code "" is
+    the business's default rate."""
+    by_code: dict[str, int] = {}
+    for line in inv.lines:
+        if line.is_adjustment:
+            continue
+        vat = line.vat_cents or (line.tax_cents if line.tax_rate_bp else 0)
+        by_code[line.tax_code or ""] = by_code.get(line.tax_code or "", 0) + vat
+    return sum(by_code.values()), by_code
+
+
 async def publish_invoice_paid(org_id: str, inv: Invoice, paid_amount_cents: int, lines_payload: list[dict]) -> None:
     subtotal_cents = sum(line.total_cents for line in inv.lines)
     tax_cents = sum(line.tax_cents for line in inv.lines)
+    vat_cents, vat_by_code = vat_of(inv)
     await publish_event(
         "invoicing.invoice.paid",
         org_id,
@@ -84,6 +99,12 @@ async def publish_invoice_paid(org_id: str, inv: Invoice, paid_amount_cents: int
             "subtotal_cents": subtotal_cents,
             "tax_cents": tax_cents,
             "paid_amount_cents": paid_amount_cents,
+            # VAT inside the amount (subtotal + tax), whether the prices
+            # included it or not: Accounting books revenue net of it.
+            "vat_cents": vat_cents,
+            "vat_by_code": vat_by_code,
+            # How it was paid, so M-Pesa and card don't land in the drawer.
+            "payments": [{"method": p.method, "amount_cents": p.amount_cents} for p in inv.payments],
             "lines": lines_payload,
         },
     )

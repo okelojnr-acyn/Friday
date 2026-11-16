@@ -164,3 +164,40 @@ async def test_stock_adjusts_by_fractions(client):
     p = (await client.post("/products", json={"name": "Milk", "base_uom_id": u["l"]["id"], "on_hand_qty": 10})).json()
     r = await client.post(f"/products/{p['id']}/adjust-stock", json={"delta": -0.25, "reason": "write_off"})
     assert r.status_code == 200 and r.json()["on_hand_qty"] == 9.75
+
+
+async def test_goods_received_carry_vat_into_the_purchases_schedule(client, as_principal, principal, monkeypatch):
+    import csv
+    import io
+
+    from app import purchases
+
+    async def no_kernel(org_id):
+        return {"vat_registered": True, "default_code": "B", "rates": [{"code": "B", "rate_bp": 1600}, {"code": "A", "rate_bp": 0}]}
+
+    monkeypatch.setattr(purchases, "get_etims_config", no_kernel)
+    as_principal(replace(principal, role="admin"))
+    sup = (await client.post("/suppliers", json={"name": "Mumias Sugar", "kra_pin": "P051234567X"})).json()
+    sugar = (await client.post("/products", json={"name": "Sugar"})).json()
+    flour = (await client.post("/products", json={"name": "Flour", "tax_code": "A"})).json()
+    po = (
+        await client.post(
+            "/purchase_orders",
+            json={
+                "supplier_id": sup["id"],
+                "supplier_invoice_no": "MS-1001",
+                "lines": [
+                    {"product_id": sugar["id"], "quantity": 10, "unit_cost_cents": 50000},
+                    {"product_id": flour["id"], "quantity": 5, "unit_cost_cents": 20000},
+                ],
+            },
+        )
+    ).json()
+    received = (await client.patch(f"/purchase_orders/{po['id']}/status", json={"status": "received"})).json()
+    vat = {line["tax_code"]: line["vat_cents"] for line in received["lines"]}
+    assert vat == {"B": 80000, "A": 0}
+    month = received["received_at"][:7]
+    rows = list(csv.reader(io.StringIO((await client.get("/purchase_orders/vat-purchases.csv", params={"month": month})).text)))
+    assert rows[0][1] == "PIN of Supplier"
+    b = [r for r in rows[1:] if r[7] == "B"][0]
+    assert b[1] == "P051234567X" and b[4] == "MS-1001" and b[8:10] == ["5000.00", "800.00"] and b[12] == ""

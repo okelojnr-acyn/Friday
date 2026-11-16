@@ -45,6 +45,9 @@ type TaxProfile struct {
 	ReceiptShowPIN       bool      `json:"receipt_show_pin"`
 	ReceiptShowBreakdown bool      `json:"receipt_show_breakdown"`
 	ReceiptFooter        string    `json:"receipt_footer"`
+	// Printed under the business name on every receipt.
+	ReceiptAddress string `json:"receipt_address"`
+	ReceiptPhone   string `json:"receipt_phone"`
 }
 
 // DefaultTaxProfile suits a Kenyan shop. Orgs saved before tax_profile
@@ -129,6 +132,11 @@ func (p *TaxProfile) normalize(currency string) string {
 	p.DefaultCode = strings.ToUpper(strings.TrimSpace(p.DefaultCode))
 	if _, ok := p.defaultRate(); !ok {
 		return "choose which rate the till charges"
+	}
+	p.ReceiptAddress = strings.TrimSpace(p.ReceiptAddress)
+	p.ReceiptPhone = strings.TrimSpace(p.ReceiptPhone)
+	if len(p.ReceiptAddress) > 120 || len(p.ReceiptPhone) > 40 {
+		return "the receipt address is up to 120 characters and the phone up to 40"
 	}
 	p.ReceiptFooter = strings.TrimSpace(p.ReceiptFooter)
 	if len(p.ReceiptFooter) > 200 {

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from typing import Annotated
@@ -189,6 +189,7 @@ class SupplierCreate(BaseModel):
     name: str = Field(min_length=1)
     email: str = ""
     phone: str = ""
+    kra_pin: str = Field(default="", max_length=20)
 
 
 class SupplierOut(BaseModel):
@@ -197,6 +198,7 @@ class SupplierOut(BaseModel):
     name: str
     email: str
     phone: str
+    kra_pin: str = ""
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -210,12 +212,15 @@ class PurchaseOrderLineIn(BaseModel):
     uom_id: uuid.UUID | None = None
     # Base units in one of that unit; set from the product when left out.
     uom_factor: Qty | None = None
+    # Before VAT.
     unit_cost_cents: int = 0
+    tax_code: str = Field(default="", pattern="^[A-E]?$")
 
 
 class PurchaseOrderLineOut(PurchaseOrderLineIn):
     id: uuid.UUID
     uom_name: str = ""
+    vat_cents: int = 0
     total_cost_cents: int
 
     model_config = {"from_attributes": True}
@@ -223,11 +228,16 @@ class PurchaseOrderLineOut(PurchaseOrderLineIn):
 
 class PurchaseOrderCreate(BaseModel):
     supplier_id: uuid.UUID | None = None
+    supplier_invoice_no: str = Field(default="", max_length=60)
+    supplier_invoice_date: date | None = None
     lines: list[PurchaseOrderLineIn] = []
 
 
 class PurchaseOrderStatusUpdate(BaseModel):
     status: str
+    # Given when receiving: the supplier's invoice that came with the goods.
+    supplier_invoice_no: str | None = Field(default=None, max_length=60)
+    supplier_invoice_date: date | None = None
 
 
 class PurchaseOrderOut(BaseModel):
@@ -236,6 +246,9 @@ class PurchaseOrderOut(BaseModel):
     supplier_id: uuid.UUID | None
     number: str
     status: str
+    supplier_invoice_no: str = ""
+    supplier_invoice_date: date | None = None
+    received_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     lines: list[PurchaseOrderLineOut]
@@ -251,6 +264,9 @@ class PurchaseOrderOut(BaseModel):
             supplier_id=po.supplier_id,
             number=po.number,
             status=po.status,
+            supplier_invoice_no=po.supplier_invoice_no,
+            supplier_invoice_date=po.supplier_invoice_date,
+            received_at=po.received_at,
             created_at=po.created_at,
             updated_at=po.updated_at,
             lines=[
@@ -263,6 +279,8 @@ class PurchaseOrderOut(BaseModel):
                     uom_name=line.uom_name,
                     uom_factor=line.uom_factor,
                     unit_cost_cents=line.unit_cost_cents,
+                    tax_code=line.tax_code,
+                    vat_cents=line.vat_cents,
                     total_cost_cents=line.total_cost_cents,
                 )
                 for line in po.lines

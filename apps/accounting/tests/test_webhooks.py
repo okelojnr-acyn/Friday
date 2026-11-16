@@ -268,3 +268,50 @@ async def test_payroll_paid_requires_kernel_token(client, principal):
         json={"org_id": principal.org_id, "payload": {"payroll_run_id": str(uuid.uuid4()), "amount_cents": 1000}},
     )
     assert resp.status_code == 401
+
+
+async def test_a_till_sale_books_revenue_without_its_vat_and_money_where_it_went(client, kernel_auth_header, principal):
+    # 1,160 with 16% VAT inside (160): 700 cash, 460 M-Pesa.
+    resp = await client.post(
+        "/internal/webhooks/invoice-paid",
+        headers=kernel_auth_header,
+        json={
+            "org_id": principal.org_id,
+            "payload": {
+                "invoice_id": str(uuid.uuid4()),
+                "invoice_number": "POS-VAT-1",
+                "subtotal_cents": 116000,
+                "tax_cents": 0,
+                "vat_cents": 16000,
+                "payments": [{"method": "cash", "amount_cents": 70000}, {"method": "mpesa", "amount_cents": 46000}],
+                "lines": [],
+            },
+        },
+    )
+    assert resp.status_code == 204
+    entry = (await _journal_entries(client))[0]
+    assert entry["total_debit_cents"] == entry["total_credit_cents"] == 116000
+    by = {line["account_id"]: line for line in entry["lines"]}
+    assert by[await _account_id(client, "1010")]["debit_cents"] == 70000
+    assert by[await _account_id(client, "1020")]["debit_cents"] == 46000
+    assert by[await _account_id(client, "4000")]["credit_cents"] == 100000
+    assert by[await _account_id(client, "2200")]["credit_cents"] == 16000
+
+
+async def test_goods_received_book_stock_input_vat_and_what_is_owed(client, kernel_auth_header, principal):
+    po_id = str(uuid.uuid4())
+    body = {
+        "org_id": principal.org_id,
+        "payload": {"purchase_order_id": po_id, "po_number": "PO-1", "supplier_name": "Mumias", "supplier_invoice_no": "INV-77", "net_cents": 500000, "vat_cents": 80000},
+    }
+    assert (await client.post("/internal/webhooks/purchase-received", headers=kernel_auth_header, json=body)).status_code == 204
+    entries = await _journal_entries(client)
+    assert len(entries) == 1 and entries[0]["source"] == "inventory"
+    by = {line["account_id"]: line for line in entries[0]["lines"]}
+    assert by[await _account_id(client, "1400")]["debit_cents"] == 500000
+    assert by[await _account_id(client, "1500")]["debit_cents"] == 80000
+    assert by[await _account_id(client, "2000")]["credit_cents"] == 580000
+    # Delivered twice, booked once.
+    body["id"] = str(uuid.uuid4())
+    await client.post("/internal/webhooks/purchase-received", headers=kernel_auth_header, json=body)
+    assert len(await _journal_entries(client)) == 1

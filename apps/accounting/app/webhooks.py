@@ -23,6 +23,20 @@ from .models import JournalEntry, JournalLine
 
 webhooks_router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
 
+# Payment method -> the account the money lands in.
+MONEY_ACCOUNT = {
+    "cash": "1010",
+    "refund": "1010",  # a till refund comes out of the drawer
+    "pos": "1010",
+    "mpesa": "1020",
+    "pesapal": "1020",
+    "airtel": "1020",
+    "card": "1030",
+    "bank_transfer": "1030",
+    "bank": "1030",
+    "stripe": "1030",
+}
+
 
 async def _already_posted(session: AsyncSession, org_id: uuid.UUID, source: str, source_ref: str) -> bool:
     """Webhook delivery is at-least-once (kernel/internal/gateway/events.go's
@@ -67,11 +81,26 @@ async def invoice_paid(body: dict, session: AsyncSession = Depends(get_session))
     amount_cents = subtotal_cents + tax_cents
     if amount_cents == 0:
         return
+    # The VAT inside the amount (Invoicing works it out per line, prices
+    # with VAT inside or not). Revenue is the amount less VAT. An event
+    # from before 2026-11-16 has no vat_cents: its tax_cents was the VAT.
+    vat_cents = payload.get("vat_cents")
+    if vat_cents is None:
+        vat_cents = tax_cents
+    net_cents = amount_cents - vat_cents
 
     await ensure_default_accounts(session, org_id)
-    cash = await get_account_by_code(session, org_id, "1010")
     revenue = await get_account_by_code(session, org_id, "4000")
     tax_payable = await get_account_by_code(session, org_id, "2200")
+    # Where the money went: one debit (or credit, for a refund) per
+    # payment method, when the payments add up to the amount.
+    payments = payload.get("payments") or []
+    if not payments or sum(int(p.get("amount_cents", 0)) for p in payments) != amount_cents:
+        payments = [{"method": "cash", "amount_cents": amount_cents}]
+    money: dict[str, int] = {}
+    for p in payments:
+        code = MONEY_ACCOUNT.get(p.get("method", ""), "1010")
+        money[code] = money.get(code, 0) + int(p.get("amount_cents", 0))
 
     now = datetime.now(UTC)
     entry = JournalEntry(
@@ -89,38 +118,89 @@ async def invoice_paid(body: dict, session: AsyncSession = Depends(get_session))
     await session.flush()
 
     cash_is_debit = amount_cents > 0
-    session.add(
-        JournalLine(
-            org_id=org_id,
-            journal_entry_id=entry.id,
-            account_id=cash.id,
-            debit_cents=abs(amount_cents) if cash_is_debit else 0,
-            credit_cents=0 if cash_is_debit else abs(amount_cents),
-            description="Cash received" if cash_is_debit else "Cash refunded",
+    for code, cents in money.items():
+        if not cents:
+            continue
+        account = await get_account_by_code(session, org_id, code)
+        session.add(
+            JournalLine(
+                org_id=org_id,
+                journal_entry_id=entry.id,
+                account_id=account.id,
+                debit_cents=cents if cents > 0 else 0,
+                credit_cents=-cents if cents < 0 else 0,
+                description=("Received" if cents > 0 else "Refunded") + f" ({account.name})",
+            )
         )
-    )
-    if subtotal_cents:
+    if net_cents:
         session.add(
             JournalLine(
                 org_id=org_id,
                 journal_entry_id=entry.id,
                 account_id=revenue.id,
-                debit_cents=0 if cash_is_debit else abs(subtotal_cents),
-                credit_cents=abs(subtotal_cents) if cash_is_debit else 0,
-                description="Sales revenue" if cash_is_debit else "Sales revenue reversal",
+                debit_cents=0 if cash_is_debit else abs(net_cents),
+                credit_cents=abs(net_cents) if cash_is_debit else 0,
+                description="Sales revenue (excl. VAT)" if cash_is_debit else "Sales revenue reversal",
             )
         )
-    if tax_cents:
+    if vat_cents:
         session.add(
             JournalLine(
                 org_id=org_id,
                 journal_entry_id=entry.id,
                 account_id=tax_payable.id,
-                debit_cents=0 if cash_is_debit else abs(tax_cents),
-                credit_cents=abs(tax_cents) if cash_is_debit else 0,
-                description="Sales tax payable" if cash_is_debit else "Sales tax payable reversal",
+                debit_cents=0 if cash_is_debit else abs(vat_cents),
+                credit_cents=abs(vat_cents) if cash_is_debit else 0,
+                description="VAT on sales" if cash_is_debit else "VAT on sales reversal",
             )
         )
+    await session.commit()
+
+
+@webhooks_router.post("/purchase-received", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def purchase_received(body: dict, session: AsyncSession = Depends(get_session)):
+    """Subscribed to inventory.purchase.received: goods in from a supplier.
+    Dr Inventory Asset (cost excl. VAT), Dr VAT Input (the VAT charged,
+    claimable on the VAT return), Cr Accounts Payable (what is owed). Paying
+    the supplier is booked when it happens (a manual entry for now)."""
+    payload = body.get("payload", {})
+    org_id = uuid.UUID(body["org_id"])
+    await set_org_context(session, str(org_id))
+    if not await first_delivery(session, body):
+        return
+    ref = payload.get("purchase_order_id") or ""
+    if ref and await _already_posted(session, org_id, "inventory", ref):
+        return
+    net_cents = int(payload.get("net_cents", 0) or 0)
+    vat_cents = int(payload.get("vat_cents", 0) or 0)
+    if net_cents == 0 and vat_cents == 0:
+        return
+
+    await ensure_default_accounts(session, org_id)
+    inventory_asset = await get_account_by_code(session, org_id, "1400")
+    vat_input = await get_account_by_code(session, org_id, "1500")
+    payable = await get_account_by_code(session, org_id, "2000")
+
+    now = datetime.now(UTC)
+    supplier = payload.get("supplier_name") or "supplier"
+    entry = JournalEntry(
+        org_id=org_id,
+        number=_new_entry_number(now),
+        entry_date=now.date(),
+        memo=f"Goods received {payload.get('po_number', '')} from {supplier}"
+        + (f", invoice {payload['supplier_invoice_no']}" if payload.get("supplier_invoice_no") else ""),
+        source="inventory",
+        source_ref=ref,
+        status="posted",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(entry)
+    await session.flush()
+    session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=inventory_asset.id, debit_cents=net_cents, credit_cents=0, description="Stock received (excl. VAT)"))
+    if vat_cents:
+        session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=vat_input.id, debit_cents=vat_cents, credit_cents=0, description="VAT on purchases"))
+    session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=payable.id, debit_cents=0, credit_cents=net_cents + vat_cents, description=f"Owed to {supplier}"))
     await session.commit()
 
 

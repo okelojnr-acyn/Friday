@@ -21,9 +21,18 @@ from .models import Account
 # run.
 DEFAULT_ACCOUNTS = (
     ("1010", "Cash", "asset"),
+    # Money that never sits in the drawer (2026-11-16): M-Pesa and
+    # Pesapal in one, card and bank in another, so the cash count and the
+    # cash account agree.
+    ("1020", "M-Pesa", "asset"),
+    ("1030", "Card and bank", "asset"),
     ("1200", "Accounts Receivable", "asset"),
     ("1400", "Inventory Asset", "asset"),
-    ("2200", "Tax Payable", "liability"),
+    # VAT paid on purchases, claimed back on the VAT return.
+    ("1500", "VAT Input (claimable)", "asset"),
+    ("2000", "Accounts Payable", "liability"),
+    # VAT charged on sales, owed to KRA (named "Tax Payable" before).
+    ("2200", "VAT Output (payable)", "liability"),
     ("3000", "Owner's Equity", "equity"),
     ("4000", "Sales Revenue", "income"),
     ("5000", "Cost of Goods Sold", "expense"),

@@ -23,6 +23,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .etims import router as etims_router
+from .purchases import price_purchase_vat, publish_purchase_received
+from .purchases import router as purchases_router
 from .uom import fixed_factor, settle_units
 from .uom import router as uoms_router
 from .models import (
@@ -155,6 +157,7 @@ resource(
             FieldSpec("name", "Name", "text", required=True),
             FieldSpec("email", "Email", "email"),
             FieldSpec("phone", "Phone", "phone"),
+            FieldSpec("kra_pin", "KRA PIN", "text"),
             FieldSpec("created_at", "Added", "datetime", form_visible=False),
         ),
     )
@@ -627,6 +630,8 @@ async def create_purchase_order(
     po = PurchaseOrder(
         org_id=_org(principal),
         supplier_id=body.supplier_id,
+        supplier_invoice_no=body.supplier_invoice_no.strip(),
+        supplier_invoice_date=body.supplier_invoice_date,
         number=f"PO-{now:%Y%m}-{uuid.uuid4().hex[:6].upper()}",
         status="draft",
         created_at=now,
@@ -647,6 +652,7 @@ async def create_purchase_order(
                 uom_name=uom_name,
                 uom_factor=factor,
                 unit_cost_cents=line.unit_cost_cents,
+                tax_code=line.tax_code,
             )
         )
     await session.commit()
@@ -677,6 +683,10 @@ async def set_purchase_order_status(
     previous_status = po.status
     po.status = body.status
     po.updated_at = datetime.now(UTC)
+    if body.supplier_invoice_no is not None:
+        po.supplier_invoice_no = body.supplier_invoice_no.strip()
+    if body.supplier_invoice_date is not None:
+        po.supplier_invoice_date = body.supplier_invoice_date
 
     # Receiving a PO is the one side effect: each line carrying a
     # product_id bumps that product's on_hand_qty and writes a StockMove,
@@ -707,8 +717,14 @@ async def set_purchase_order_status(
                 )
             )
 
+    received_now = previous_status != "received" and body.status == "received"
+    if received_now:
+        po.received_at = po.updated_at
+        await price_purchase_vat(session, principal.org_id, po)
     await session.commit()
     await session.refresh(po, attribute_names=["lines"])
+    if received_now:
+        await publish_purchase_received(session, principal.org_id, po)
     return PurchaseOrderOut.from_model(po)
 
 
@@ -781,6 +797,7 @@ async def create_warehouse(
 
 app.include_router(products_router)
 app.include_router(etims_router)
+app.include_router(purchases_router)
 # Stock levels are not importable: on_hand_qty moves only through stock
 # moves. Import the catalogue, then count stock with adjustments.
 app.include_router(
