@@ -63,3 +63,16 @@ def kernel_auth_header():
     """The header a webhook route guarded by `require_kernel_token`
     expects -- see apps/invoicing/app/webhooks.py."""
     return {"Authorization": f"Bearer {get_settings().kernel_events_token}"}
+
+
+@pytest.fixture
+async def a_till(client, principal, as_principal):
+    """One till set up in Business settings, as an admin would: the POS
+    never makes one up, so a test that opens a shift needs it."""
+    from dataclasses import replace
+
+    as_principal(replace(principal, role="admin"))
+    r = await client.post("/pos/registers", json={"name": "Till 1"})
+    assert r.status_code == 201, r.text
+    as_principal(principal)
+    return r.json()["id"]

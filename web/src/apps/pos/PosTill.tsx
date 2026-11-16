@@ -75,8 +75,8 @@ export function PosTill({ onClockOut, onSwitchCashier }: { onClockOut: () => voi
   const register = registers.find((r) => r.id === registerId) ?? null;
   const active = registers.filter((r) => r.active);
 
-  // No till chosen and several to pick from (or asked to switch).
-  if ((!register && active.length > 1) || choosing) {
+  // No till chosen and none or several to pick from (or asked to switch).
+  if ((!register && active.length !== 1) || choosing) {
     return (
       <ChooseRegister
         registers={registers}
@@ -86,8 +86,8 @@ export function PosTill({ onClockOut, onSwitchCashier }: { onClockOut: () => voi
           setRegisterId(r.id);
           setShift(r.open_shift);
           setChoosing(false);
-          setRegisters((rs) => (rs && !rs.some((x) => x.id === r.id) ? [...rs, r] : rs));
         }}
+        onBack={register && choosing ? () => setChoosing(false) : undefined}
       />
     );
   }
@@ -98,7 +98,7 @@ export function PosTill({ onClockOut, onSwitchCashier }: { onClockOut: () => voi
         register={register}
         onOpened={(s) => {
           setShift(s);
-          // A first open with no tills made "Main till": learn its id.
+          // Opened without naming a till (the org's only one): learn its id.
           if (!register && s.register_id) {
             setDeviceRegisterId(s.register_id);
             setRegisterId(s.register_id);

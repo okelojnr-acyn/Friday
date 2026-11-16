@@ -75,7 +75,10 @@ export function PosPage({
   const settings = useOrgSettings();
   const inclusive = settings.prices_include_tax;
   const engineRate = inclusive ? 0 : settings.tax_rate_bp;
-  const taxLabel = `VAT ${settings.tax_rate_bp / 100}%${inclusive ? " (included)" : ""}`;
+  const taxLabel =
+    settings.tax && !settings.tax.vat_registered
+      ? "No VAT (not registered)"
+      : `VAT ${settings.tax_rate_bp / 100}%${inclusive ? " (included)" : ""}`;
 
   const [ready, setReady] = useState(false);
   const cartRef = useRef<PosCart | null>(null);
@@ -336,6 +339,9 @@ export function PosPage({
         payments: tenders.map((t) => ({ method: t.method, cents: t.method === "cash" ? t.cents + change : t.cents })),
         changeCents: change,
         currency: settings.currency,
+        taxPin: settings.tax?.receipt_show_pin ? settings.tax.tax_pin : "",
+        showTax: settings.tax ? settings.tax.vat_registered && settings.tax.receipt_show_breakdown : true,
+        footer: settings.tax?.receipt_footer,
       });
     }
 

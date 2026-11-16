@@ -4,11 +4,31 @@ import { useAuth } from "./auth";
 
 /** Organisation settings every screen needs (kernel GET /orgs/settings):
  * the currency money is shown in, and how tax works at the till. */
+export interface TaxRate {
+  code: string;
+  name: string;
+  rate_bp: number;
+}
+
+/** Business settings > Tax (kernel core.orgs.tax_profile). The till's
+ * tax_rate_bp follows from it: the default rate when VAT-registered. */
+export interface TaxProfile {
+  vat_registered: boolean;
+  tax_pin: string;
+  default_code: string;
+  rates: TaxRate[];
+  receipt_show_pin: boolean;
+  receipt_show_breakdown: boolean;
+  receipt_footer: string;
+}
+
 export interface OrgSettings {
   name: string;
   currency: string;
   tax_rate_bp: number;
   prices_include_tax: boolean;
+  /** Missing on a kernel older than the Tax section. */
+  tax?: TaxProfile;
 }
 
 // Until the org's own settings arrive, money shows in the default the

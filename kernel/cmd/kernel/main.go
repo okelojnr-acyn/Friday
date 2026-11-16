@@ -14,10 +14,10 @@ import (
 	"github.com/acyn-innovation/friday/kernel/internal/db"
 	"github.com/acyn-innovation/friday/kernel/internal/gateway"
 	"github.com/acyn-innovation/friday/kernel/internal/guss"
+	"github.com/acyn-innovation/friday/kernel/internal/importsource"
 	"github.com/acyn-innovation/friday/kernel/internal/integrations"
 	"github.com/acyn-innovation/friday/kernel/internal/mail"
 	"github.com/acyn-innovation/friday/kernel/internal/org"
-	"github.com/acyn-innovation/friday/kernel/internal/importsource"
 	"github.com/acyn-innovation/friday/kernel/internal/orgexport"
 	"github.com/acyn-innovation/friday/kernel/internal/registry"
 )
@@ -141,6 +141,9 @@ func main() {
 	orgSettings := &org.Settings{Pool: pool}
 	mux.Handle("GET /orgs/settings", requireAuth(http.HandlerFunc(orgSettings.Get)))
 	mux.Handle("PUT /orgs/settings", requireAuth(http.HandlerFunc(orgSettings.Put)))
+	orgEtims := &org.Etims{Pool: pool}
+	mux.Handle("GET /orgs/etims", requireAuth(http.HandlerFunc(orgEtims.Get)))
+	mux.Handle("PUT /orgs/etims", requireAuth(http.HandlerFunc(orgEtims.Put)))
 	mux.Handle("GET /orgs/apps", requireAuth(http.HandlerFunc(catalog.List)))
 	mux.Handle("POST /orgs/apps/{app}/install", requireAuth(catalog.SetInstalled(true)))
 	mux.Handle("DELETE /orgs/apps/{app}/install", requireAuth(catalog.SetInstalled(false)))

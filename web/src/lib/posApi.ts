@@ -35,7 +35,10 @@ export const listRegisters = () => api.get<PosRegister[]>("/api/invoicing/pos/re
 export const createRegister = (name: string, locationName: string) =>
   api.post<PosRegister>("/api/invoicing/pos/registers", { name, location_name: locationName });
 
-// registerId null: the org's only till (made on first use).
+export const updateRegister = (id: string, patch: { name?: string; location_name?: string; active?: boolean }) =>
+  api.patch<PosRegister>(`/api/invoicing/pos/registers/${id}`, patch);
+
+// registerId null: the org's only till (set up in Business settings).
 export const openShift = (registerId: string | null, openingFloatCents: number) =>
   api.post<PosShift>("/api/invoicing/pos/shifts/open", {
     register_id: registerId,

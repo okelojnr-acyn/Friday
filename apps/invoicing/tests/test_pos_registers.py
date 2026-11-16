@@ -87,7 +87,7 @@ async def test_an_offline_sale_keeps_its_own_time(client):
     assert t <= time.time() + 1
 
 
-async def test_a_return_at_the_till_comes_out_of_the_drawer(client):
+async def test_a_return_at_the_till_comes_out_of_the_drawer(client, a_till):
     shift = (await client.post("/pos/shifts/open", json={"opening_float_cents": 10000})).json()
     sold = (await client.post("/pos/sales", json=sale(3000, "cash", shift["id"]))).json()
     ret = await client.post(f"/pos/sales/{sold['number']}/return?shift_id={shift['id']}")
@@ -103,13 +103,21 @@ async def test_only_admins_make_registers_and_a_shift_from_elsewhere_is_refused(
     assert r.status_code == 422
 
 
-async def test_a_one_till_shop_needs_no_set_up(client):
-    # No registers yet: opening makes "Main till", and an old till build's
-    # sale (no shift_id) joins the one open shift.
+async def test_the_till_never_makes_up_a_register(client, as_principal, principal):
+    # No tills set up: opening is refused with where to add one.
+    r = await client.post("/pos/shifts/open", json={"opening_float_cents": 0})
+    assert r.status_code == 400 and "Business settings" in r.json()["detail"]
+    assert (await client.get("/pos/registers")).json() == []
+
+
+async def test_a_one_till_shop_needs_no_choice(client, as_principal, principal):
+    # One till set up: a request naming none uses it, and an old till
+    # build's sale (no shift_id) joins its open shift.
+    await make_registers(client, as_principal, principal, "Till 1")
     shift = (await client.post("/pos/shifts/open", json={"opening_float_cents": 0})).json()
     await client.post("/pos/sales", json=sale(900, "cash"))
     regs = (await client.get("/pos/registers")).json()
-    assert [r["name"] for r in regs] == ["Main till"]
+    assert [r["name"] for r in regs] == ["Till 1"]
     closed = (await client.post(f"/pos/shifts/{shift['id']}/close", json={"closing_count_cents": 900})).json()
     assert closed["expected_cents"] == 900
 
