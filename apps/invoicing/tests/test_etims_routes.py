@@ -96,7 +96,8 @@ async def test_a_pin_added_after_the_sale(client, admin):
     assert [r["id"] for r in (await client.get("/etims/invoices")).json()] == [made["id"]]
 
 
-async def test_a_return_is_a_credit_note_naming_the_sale(client, admin, a_till):
+async def test_a_return_is_a_credit_note_naming_the_sale(client, a_till, admin):
+    # a_till signs back in as a member; admin comes after it.
     shift = (await client.post("/pos/shifts/open", json={"opening_float_cents": 0})).json()
     made = (await client.post("/pos/sales", json=sale("P051234567X", shift_id=shift["id"]))).json()
     await client.post(f"/etims/invoices/{made['id']}/filed", json={"etims_invoice_no": "KRA-1"})
