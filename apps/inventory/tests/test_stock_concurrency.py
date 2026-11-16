@@ -43,8 +43,8 @@ async def test_one_product_on_two_lines_and_a_half_unit(client, kernel_auth_head
         [{"product_id": p["id"], "quantity": 2}, {"product_id": p["id"], "quantity": 1}, {"product_id": p["id"], "quantity": 0.5}],
     )
     await client.post("/internal/webhooks/pos-sale", headers=kernel_auth_header, json=body)
-    # 2 + 1 + 0.5 rounds to 4 (half a unit counts as one).
-    assert await stock(client, p["id"]) == 6
+    # 2 + 1 + 0.5 = 3.5 exactly (units, 2026-11-16: nothing is rounded).
+    assert await stock(client, p["id"]) == 6.5
 
 
 async def test_a_return_puts_stock_back(client, kernel_auth_header, principal):

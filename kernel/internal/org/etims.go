@@ -1,6 +1,7 @@
 package org
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -21,17 +22,26 @@ import (
 // (cmc_key_set says whether there is one).
 type Etims struct {
 	Pool *pgxpool.Pool
+	// InternalToken guards GET /internal/etims/{org_id}, which the
+	// Invoicing app reads (with the CMC key) to talk to KRA.
+	InternalToken string
+	// Automation is on only when the server sets ETIMS_AUTOMATION=1
+	// (after the production checks). Until then sales are filed by hand
+	// in KRA's eTIMS portal and "enabled" cannot be switched on.
+	Automation bool
 }
 
 type etimsView struct {
-	Enabled      bool       `json:"enabled"`
-	Environment  string     `json:"environment"`
-	Mode         string     `json:"mode"`
-	BranchID     string     `json:"branch_id"`
-	DeviceSerial string     `json:"device_serial"`
-	VSCUURL      string     `json:"vscu_url"`
-	CMCKeySet    bool       `json:"cmc_key_set"`
-	UpdatedAt    *time.Time `json:"updated_at"`
+	Enabled      bool   `json:"enabled"`
+	Environment  string `json:"environment"`
+	Mode         string `json:"mode"`
+	BranchID     string `json:"branch_id"`
+	DeviceSerial string `json:"device_serial"`
+	VSCUURL      string `json:"vscu_url"`
+	CMCKeySet    bool   `json:"cmc_key_set"`
+	// AutomationAvailable: this server may send sales to KRA itself.
+	AutomationAvailable bool       `json:"automation_available"`
+	UpdatedAt           *time.Time `json:"updated_at"`
 	// From Tax settings, shown so the owner sees what KRA will be told.
 	TaxPIN string `json:"tax_pin"`
 }
@@ -55,7 +65,7 @@ func etimsCaller(w http.ResponseWriter, r *http.Request) (string, bool) {
 }
 
 func (e *Etims) load(r *http.Request, orgID string) (etimsView, error) {
-	v := etimsView{Environment: "sandbox", Mode: "oscu", BranchID: "00"}
+	v := etimsView{Environment: "sandbox", Mode: "oscu", BranchID: "00", AutomationAvailable: e.Automation}
 	var cmc string
 	var updated time.Time
 	err := e.Pool.QueryRow(r.Context(), `
@@ -175,6 +185,10 @@ func (e *Etims) Put(w http.ResponseWriter, r *http.Request) {
 		cmc = &k
 		cur.CMCKeySet = true
 	}
+	if cur.Enabled && !e.Automation {
+		bad("sending sales to KRA automatically is not switched on for this server yet; file them in the eTIMS portal and record each invoice number in Friday")
+		return
+	}
 	if cur.Enabled {
 		switch {
 		case cur.TaxPIN == "":
@@ -203,4 +217,42 @@ func (e *Etims) Put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeSettingsJSON(w, http.StatusOK, v)
+}
+
+// GetInternal serves the full eTIMS configuration, CMC key included, to
+// Friday's own apps (Bearer KERNEL_EVENTS_TOKEN), never to a browser.
+func (e *Etims) GetInternal(w http.ResponseWriter, r *http.Request) {
+	if e.InternalToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+e.InternalToken)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	orgID := r.PathValue("org_id")
+	v, err := e.load(r, orgID)
+	if err != nil {
+		writeSettingsJSON(w, http.StatusNotFound, map[string]string{"error": "organisation not found"})
+		return
+	}
+	var cmc, name string
+	var raw []byte
+	var inclusive bool
+	e.Pool.QueryRow(r.Context(), `SELECT cmc_key FROM core.org_etims WHERE org_id = $1`, orgID).Scan(&cmc)
+	e.Pool.QueryRow(r.Context(), `SELECT name, tax_profile, prices_include_tax FROM core.orgs WHERE id = $1`, orgID).Scan(&name, &raw, &inclusive)
+	tax := DefaultTaxProfile()
+	json.Unmarshal(raw, &tax)
+	writeSettingsJSON(w, http.StatusOK, map[string]any{
+		"enabled":              v.Enabled && e.Automation,
+		"environment":          v.Environment,
+		"mode":                 v.Mode,
+		"branch_id":            v.BranchID,
+		"device_serial":        v.DeviceSerial,
+		"vscu_url":             v.VSCUURL,
+		"cmc_key":              cmc,
+		"tax_pin":              v.TaxPIN,
+		"business_name":        name,
+		"vat_registered":       tax.VATRegistered,
+		"default_code":         tax.DefaultCode,
+		"rates":                tax.Rates,
+		"prices_include_tax":   inclusive,
+		"automation_available": e.Automation,
+	})
 }

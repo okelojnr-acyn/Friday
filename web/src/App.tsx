@@ -12,6 +12,8 @@ import { IntegrationsSettingsPage } from "./shell/IntegrationsSettingsPage";
 import { MembersSettingsPage } from "./shell/MembersSettingsPage";
 import { ImportPage } from "./shell/ImportPage";
 import { BusinessSettingsPage } from "./shell/BusinessSettingsPage";
+import { EtimsFilingPage } from "./shell/EtimsFilingPage";
+import { UnitsPage } from "./apps/inventory/UnitsPage";
 import { ResourcePage, AppIndexRedirect } from "./shell/ResourcePage";
 import { TreasuryPage } from "./apps/web3/TreasuryPage";
 import { MarketPage } from "./apps/web3/MarketPage";
@@ -35,6 +37,8 @@ export default function App() {
           <Route path="/settings/members" element={<MembersSettingsPage />} />
           <Route path="/settings/import" element={<ImportPage />} />
           <Route path="/settings/business" element={<BusinessSettingsPage />} />
+          <Route path="/etims" element={<EtimsFilingPage />} />
+          <Route path="/inventory/unit_of_measure" element={<UnitsPage />} />
           {/* POS moved to its own installable mini-app (web/pos.html,
               apps/pos/PosApp.tsx) -- gated behind a biometric cashier
               clock-in that only makes sense as a dedicated entry, same

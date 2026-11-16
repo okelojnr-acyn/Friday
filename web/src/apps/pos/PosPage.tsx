@@ -14,6 +14,9 @@ import { chooseSerialDrawer, drawerMode, openDrawer, serialSupported, setDrawerM
 import { PosNumpad } from "./PosNumpad";
 import { PosPayment, type Tender } from "./PosPayment";
 import { printReceipt } from "./receipt";
+import { BuyerPin, type Buyer } from "./BuyerPin";
+import { lineTotalCents, tillTotals } from "./tax";
+import { fmtQty, unitLabel, useUnits } from "../../lib/units";
 import { ProductTile, VariantPicker } from "./ProductTile";
 import { ProductEditor } from "../inventory/ProductEditor";
 import { ReturnsPanel } from "./ReturnsPanel";
@@ -28,19 +31,19 @@ interface CartLine {
   unit_cost_cents: number | null;
 }
 
-function lineTotalCents(line: CartLine): number {
-  return Math.round((line.quantity * line.unit_price_cents * (10_000 - line.discount_bp)) / 10_000);
-}
 
 interface Sale {
   client_sale_id: string;
-  lines: CartLine[];
+  lines: (CartLine & { [extra: string]: unknown })[];
   currency: string;
   method: string;
   amount_cents: number;
   created_at_ms: number;
   payments?: { method: string; amount_cents: number }[];
   shift_id?: string;
+  buyer_pin?: string;
+  buyer_name?: string;
+  prices_include_tax?: boolean;
 }
 
 type ShelfProduct = Product;
@@ -74,17 +77,19 @@ export function PosPage({
   const { session } = useAuth();
   const settings = useOrgSettings();
   const inclusive = settings.prices_include_tax;
-  const engineRate = inclusive ? 0 : settings.tax_rate_bp;
-  const taxLabel =
-    settings.tax && !settings.tax.vat_registered
-      ? "No VAT (not registered)"
-      : `VAT ${settings.tax_rate_bp / 100}%${inclusive ? " (included)" : ""}`;
+  // VAT is worked out per line here (tax.ts), by each product's tax type;
+  // the engine keeps the order and its discounts.
+  const engineRate = 0;
 
   const [ready, setReady] = useState(false);
   const cartRef = useRef<PosCart | null>(null);
   const queueRef = useRef<PosOfflineQueue | null>(null);
   const [lines, setLines] = useState<CartLine[]>([]);
-  const [totals, setTotals] = useState({ subtotal: 0, tax: 0, total: 0 });
+  const [buyer, setBuyer] = useState<Buyer | null>(null);
+  // Units: a product is sold in its sales unit (a kilo, a crate); stock
+  // comes off in base units (sales_factor each).
+  const { byId: unitById } = useUnits();
+  const salesUnitOf = (p: Product | undefined) => (p ? unitById.get(p.sales_uom_id ?? "") : undefined);
   const [products, setProducts] = useState<ShelfProduct[]>([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
@@ -132,14 +137,6 @@ export function PosPage({
     const cart = cartRef.current;
     if (!cart) return;
     setLines(JSON.parse(cart.lines_json()));
-    const total = Number(cart.total_cents());
-    setTotals({
-      subtotal: Number(cart.subtotal_cents()),
-      // Prices with VAT inside: the engine adds none, and the VAT part of
-      // the total is shown.
-      tax: inclusive ? Math.round((total * settings.tax_rate_bp) / (10_000 + settings.tax_rate_bp)) : Number(cart.tax_cents()),
-      total,
-    });
   }
 
   /** pos-engine has append/remove/clear only, so editing a line rebuilds
@@ -182,7 +179,9 @@ export function PosPage({
       rebuildCart(lines.map((l, j) => (j === i ? { ...l, quantity: l.quantity + 1 } : l)));
       setSelected(i);
     } else {
-      cart.add_line(product.name, 1, BigInt(product.price_cents), product.id, product.cost_cents ? BigInt(product.cost_cents) : undefined);
+      // Cost is kept per base unit; the line is per sales unit.
+      const unitCost = product.cost_cents ? Math.round(product.cost_cents * (product.sales_factor ?? 1)) : 0;
+      cart.add_line(product.name, 1, BigInt(product.price_cents), product.id, unitCost ? BigInt(unitCost) : undefined);
       refreshCart();
       setSelected(lines.length);
     }
@@ -284,6 +283,44 @@ export function PosPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
+  /** What the engine's sale doesn't know: each line's tax type, VAT and
+   * eTIMS item details, the total with VAT, and the buyer's KRA PIN. */
+  function annotate(sale: Sale): Sale {
+    const t = tillTotals(sale.lines, (id) => (id ? byId.get(id)?.tax_code ?? "" : ""), settings);
+    const out: Sale = {
+      ...sale,
+      amount_cents: t.total,
+      prices_include_tax: inclusive,
+      lines: sale.lines.map((l, i) => {
+        const p = l.product_id ? byId.get(l.product_id) : undefined;
+        const sold = salesUnitOf(p);
+        const baseUnit = p ? unitById.get(p.base_uom_id ?? "") : undefined;
+        const factor = p?.sales_factor ?? 1;
+        // eTIMS: the sold unit's KRA code, else the base unit's (with the
+        // quantity in base units), else pieces.
+        const kra = sold?.etims_code
+          ? { etims_quantity_unit: sold.etims_code }
+          : baseUnit?.etims_code
+            ? { etims_quantity_unit: baseUnit.etims_code, etims_qty_factor: factor }
+            : {};
+        return {
+          ...l,
+          ...(p ? { uom: unitLabel(sold), uom_factor: factor, ...kra } : {}),
+          tax_code: t.lines[i].code,
+          vat_cents: t.lines[i].vat_cents,
+          ...(p?.etims_item_code ? { etims_item_code: p.etims_item_code } : {}),
+          ...(p?.etims_item_class ? { etims_item_class: p.etims_item_class } : {}),
+          ...(p?.etims_packaging_unit ? { etims_packaging_unit: p.etims_packaging_unit } : {}),
+        };
+      }),
+    };
+    if (buyer?.pin) {
+      out.buyer_pin = buyer.pin;
+      out.buyer_name = buyer.name;
+    }
+    return out;
+  }
+
   async function onPaid(tenders: Tender[], change: number) {
     const cart = cartRef.current;
     const queue = queueRef.current;
@@ -299,7 +336,7 @@ export function PosPage({
       setError(err instanceof Error ? err.message : "Could not build the sale");
       return;
     }
-    const sale: Sale = { ...JSON.parse(saleJson), shift_id: shift.id };
+    const sale: Sale = annotate({ ...JSON.parse(saleJson), shift_id: shift.id });
     queue.enqueue_json(JSON.stringify(sale));
     persistQueue();
 
@@ -311,6 +348,7 @@ export function PosPage({
     setBuffer("");
     refreshCart();
     setPaying(false);
+    setBuyer(null);
 
     // The drawer opens for cash only. A direct (serial) drawer opens now;
     // with the printer's driver doing it, printing the receipt opens it.
@@ -340,6 +378,11 @@ export function PosPage({
         changeCents: change,
         currency: settings.currency,
         taxPin: settings.tax?.receipt_show_pin ? settings.tax.tax_pin : "",
+        buyerPin: buyer?.pin,
+        buyerName: buyer?.name,
+        taxLines: totals.byCode
+          .filter((c) => c.rate_bp > 0 || totals.byCode.length > 1)
+          .map((c) => ({ label: `${c.code} ${c.name} ${c.rate_bp / 100}%`, cents: c.vat_cents })),
         showTax: settings.tax ? settings.tax.vat_registered && settings.tax.receipt_show_breakdown : true,
         footer: settings.tax?.receipt_footer,
       });
@@ -364,7 +407,7 @@ export function PosPage({
     setError(null);
     let sale: Sale;
     try {
-      sale = { ...JSON.parse(cart.checkout_json(settings.currency, "pesapal", Date.now())), shift_id: shift.id };
+      sale = annotate({ ...JSON.parse(cart.checkout_json(settings.currency, "pesapal", Date.now())), shift_id: shift.id });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not build the sale");
       return;
@@ -414,6 +457,16 @@ export function PosPage({
     return m;
   }, [products]);
   const byId = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  const totals = useMemo(
+    () => tillTotals(lines, (id) => (id ? byId.get(id)?.tax_code ?? "" : ""), settings),
+    [lines, byId, settings],
+  );
+  const registered = settings.tax ? settings.tax.vat_registered : true;
+  const taxLabel = !registered
+    ? "No VAT (not registered)"
+    : totals.byCode.filter((c) => c.rate_bp > 0).length > 1
+      ? `VAT${inclusive ? " (included)" : ""}`
+      : `VAT ${(totals.byCode.find((c) => c.rate_bp > 0)?.rate_bp ?? settings.tax_rate_bp) / 100}%${inclusive ? " (included)" : ""}`;
   const categoryOf = (p: ShelfProduct) =>
     (p.category?.trim() || (p.variant_of ? byId.get(p.variant_of)?.category?.trim() : "") || "").trim();
   const categories = useMemo(
@@ -466,6 +519,7 @@ export function PosPage({
         pesapal={payWithPesapal}
         onCancel={() => setPaying(false)}
         onPaid={onPaid}
+        buyer={<BuyerPin value={buyer} onChange={setBuyer} />}
       />
     );
   }
@@ -621,7 +675,12 @@ export function PosPage({
                     <span className="till-line-name">{line.description}</span>
                     <span className="till-line-amount">{formatMoney(lineTotalCents(line))}</span>
                     <span className="till-line-sub">
-                      <b>{line.quantity}</b> × {formatMoney(line.unit_price_cents)}
+                      <b>{fmtQty(line.quantity)}</b>
+                      {(() => {
+                        const u = unitLabel(salesUnitOf(line.product_id ? byId.get(line.product_id) : undefined));
+                        return u && u !== "pc" ? ` ${u}` : "";
+                      })()}{" "}
+                      × {formatMoney(line.unit_price_cents)}
                       {line.discount_bp > 0 ? ` · ${line.discount_bp / 100}% off` : ""}
                     </span>
                   </div>

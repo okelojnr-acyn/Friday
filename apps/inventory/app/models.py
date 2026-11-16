@@ -34,6 +34,16 @@ class UnitOfMeasure(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     abbreviation: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 0012: preloaded units carry a code ("kg"); custom ones have "".
+    code: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    category: Mapped[str] = mapped_column(Text, nullable=False, default="unit")
+    # Size against the category's reference (kg, L, m, piece): 1 g = 0.001.
+    # None for a pack (carton, crate) whose size each product sets.
+    ratio: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    etims_code: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Benched units stay on products that use them but leave the pickers.
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sort: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -62,10 +72,11 @@ class Product(Base):
     variant_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     price_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     cost_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    on_hand_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # In the base unit, three decimals (0012).
+    on_hand_qty: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False, default=0)
     # Cheap equivalent of Odoo's reordering rules: a visible threshold,
     # not a replenishment engine with purchase orders.
-    reorder_point: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reorder_point: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False, default=0)
     # Some products (services, one-off items) never carry stock -- their
     # on_hand_qty stays meaningless and POS/sales shouldn't decrement it.
     track_inventory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -88,6 +99,29 @@ class Product(Base):
     # 0005_warehouses_and_uom.sql's comment. "standard" (cost_cents
     # as-is) is the only method any code path actually uses today.
     valuation_method: Mapped[str] = mapped_column(String(16), nullable=False, default="standard")
+    # Units (0012): stock is kept in base_uom; one purchase unit holds
+    # purchase_factor base units, one sales unit sales_factor. price_cents
+    # is per sales unit, cost_cents per base unit. uom_id and
+    # uom_conversion_factor above are the old single unit, kept readable.
+    base_uom_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True
+    )
+    purchase_uom_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True
+    )
+    purchase_factor: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False, default=1)
+    sales_uom_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True
+    )
+    sales_factor: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False, default=1)
+    # KRA eTIMS (0011): tax type A-E ("" = the business's default rate),
+    # item classification, packaging unit, and the item code eTIMS knows
+    # the product by once registered.
+    tax_code: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_item_class: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_packaging_unit: Mapped[str] = mapped_column(Text, nullable=False, default="NT")
+    etims_item_code: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -121,7 +155,7 @@ class StockMove(Base):
         UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False
     )
     product_name: Mapped[str] = mapped_column(Text, nullable=False)
-    qty_delta: Mapped[int] = mapped_column(Integer, nullable=False)
+    qty_delta: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="manual_adjustment")
     reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # Which warehouse this move happened at -- defaults to the product's
@@ -186,11 +220,17 @@ class PurchaseOrderLine(Base):
         UUID(as_uuid=True), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
     )
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # In the line's own unit (0012); receiving adds quantity x uom_factor.
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False, default=1)
+    uom_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True
+    )
+    uom_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    uom_factor: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False, default=1)
     unit_cost_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
     purchase_order: Mapped["PurchaseOrder"] = relationship(back_populates="lines")
 
     @property
     def total_cost_cents(self) -> int:
-        return self.quantity * self.unit_cost_cents
+        return int((Decimal(self.quantity) * self.unit_cost_cents).to_integral_value())

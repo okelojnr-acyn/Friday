@@ -1,4 +1,5 @@
 import type { Product } from "../../lib/inventory";
+import { unitLabel, useUnits } from "../../lib/units";
 import { formatMoney } from "../../lib/orgSettings";
 import { categoryTint, useProductImage } from "../../lib/productImages";
 
@@ -25,6 +26,8 @@ export function ProductTile({
   onPick: () => void;
 }) {
   const photo = useProductImage(product);
+  const { byId: unitById } = useUnits();
+  const per = unitLabel(unitById.get(product.sales_uom_id ?? ""));
   const tint = categoryTint(category, categories);
   const priced = variants.length ? variants : [product];
   const from = Math.min(...priced.map((v) => v.price_cents));
@@ -56,6 +59,7 @@ export function ProductTile({
           <span className="till-tile-price">
             {variants.length ? <span className="till-tile-from">from </span> : null}
             {formatMoney(from)}
+            {per && per !== "pc" ? <span className="till-tile-from"> /{per}</span> : null}
           </span>
           {tracked && !variants.length ? (
             <span className={`till-tile-stock${low ? " low" : ""}`}>{stock} left</span>

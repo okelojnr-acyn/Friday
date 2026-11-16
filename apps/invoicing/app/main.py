@@ -1,5 +1,6 @@
 import logging
 import uuid
+from decimal import Decimal
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -50,6 +51,9 @@ from .schemas import (
     QuoteCreate,
     QuoteStatusUpdate,
 )
+from friday_common.etims import normalize_pin
+
+from .etims_routes import router as etims_router
 from .registers import router as registers_router
 from .registers import shift_for_sale
 from .webhooks import external_router
@@ -502,6 +506,7 @@ async def _apply_pos_sale_lines(
             discount_bp=discount_bp,
             unit_cost_cents=line.get("unit_cost_cents"),
             product_id=uuid.UUID(product_id) if product_id else None,
+            **_etims_line_fields(line),
         )
         session.add(invoice_line)
         total_cents += invoice_line.total_cents
@@ -525,9 +530,38 @@ async def _apply_pos_sale_lines(
                 description="Tax" if adjustment_cents > 0 else "Discount",
                 quantity=1,
                 unit_price_cents=adjustment_cents,
+                is_adjustment=True,
             )
         )
+    # eTIMS: the buyer's KRA PIN (a business buying) and how the till
+    # priced the sale.
+    invoice.buyer_pin = normalize_pin(body.get("buyer_pin"))[:20]
+    invoice.buyer_name = str(body.get("buyer_name") or "").strip()[:120]
+    if isinstance(body.get("prices_include_tax"), bool):
+        invoice.prices_include_tax = body["prices_include_tax"]
     return charged_cents
+
+
+def _etims_line_fields(line: dict) -> dict:
+    """The tax type, VAT and eTIMS item details the till put on a line."""
+
+    def text_field(key: str, limit: int) -> str:
+        return str(line.get(key) or "").strip()[:limit]
+
+    vat = line.get("vat_cents")
+    factor = line.get("uom_factor")
+    efactor = line.get("etims_qty_factor")
+    return {
+        "uom_name": text_field("uom", 12),
+        "uom_factor": Decimal(str(factor)) if isinstance(factor, (int, float, str)) and str(factor) else None,
+        "etims_qty_factor": Decimal(str(efactor)) if isinstance(efactor, (int, float)) and efactor > 0 else Decimal(1),
+        "tax_code": text_field("tax_code", 4).upper(),
+        "vat_cents": int(vat) if isinstance(vat, (int, float)) else 0,
+        "item_code": text_field("etims_item_code", 20),
+        "item_class": text_field("etims_item_class", 10),
+        "quantity_unit": text_field("etims_quantity_unit", 5),
+        "packaging_unit": text_field("etims_packaging_unit", 5),
+    }
 
 
 def _sale_time(body: dict) -> datetime:
@@ -833,8 +867,22 @@ async def return_pos_sale(
                 discount_bp=line.discount_bp,
                 unit_cost_cents=line.unit_cost_cents,
                 product_id=line.product_id,
+                tax_code=line.tax_code,
+                vat_cents=-line.vat_cents,
+                is_adjustment=line.is_adjustment,
+                item_code=line.item_code,
+                item_class=line.item_class,
+                quantity_unit=line.quantity_unit,
+                packaging_unit=line.packaging_unit,
+                uom_name=line.uom_name,
+                uom_factor=line.uom_factor,
+                etims_qty_factor=line.etims_qty_factor,
             )
         )
+    # A credit note on eTIMS names the same buyer as the sale.
+    refund.buyer_pin = original.buyer_pin
+    refund.buyer_name = original.buyer_name
+    refund.prices_include_tax = original.prices_include_tax
 
     session.add(
         Payment(
@@ -1163,5 +1211,6 @@ app.include_router(quotes_router)
 app.include_router(reports_router)
 app.include_router(pos_router)
 app.include_router(registers_router)
+app.include_router(etims_router)
 app.include_router(webhooks_router)
 app.include_router(external_router)

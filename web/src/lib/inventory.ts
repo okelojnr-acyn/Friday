@@ -15,6 +15,20 @@ export interface Product {
   cost_cents: number;
   on_hand_qty: number;
   track_inventory: boolean;
+  reorder_point?: number;
+  /** Stock is kept in the base unit; one purchase/sales unit holds
+   * purchase_factor/sales_factor base units. Price is per sales unit,
+   * cost per base unit. */
+  base_uom_id?: string | null;
+  purchase_uom_id?: string | null;
+  purchase_factor?: number;
+  sales_uom_id?: string | null;
+  sales_factor?: number;
+  /** eTIMS tax type A-E; "" = the business's default rate. */
+  tax_code?: string;
+  etims_item_class?: string;
+  etims_packaging_unit?: string;
+  etims_item_code?: string;
 }
 
 /** Best-effort: the inventory app may not be installed for this org, in

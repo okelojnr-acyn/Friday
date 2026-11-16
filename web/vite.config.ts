@@ -44,7 +44,24 @@ function manageManifestLink(): Plugin {
 // scripts/setup.sh / README.md), imported by relative path -- Vite
 // handles the .wasm asset and the generated JS glue natively, no plugin
 // needed.
+// One id per build: the commit on Vercel, else the build time. The app
+// compares it with /version.json to offer a reload after a release
+// (ui/NewVersionBanner.tsx).
+const BUILD_ID = process.env.VERCEL_GIT_COMMIT_SHA || process.env.GITHUB_SHA || String(Date.now());
+
+function versionFile(): Plugin {
+  return {
+    name: "friday-version-file",
+    apply: "build",
+    generateBundle() {
+      this.emitFile({ type: "asset", fileName: "version.json", source: JSON.stringify({ build: BUILD_ID }) });
+    },
+  };
+}
+
 export default defineConfig({
+  // In dev there is no version.json, so the check finds nothing to do.
+  define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   plugins: [
     react(),
     // VitePWA generates manifest.webmanifest + sw.js once for the whole
@@ -103,6 +120,7 @@ export default defineConfig({
       },
     }),
     manageManifestLink(),
+    versionFile(),
   ],
   build: {
     rollupOptions: {
