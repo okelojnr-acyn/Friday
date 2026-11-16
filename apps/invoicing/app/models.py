@@ -179,6 +179,10 @@ class InvoiceLine(Base):
     item_class: Mapped[str] = mapped_column(Text, nullable=False, default="")
     quantity_unit: Mapped[str] = mapped_column(Text, nullable=False, default="")
     packaging_unit: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Units (0013): the unit sold in and base units per one of it.
+    uom_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    uom_factor: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
+    etims_qty_factor: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False, default=1)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="lines")
 

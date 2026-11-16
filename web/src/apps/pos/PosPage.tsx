@@ -16,6 +16,7 @@ import { PosPayment, type Tender } from "./PosPayment";
 import { printReceipt } from "./receipt";
 import { BuyerPin, type Buyer } from "./BuyerPin";
 import { lineTotalCents, tillTotals } from "./tax";
+import { fmtQty, unitLabel, useUnits } from "../../lib/units";
 import { ProductTile, VariantPicker } from "./ProductTile";
 import { ProductEditor } from "../inventory/ProductEditor";
 import { ReturnsPanel } from "./ReturnsPanel";
@@ -85,6 +86,10 @@ export function PosPage({
   const queueRef = useRef<PosOfflineQueue | null>(null);
   const [lines, setLines] = useState<CartLine[]>([]);
   const [buyer, setBuyer] = useState<Buyer | null>(null);
+  // Units: a product is sold in its sales unit (a kilo, a crate); stock
+  // comes off in base units (sales_factor each).
+  const { byId: unitById } = useUnits();
+  const salesUnitOf = (p: Product | undefined) => (p ? unitById.get(p.sales_uom_id ?? "") : undefined);
   const [products, setProducts] = useState<ShelfProduct[]>([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
@@ -174,7 +179,9 @@ export function PosPage({
       rebuildCart(lines.map((l, j) => (j === i ? { ...l, quantity: l.quantity + 1 } : l)));
       setSelected(i);
     } else {
-      cart.add_line(product.name, 1, BigInt(product.price_cents), product.id, product.cost_cents ? BigInt(product.cost_cents) : undefined);
+      // Cost is kept per base unit; the line is per sales unit.
+      const unitCost = product.cost_cents ? Math.round(product.cost_cents * (product.sales_factor ?? 1)) : 0;
+      cart.add_line(product.name, 1, BigInt(product.price_cents), product.id, unitCost ? BigInt(unitCost) : undefined);
       refreshCart();
       setSelected(lines.length);
     }
@@ -286,8 +293,19 @@ export function PosPage({
       prices_include_tax: inclusive,
       lines: sale.lines.map((l, i) => {
         const p = l.product_id ? byId.get(l.product_id) : undefined;
+        const sold = salesUnitOf(p);
+        const baseUnit = p ? unitById.get(p.base_uom_id ?? "") : undefined;
+        const factor = p?.sales_factor ?? 1;
+        // eTIMS: the sold unit's KRA code, else the base unit's (with the
+        // quantity in base units), else pieces.
+        const kra = sold?.etims_code
+          ? { etims_quantity_unit: sold.etims_code }
+          : baseUnit?.etims_code
+            ? { etims_quantity_unit: baseUnit.etims_code, etims_qty_factor: factor }
+            : {};
         return {
           ...l,
+          ...(p ? { uom: unitLabel(sold), uom_factor: factor, ...kra } : {}),
           tax_code: t.lines[i].code,
           vat_cents: t.lines[i].vat_cents,
           ...(p?.etims_item_code ? { etims_item_code: p.etims_item_code } : {}),
@@ -657,7 +675,12 @@ export function PosPage({
                     <span className="till-line-name">{line.description}</span>
                     <span className="till-line-amount">{formatMoney(lineTotalCents(line))}</span>
                     <span className="till-line-sub">
-                      <b>{line.quantity}</b> × {formatMoney(line.unit_price_cents)}
+                      <b>{fmtQty(line.quantity)}</b>
+                      {(() => {
+                        const u = unitLabel(salesUnitOf(line.product_id ? byId.get(line.product_id) : undefined));
+                        return u && u !== "pc" ? ` ${u}` : "";
+                      })()}{" "}
+                      × {formatMoney(line.unit_price_cents)}
                       {line.discount_bp > 0 ? ` · ${line.discount_bp / 100}% off` : ""}
                     </span>
                   </div>

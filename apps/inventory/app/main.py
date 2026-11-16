@@ -1,6 +1,7 @@
 import hashlib
 import math
 import uuid
+from decimal import Decimal
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -22,6 +23,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .etims import router as etims_router
+from .uom import fixed_factor, settle_units
+from .uom import router as uoms_router
 from .models import (
     ProductImage,
     PRODUCT_KINDS,
@@ -48,8 +51,6 @@ from .schemas import (
     StockMoveOut,
     SupplierCreate,
     SupplierOut,
-    UnitOfMeasureCreate,
-    UnitOfMeasureOut,
     WarehouseCreate,
     WarehouseOut,
 )
@@ -184,12 +185,39 @@ moves_router = APIRouter(prefix="/stock_moves", tags=["stock-moves"])
 suppliers_router = APIRouter(prefix="/suppliers", tags=["suppliers"])
 purchase_orders_router = APIRouter(prefix="/purchase_orders", tags=["purchase-orders"])
 warehouses_router = APIRouter(prefix="/warehouses", tags=["warehouses"])
-uoms_router = APIRouter(prefix="/units_of_measure", tags=["units-of-measure"])
 webhooks_router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
 
 
 def _org(principal: Principal) -> uuid.UUID:
     return uuid.UUID(principal.org_id)
+
+
+async def purchase_unit_for(
+    session: AsyncSession, org: uuid.UUID, product_id: uuid.UUID | None, uom_id: uuid.UUID | None, factor: Decimal | None
+) -> tuple[uuid.UUID | None, str, Decimal]:
+    """The unit a purchase order line is in and its base units per unit:
+    as given, or the product's purchase unit. Copied onto the line."""
+    product = await session.get(Product, product_id) if product_id else None
+    if product is not None and product.org_id != org:
+        product = None
+    unit_id = uom_id or (product.purchase_uom_id if product else None)
+    unit = await session.get(UnitOfMeasure, unit_id) if unit_id else None
+    if unit is not None and unit.org_id != org:
+        raise HTTPException(422, "uom_id: that unit isn't in this organisation")
+    if factor is not None:
+        if factor <= 0:
+            raise HTTPException(422, "uom_factor must be more than 0")
+        f = Decimal(factor)
+    elif product is not None and unit is not None and unit.id == product.purchase_uom_id:
+        f = Decimal(product.purchase_factor)
+    elif product is not None and unit is not None and product.base_uom_id:
+        base = await session.get(UnitOfMeasure, product.base_uom_id)
+        f = fixed_factor(base, unit) if base else None
+        if f is None:
+            raise HTTPException(422, f"how many base units are in one {unit.name.lower()}? Give uom_factor")
+    else:
+        f = Decimal(1)
+    return (unit.id if unit else None), (unit.abbreviation or unit.name if unit else ""), f
 
 
 @products_router.get("", response_model=list[ProductOut])
@@ -214,6 +242,9 @@ def _product_fields(body: ProductCreate) -> dict:
     if body.valuation_method not in VALUATION_METHODS:
         raise HTTPException(422, f"valuation_method must be one of {VALUATION_METHODS}")
     data = body.model_dump()
+    for f in ("purchase_factor", "sales_factor"):
+        if data.get(f) is None:
+            data.pop(f, None)  # settle_units works it out
     if body.kind == "service":
         data["track_inventory"] = False
     return data
@@ -228,6 +259,7 @@ async def create_product(
     await _check_variant_of(session, principal, body.variant_of)
     now = datetime.now(UTC)
     product = Product(org_id=_org(principal), created_at=now, updated_at=now, **_product_fields(body))
+    await settle_units(session, _org(principal), product, body.model_dump(exclude_unset=True))
     session.add(product)
     await session.flush()
     if product.on_hand_qty:
@@ -302,7 +334,11 @@ async def update_product(
     if "variant_of" in changes:
         await _check_variant_of(session, principal, changes["variant_of"], product.id)
     for field_name, value in changes.items():
+        if field_name in ("purchase_factor", "sales_factor") and value is None:
+            continue
         setattr(product, field_name, value)
+    if {"base_uom_id", "purchase_uom_id", "sales_uom_id", "purchase_factor", "sales_factor"} & changes.keys() or product.base_uom_id is None:
+        await settle_units(session, _org(principal), product, changes)
     if product.kind == "service":
         product.track_inventory = False
     product.updated_at = datetime.now(UTC)
@@ -400,6 +436,7 @@ async def bulk_create_products(
     for item in body.products:
         await _check_variant_of(session, principal, item.variant_of)
         product = Product(org_id=_org(principal), created_at=now, updated_at=now, **_product_fields(item))
+        await settle_units(session, _org(principal), product, item.model_dump(exclude_unset=True))
         session.add(product)
         created.append(product)
     await session.flush()
@@ -436,7 +473,7 @@ async def adjust_stock(
         raise HTTPException(422, f"reason must be one of {REASONS}")
     product = await _get_owned(session, principal, product_id)
     now = datetime.now(UTC)
-    product.on_hand_qty += body.delta
+    product.on_hand_qty = Decimal(product.on_hand_qty) + body.delta
     product.updated_at = now
     session.add(
         StockMove(
@@ -487,18 +524,26 @@ async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_sess
     reference = str(payload.get("invoice_number", ""))
 
     # One total per product: a sale can carry the same product on two
-    # lines (one discounted). Quantities round to whole units (stock is
-    # counted in units).
-    per_product: dict[str, int] = {}
+    # lines (one discounted). A line is in the unit it was sold in; its
+    # uom_factor (base units per sold unit, copied at sale time) turns it
+    # into base units. A line from before units has none: the product's
+    # sales unit applies (worked out in SQL below). Nothing is rounded to
+    # whole units any more: 0.5 kg takes 0.5 kg off.
+    per_product: dict[str, dict[str, Decimal]] = {}
     for line in payload.get("lines", []):
         product_id = line.get("product_id")
         if not product_id:
             continue
-        q = float(line.get("quantity", 0) or 0)
-        per_product[product_id] = per_product.get(product_id, 0) + int(math.copysign(math.floor(abs(q) + 0.5), q))
+        q = Decimal(str(line.get("quantity", 0) or 0))
+        f = line.get("uom_factor")
+        totals = per_product.setdefault(product_id, {"base": Decimal(0), "sold": Decimal(0)})
+        if f not in (None, ""):
+            totals["base"] += q * Decimal(str(f))
+        else:
+            totals["sold"] += q
 
-    for product_id, qty in per_product.items():
-        if qty == 0:
+    for product_id, totals in per_product.items():
+        if totals["base"] == 0 and totals["sold"] == 0:
             continue
         try:
             pid = uuid.UUID(product_id)
@@ -510,20 +555,22 @@ async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_sess
             text(
                 """
                 INSERT INTO stock_moves (id, org_id, product_id, product_name, qty_delta, reason, reference, warehouse_id, created_at)
-                SELECT gen_random_uuid(), org_id, id, name, :delta, 'pos_sale', :ref, default_warehouse_id, :now
+                SELECT gen_random_uuid(), org_id, id, name, ROUND(-(:base + :sold * sales_factor), 3),
+                       'pos_sale', :ref, default_warehouse_id, :now
                 FROM products WHERE id = :pid AND org_id = :org AND track_inventory
                 ON CONFLICT (org_id, product_id, reference) WHERE reason = 'pos_sale' AND reference <> '' DO NOTHING
-                RETURNING id
+                RETURNING qty_delta
                 """
             ),
-            {"delta": -qty, "ref": reference, "now": now, "pid": pid, "org": org_id},
+            {"base": totals["base"], "sold": totals["sold"], "ref": reference, "now": now, "pid": pid, "org": org_id},
         )
-        if made.first() is None:
+        delta = made.scalar()
+        if delta is None:
             continue  # not a tracked product of this org, or already applied
         # Atomic: two tills selling the same item at once both count.
         await session.execute(
-            text("UPDATE products SET on_hand_qty = on_hand_qty - :qty, updated_at = :now WHERE id = :pid AND org_id = :org"),
-            {"qty": qty, "now": now, "pid": pid, "org": org_id},
+            text("UPDATE products SET on_hand_qty = on_hand_qty + :delta, updated_at = :now WHERE id = :pid AND org_id = :org"),
+            {"delta": delta, "now": now, "pid": pid, "org": org_id},
         )
     await session.commit()
 
@@ -588,6 +635,7 @@ async def create_purchase_order(
     session.add(po)
     await session.flush()
     for line in body.lines:
+        uom_id, uom_name, factor = await purchase_unit_for(session, _org(principal), line.product_id, line.uom_id, line.uom_factor)
         session.add(
             PurchaseOrderLine(
                 org_id=_org(principal),
@@ -595,6 +643,9 @@ async def create_purchase_order(
                 product_id=line.product_id,
                 description=line.description,
                 quantity=line.quantity,
+                uom_id=uom_id,
+                uom_name=uom_name,
+                uom_factor=factor,
                 unit_cost_cents=line.unit_cost_cents,
             )
         )
@@ -639,14 +690,16 @@ async def set_purchase_order_status(
             product = await session.get(Product, line.product_id)
             if product is None or str(product.org_id) != principal.org_id or not product.track_inventory:
                 continue
-            product.on_hand_qty += line.quantity
+            # Ordered in cartons of 24: 2 cartons add 48 base units.
+            base_qty = (Decimal(line.quantity) * Decimal(line.uom_factor)).quantize(Decimal("0.001"))
+            product.on_hand_qty = Decimal(product.on_hand_qty) + base_qty
             product.updated_at = po.updated_at
             session.add(
                 StockMove(
                     org_id=_org(principal),
                     product_id=product.id,
                     product_name=product.name,
-                    qty_delta=line.quantity,
+                    qty_delta=base_qty,
                     reason="received",
                     reference=po.number,
                     warehouse_id=product.default_warehouse_id,
@@ -671,7 +724,11 @@ async def create_purchase_order_from_product(
     for a human to pick a supplier and actually send."""
     product = await _get_owned(session, principal, product_id)
     now = datetime.now(UTC)
-    quantity = max(product.reorder_point * 2 - product.on_hand_qty, 1)
+    # Enough purchase units to reach twice the reorder point (base units).
+    short = Decimal(product.reorder_point) * 2 - Decimal(product.on_hand_qty)
+    per_unit = Decimal(product.purchase_factor or 1)
+    quantity = max(math.ceil(short / per_unit) if short > 0 else 1, 1)
+    uom_id, uom_name, factor = await purchase_unit_for(session, _org(principal), product.id, None, None)
     po = PurchaseOrder(
         org_id=_org(principal),
         number=f"PO-{now:%Y%m}-{uuid.uuid4().hex[:6].upper()}",
@@ -688,7 +745,11 @@ async def create_purchase_order_from_product(
             product_id=product.id,
             description=product.name,
             quantity=quantity,
-            unit_cost_cents=product.cost_cents,
+            uom_id=uom_id,
+            uom_name=uom_name,
+            uom_factor=factor,
+            # cost_cents is per base unit; the line is per purchase unit.
+            unit_cost_cents=int((Decimal(product.cost_cents) * factor).to_integral_value()),
         )
     )
     await session.commit()
@@ -716,30 +777,6 @@ async def create_warehouse(
     await session.commit()
     await session.refresh(warehouse)
     return warehouse
-
-
-@uoms_router.get("", response_model=list[UnitOfMeasureOut])
-async def list_units_of_measure(
-    principal: Principal = Depends(get_current_principal),
-    session: AsyncSession = Depends(get_org_session),
-):
-    rows = await session.execute(
-        select(UnitOfMeasure).where(UnitOfMeasure.org_id == _org(principal)).order_by(UnitOfMeasure.name)
-    )
-    return rows.scalars().all()
-
-
-@uoms_router.post("", response_model=UnitOfMeasureOut, status_code=201)
-async def create_unit_of_measure(
-    body: UnitOfMeasureCreate,
-    principal: Principal = Depends(get_current_principal),
-    session: AsyncSession = Depends(get_org_session),
-):
-    uom = UnitOfMeasure(org_id=_org(principal), created_at=datetime.now(UTC), **body.model_dump())
-    session.add(uom)
-    await session.commit()
-    await session.refresh(uom)
-    return uom
 
 
 app.include_router(products_router)

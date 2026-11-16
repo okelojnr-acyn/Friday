@@ -1,6 +1,7 @@
 import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { GussWidget } from "../ui/GussWidget";
+import { NewVersionBanner } from "../ui/NewVersionBanner";
 import { TopBar } from "../ui/TopBar";
 
 export function RequireAuth() {
@@ -18,6 +19,7 @@ function Layout() {
       <TopBar email={session.email} role={session.role} onLogout={logout} />
       <Outlet />
       <GussWidget />
+      <NewVersionBanner />
     </div>
   );
 }

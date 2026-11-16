@@ -59,6 +59,8 @@ async def publish_pos_sale_recorded(org_id: str, inv: Invoice, charged_cents: in
                     "product_id": str(line.product_id),
                     "quantity": float(line.quantity),
                     "unit_cost_cents": line.unit_cost_cents,
+                    # Base units per sold unit; Inventory multiplies.
+                    **({"uom_factor": float(line.uom_factor)} if line.uom_factor is not None else {}),
                 }
                 for line in inv.lines
                 if line.product_id
