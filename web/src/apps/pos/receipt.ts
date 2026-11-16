@@ -19,6 +19,10 @@ export interface Receipt {
   payments: { method: string; cents: number }[];
   changeCents: number;
   currency: string;
+  /** From Business settings > Tax. */
+  taxPin?: string;
+  showTax?: boolean;
+  footer?: string;
 }
 
 const METHOD_LABEL: Record<string, string> = {
@@ -63,14 +67,15 @@ export function printReceipt(r: Receipt): void {
 </style></head><body>
 <h1>${esc(r.businessName || "Receipt")}</h1>
 <div class="c">${esc(r.registerName)} · ${esc(r.at.toLocaleString())}</div>
+${r.taxPin ? `<div class="c">PIN ${esc(r.taxPin)}</div>` : ""}
 <div class="c">${esc(r.number)} · ${esc(r.cashier)}</div>
 <hr><table>${rows}</table><hr>
 <table>
 <tr class="big"><td>Total</td><td class="r">${m(r.totalCents)}</td></tr>
-<tr><td>${esc(r.taxLabel)}</td><td class="r">${m(r.taxCents)}</td></tr>
+${r.showTax === false ? "" : `<tr><td>${esc(r.taxLabel)}</td><td class="r">${m(r.taxCents)}</td></tr>`}
 ${pays}
 ${r.changeCents > 0 ? `<tr><td>Change</td><td class="r">${m(r.changeCents)}</td></tr>` : ""}
-</table><hr><div class="c">Thank you</div>
+</table><hr><div class="c">${esc(r.footer || "Thank you")}</div>
 </body></html>`;
   const frame = document.createElement("iframe");
   frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";

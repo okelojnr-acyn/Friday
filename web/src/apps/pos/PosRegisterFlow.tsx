@@ -3,7 +3,6 @@ import { ApiError } from "../../lib/api";
 import { formatMoney, useOrgSettings } from "../../lib/orgSettings";
 import {
   closeShift,
-  createRegister,
   keypadToCents,
   openShift,
   type PosRegister,
@@ -76,36 +75,32 @@ function Stage({ title, sub, children, foot }: { title: string; sub?: string; ch
   );
 }
 
-/** Which till is this device? Asked once; remembered on the device. */
+/** Which till is this device? Asked once; remembered on the device.
+ * Tills come from Business settings > Tills; the POS never makes one up. */
 export function ChooseRegister({
   registers,
   canManage,
   onChosen,
+  onBack,
 }: {
   registers: PosRegister[];
   canManage: boolean;
   onChosen: (r: PosRegister) => void;
+  onBack?: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [store, setStore] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const active = registers.filter((r) => r.active);
-
-  async function add() {
-    setBusy(true);
-    setError(null);
-    try {
-      onChosen(await createRegister(name.trim(), store.trim()));
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not add the till.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
-    <Stage title="Which till is this?" sub="Asked once on this device.">
+    <Stage
+      title={active.length ? "Which till is this?" : "No tills set up"}
+      sub={active.length ? "Asked once on this device." : undefined}
+      foot={
+        onBack ? (
+          <button type="button" className="till-chip glass" style={{ cursor: "pointer" }} onClick={onBack}>
+            Back
+          </button>
+        ) : undefined
+      }
+    >
       <div className="till-panel glass">
         {active.map((r) => (
           <button key={r.id} type="button" className="till-btn" style={{ textAlign: "left", padding: "0 18px" }} onClick={() => onChosen(r)}>
@@ -114,18 +109,21 @@ export function ChooseRegister({
             {r.open_shift ? <span style={{ float: "right", color: "#1f6e44" }}>open</span> : null}
           </button>
         ))}
-        {canManage ? (
-          <>
-            <h2 style={{ fontSize: 18, marginTop: 8 }}>Add a till</h2>
-            <input className="till-input" placeholder="Till name, e.g. Till 2" value={name} onChange={(e) => setName(e.target.value)} />
-            <input className="till-input" placeholder="Store, e.g. Westlands" value={store} onChange={(e) => setStore(e.target.value)} />
-            {error ? <div className="till-error" style={{ margin: 0 }}>{error}</div> : null}
-            <button type="button" className="till-btn primary" disabled={!name.trim() || busy} onClick={add}>
-              Add and use this till
-            </button>
-          </>
-        ) : active.length === 0 ? (
-          <p className="till-text">No tills yet. Ask an owner or admin to sign in here and add one.</p>
+        {active.length === 0 ? (
+          canManage ? (
+            <>
+              <p className="till-text">Add your tills in Friday under Business settings, Tills. Then come back here.</p>
+              <a className="till-btn primary" style={{ display: "grid", placeItems: "center", textDecoration: "none" }} href="/settings/business?tab=tills">
+                Open Business settings
+              </a>
+            </>
+          ) : (
+            <p className="till-text">No tills yet. Ask an owner or admin to add them in Business settings, Tills.</p>
+          )
+        ) : canManage ? (
+          <p className="till-text" style={{ fontSize: 14 }}>
+            Missing a till? Add it in Friday under Business settings, Tills.
+          </p>
         ) : null}
       </div>
     </Stage>
@@ -154,7 +152,7 @@ export function OpenRegister({
   const amount = useAmountEntry();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const title = register?.name ?? "Main till";
+  const title = register?.name ?? "Till";
 
   async function open() {
     setBusy(true);
@@ -200,7 +198,7 @@ export function OpenRegister({
           <h2>Cash in the drawer</h2>
           <p className="till-text">Count the float you're starting with. Enter 0 if the drawer is empty.</p>
           <div className="till-amount">{formatMoney(amount.cents)}</div>
-          <PosNumpad onKey={amount.key} onBackspace={amount.back} />
+          <PosNumpad onKey={amount.key} onBackspace={amount.back} keyboard={{ onEnter: () => !busy && open() }} />
           {error ? <div className="till-error" style={{ margin: 0 }}>{error}</div> : null}
           <div className="till-panel-actions">
             <button type="button" className="till-btn" onClick={() => setCounting(false)}>
@@ -315,7 +313,7 @@ export function CloseRegister({
           </div>
         ) : null}
         <div className="till-amount">{formatMoney(amount.cents)}</div>
-        <PosNumpad onKey={amount.key} onBackspace={amount.back} />
+        <PosNumpad onKey={amount.key} onBackspace={amount.back} keyboard />
         <input className="till-input" placeholder="Note (optional), e.g. KSh 200 paid for delivery" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} />
         {error ? <div className="till-error" style={{ margin: 0 }}>{error}</div> : null}
         <div className="till-panel-actions">

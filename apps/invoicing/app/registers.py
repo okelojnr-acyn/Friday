@@ -28,7 +28,7 @@ from .schemas import PosShiftOut
 
 router = APIRouter(prefix="/pos", tags=["pos-registers"])
 
-DEFAULT_REGISTER = "Main till"
+NO_TILLS = "no tills set up yet: an owner or admin adds them in Friday under Business settings > Tills"
 
 
 class RegisterIn(BaseModel):
@@ -81,8 +81,9 @@ async def _register(session: AsyncSession, principal: Principal, register_id: uu
 
 
 async def _default_register(session: AsyncSession, principal: Principal) -> PosRegister:
-    """The org's only register, made on first use: a shop with one till
-    never has to set registers up."""
+    """The org's only till, when a request names none. Tills are set up
+    by an owner or admin (Business settings > Tills); the POS never makes
+    one up (owner, 2026-11-16)."""
     rows = await session.execute(
         select(PosRegister).where(PosRegister.org_id == _org(principal), PosRegister.active).order_by(
             PosRegister.created_at
@@ -93,10 +94,7 @@ async def _default_register(session: AsyncSession, principal: Principal) -> PosR
         return regs[0]
     if len(regs) > 1:
         raise HTTPException(400, "this organisation has several registers; choose which one this till is")
-    reg = PosRegister(org_id=_org(principal), name=DEFAULT_REGISTER, created_at=datetime.now(UTC))
-    session.add(reg)
-    await session.flush()
-    return reg
+    raise HTTPException(400, NO_TILLS)
 
 
 @router.get("/registers", response_model=list[RegisterOut])
@@ -195,7 +193,6 @@ async def current_shift(
 ):
     reg = await _register(session, principal, register_id) if register_id else await _default_register(session, principal)
     shift = await _open_shift(session, _org(principal), reg.id)
-    await session.commit()  # keeps a just-made default register
     if shift is None:
         raise HTTPException(404, "no open shift")
     return shift

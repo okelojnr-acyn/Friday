@@ -1,9 +1,14 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { ApiError } from "../lib/api";
 import { formatMoney, saveOrgSettings, useOrgSettings } from "../lib/orgSettings";
 import { Button } from "../ui/Button";
-import { Checkbox, FieldWrap, Input, Select } from "../ui/Field";
+import { Checkbox, FieldWrap, Select } from "../ui/Field";
+import { EtimsSection } from "./business/EtimsSection";
+import { SaveRow } from "./business/SaveRow";
+import { TaxSection } from "./business/TaxSection";
+import { TillsSection } from "./business/TillsSection";
 
 const CURRENCIES = [
   ["KES", "Kenyan shilling"],
@@ -19,94 +24,99 @@ const CURRENCIES = [
   ["GBP", "British pound"],
 ] as const;
 
-/** Settings > Business: the currency every amount is shown in, and how
- * tax works at the till (kernel /orgs/settings). */
+const TABS = [
+  ["general", "General"],
+  ["tax", "Tax"],
+  ["etims", "eTIMS"],
+  ["tills", "Tills"],
+] as const;
+type Tab = (typeof TABS)[number][0];
+
+/** Settings > Business: currency and shelf prices (General), VAT and
+ * receipts (Tax), KRA eTIMS, and the tills a POS can be (Tills). */
 export function BusinessSettingsPage() {
   const { session } = useAuth();
-  const settings = useOrgSettings();
   const canEdit = session?.role === "owner" || session?.role === "admin";
+  const [params, setParams] = useSearchParams();
+  const raw = params.get("tab");
+  const tab: Tab = TABS.some(([id]) => id === raw) ? (raw as Tab) : "general";
+
+  return (
+    <div className="page" style={{ maxWidth: 820 }}>
+      <div className="page-header">
+        <h1 className="page-title">Business settings</h1>
+      </div>
+      <div role="tablist" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+        {TABS.map(([id, label]) => (
+          <Button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            variant={tab === id ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => setParams(id === "general" ? {} : { tab: id }, { replace: true })}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+      {tab === "general" ? <GeneralSection canEdit={canEdit} /> : null}
+      {tab === "tax" ? <TaxSection canEdit={canEdit} /> : null}
+      {tab === "etims" ? <EtimsSection canEdit={canEdit} /> : null}
+      {tab === "tills" ? <TillsSection canEdit={canEdit} /> : null}
+    </div>
+  );
+}
+
+function GeneralSection({ canEdit }: { canEdit: boolean }) {
+  const settings = useOrgSettings();
   const [currency, setCurrency] = useState(settings.currency);
-  const [rate, setRate] = useState(String(settings.tax_rate_bp / 100));
   const [inclusive, setInclusive] = useState(settings.prices_include_tax);
   const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setCurrency(settings.currency);
-    setRate(String(settings.tax_rate_bp / 100));
     setInclusive(settings.prices_include_tax);
   }, [settings]);
 
   async function save() {
     setSaving(true);
     setError(null);
-    setNotice(null);
-    const pct = Number.parseFloat(rate);
-    if (!Number.isFinite(pct) || pct < 0 || pct > 50) {
-      setError("Tax rate must be between 0 and 50%.");
-      setSaving(false);
-      return;
-    }
     try {
-      await saveOrgSettings({ currency, tax_rate_bp: Math.round(pct * 100), prices_include_tax: inclusive });
+      await saveOrgSettings({ currency, prices_include_tax: inclusive });
       // Every screen reads these once; reload so all of them pick it up.
       window.location.reload();
-      setNotice("Saved.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save.");
-    } finally {
       setSaving(false);
     }
   }
 
   const example = 116000;
   return (
-    <div className="page" style={{ maxWidth: 720 }}>
-      <div className="page-header">
-        <h1 className="page-title">Business settings</h1>
-      </div>
-      {error ? <div className="error-banner" style={{ marginBottom: 16 }}>{error}</div> : null}
-      {notice ? <div className="field-label" style={{ marginBottom: 16 }}>{notice}</div> : null}
-      <div className="card card-padded form-grid">
-        <FieldWrap label="Currency">
-          <Select value={currency} onChange={(e) => setCurrency(e.target.value)} disabled={!canEdit}>
-            {CURRENCIES.map(([code, label]) => (
-              <option key={code} value={code}>
-                {code} · {label}
-              </option>
-            ))}
-            {CURRENCIES.some(([c]) => c === currency) ? null : <option value={currency}>{currency}</option>}
-          </Select>
-        </FieldWrap>
-        <FieldWrap label="VAT / sales tax (%)">
-          <Input
-            inputMode="decimal"
-            value={rate}
-            onChange={(e) => setRate(e.target.value)}
-            disabled={!canEdit}
-            style={{ width: 120 }}
-          />
-        </FieldWrap>
-        <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <Checkbox checked={inclusive} onChange={(e) => setInclusive(e.target.checked)} disabled={!canEdit} />
-          Shelf prices already include VAT
-        </label>
-        <p className="field-label" style={{ maxWidth: "60ch" }}>
-          {inclusive
-            ? `An item priced ${formatMoney(example, { currency })} costs the customer exactly that; the receipt shows the VAT inside it.`
-            : `An item priced ${formatMoney(example, { currency })} costs the customer that plus VAT at the till.`}
-        </p>
-        {canEdit ? (
-          <div>
-            <Button variant="primary" onClick={save} disabled={saving}>
-              {saving ? "Saving…" : "Save"}
-            </Button>
-          </div>
-        ) : (
-          <p className="field-label">Only owners and admins can change these.</p>
-        )}
-      </div>
+    <div className="card card-padded form-grid">
+      {error ? <div className="error-banner">{error}</div> : null}
+      <FieldWrap label="Currency">
+        <Select value={currency} onChange={(e) => setCurrency(e.target.value)} disabled={!canEdit}>
+          {CURRENCIES.map(([code, label]) => (
+            <option key={code} value={code}>
+              {code} · {label}
+            </option>
+          ))}
+          {CURRENCIES.some(([c]) => c === currency) ? null : <option value={currency}>{currency}</option>}
+        </Select>
+      </FieldWrap>
+      <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <Checkbox checked={inclusive} onChange={(e) => setInclusive(e.target.checked)} disabled={!canEdit} />
+        Shelf prices already include VAT
+      </label>
+      <p className="field-label" style={{ maxWidth: "60ch" }}>
+        {inclusive
+          ? `An item priced ${formatMoney(example, { currency })} costs the customer exactly that; the receipt shows the VAT inside it.`
+          : `An item priced ${formatMoney(example, { currency })} costs the customer that plus VAT at the till.`}
+      </p>
+      <SaveRow canEdit={canEdit} saving={saving} onSave={save} />
     </div>
   );
 }

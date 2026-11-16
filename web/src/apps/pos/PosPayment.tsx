@@ -22,6 +22,8 @@ function quickAmounts(due: number): number[] {
 
 /** Taking payment. Pick a method and its line takes what's still due;
  * the keypad changes the selected line (what the customer handed over).
+ * Typing on the keyboard does the same: "1500" keys in 1,500, Enter
+ * validates, Escape goes back to the order.
  * Several methods split the bill. Only cash can be over the amount due:
  * the difference is change. */
 export function PosPayment({
@@ -213,7 +215,11 @@ export function PosPayment({
               ))}
             </div>
           ) : null}
-          <PosNumpad onKey={key} onBackspace={back} />
+          <PosNumpad
+            onKey={key}
+            onBackspace={back}
+            keyboard={{ onEnter: () => valid && validate(), onEscape: onCancel }}
+          />
           {over > cashIn ? <div className="till-error" style={{ margin: 0 }}>Only cash can be more than the amount due.</div> : null}
           <button type="button" className="till-pay" style={{ margin: 0 }} disabled={!valid} onClick={validate}>
             <span>Validate</span>

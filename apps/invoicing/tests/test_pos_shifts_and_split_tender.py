@@ -1,3 +1,9 @@
+import pytest
+
+# Each test runs with one till set up (Business settings > Tills).
+pytestmark = pytest.mark.usefixtures("a_till")
+
+
 async def test_open_shift(client):
     resp = await client.post("/pos/shifts/open", json={"opening_float_cents": 10000})
     assert resp.status_code == 201

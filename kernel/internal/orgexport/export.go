@@ -37,6 +37,7 @@ var skip = map[string]bool{
 	"core.webauthn_credentials":    true, // passkeys
 	"core.webauthn_challenges":     true,
 	"core.otp_codes":               true,
+	"core.org_etims":               true, // holds the KRA CMC key
 }
 
 // Included reports whether schema.table is exported.
