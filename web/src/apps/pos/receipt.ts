@@ -23,6 +23,11 @@ export interface Receipt {
   taxPin?: string;
   showTax?: boolean;
   footer?: string;
+  /** A business buying: its KRA PIN goes on the receipt and the eTIMS invoice. */
+  buyerPin?: string;
+  buyerName?: string;
+  /** VAT by tax type, when the sale has more than one. */
+  taxLines?: { label: string; cents: number }[];
 }
 
 const METHOD_LABEL: Record<string, string> = {
@@ -69,10 +74,17 @@ export function printReceipt(r: Receipt): void {
 <div class="c">${esc(r.registerName)} · ${esc(r.at.toLocaleString())}</div>
 ${r.taxPin ? `<div class="c">PIN ${esc(r.taxPin)}</div>` : ""}
 <div class="c">${esc(r.number)} · ${esc(r.cashier)}</div>
+${r.buyerPin ? `<div class="c">Buyer PIN ${esc(r.buyerPin)}${r.buyerName ? ` · ${esc(r.buyerName)}` : ""}</div>` : ""}
 <hr><table>${rows}</table><hr>
 <table>
 <tr class="big"><td>Total</td><td class="r">${m(r.totalCents)}</td></tr>
-${r.showTax === false ? "" : `<tr><td>${esc(r.taxLabel)}</td><td class="r">${m(r.taxCents)}</td></tr>`}
+${
+  r.showTax === false
+    ? ""
+    : r.taxLines && r.taxLines.length > 1
+      ? r.taxLines.map((t) => `<tr><td>VAT ${esc(t.label)}</td><td class="r">${m(t.cents)}</td></tr>`).join("")
+      : `<tr><td>${esc(r.taxLabel)}</td><td class="r">${m(r.taxCents)}</td></tr>`
+}
 ${pays}
 ${r.changeCents > 0 ? `<tr><td>Change</td><td class="r">${m(r.changeCents)}</td></tr>` : ""}
 </table><hr><div class="c">${esc(r.footer || "Thank you")}</div>

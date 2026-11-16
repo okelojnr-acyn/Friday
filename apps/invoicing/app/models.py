@@ -83,6 +83,21 @@ class Invoice(Base):
     pos_shift_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("pos_shifts.id"), nullable=True
     )
+    # KRA eTIMS (0012).
+    buyer_pin: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    buyer_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    prices_include_tax: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    etims_status: Mapped[str] = mapped_column(Text, nullable=False, default="unfiled")
+    etims_via: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_invoice_no: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_trader_no: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    etims_receipt_sign: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_internal_data: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_sdc_time: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_filed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    etims_filed_by: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -130,7 +145,7 @@ class InvoiceLine(Base):
         UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False
     )
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=1)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False, default=1)
     unit_price_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     # Basis points (1/100 of a percent) so a line can carry its own tax
     # rate instead of record_pos_sale's old single synthetic "Tax" line --
@@ -152,6 +167,18 @@ class InvoiceLine(Base):
     # (pos_router.return_pos_sale) restock the right product. Plain
     # column, no FK -- see 0003_pos_returns.sql's comment.
     product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # eTIMS (0012): the line's tax type A-E ("" = the org's default) and
+    # the VAT inside the price or on top of it, as the till worked it out.
+    # Informational: totals still come from total_cents/tax_cents and the
+    # till's reconciling line, so old sales add up as before.
+    tax_code: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    vat_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # The till's "Tax"/"Discount" reconciling line, not an item sold.
+    is_adjustment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    item_code: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    item_class: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    quantity_unit: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    packaging_unit: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     invoice: Mapped["Invoice"] = relationship(back_populates="lines")
 

@@ -21,6 +21,7 @@ from friday_common import (
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .etims import router as etims_router
 from .models import (
     ProductImage,
     PRODUCT_KINDS,
@@ -82,6 +83,9 @@ resource(
             FieldSpec("uom_id", "Unit of measure", "reference", reference="inventory.unit_of_measure", list_visible=False),
             FieldSpec("uom_conversion_factor", "UoM conversion factor", "number", list_visible=False),
             FieldSpec("valuation_method", "Valuation method", "select", options=VALUATION_METHODS, list_visible=False),
+            FieldSpec("tax_code", "Tax type (eTIMS)", "select", options=("", "A", "B", "C", "D", "E"), list_visible=False),
+            FieldSpec("etims_item_class", "eTIMS item classification", "text", list_visible=False),
+            FieldSpec("etims_packaging_unit", "eTIMS packaging unit", "text", list_visible=False),
         ),
     )
 )
@@ -739,6 +743,7 @@ async def create_unit_of_measure(
 
 
 app.include_router(products_router)
+app.include_router(etims_router)
 # Stock levels are not importable: on_hand_qty moves only through stock
 # moves. Import the catalogue, then count stock with adjustments.
 app.include_router(
