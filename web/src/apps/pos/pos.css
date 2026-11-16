@@ -767,3 +767,121 @@
   font-size: 18px;
   font-weight: 700;
 }
+
+/* Cashier PIN (plan section 11) */
+.till-pin-people {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.till-pin-person {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 14px 10px;
+  border-radius: 14px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+.till-pin-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  background: rgba(0, 0, 0, 0.07);
+}
+.till-pin-locked {
+  font-size: 12px;
+  color: #b42318;
+}
+.till-pin-dots {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+.till-pin-dots span {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  opacity: 0.5;
+}
+.till-pin-dots span.on {
+  background: currentColor;
+  opacity: 1;
+}
+.till-pin-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  max-width: 300px;
+  margin: 0 auto;
+  width: 100%;
+}
+.till-pin-sheet {
+  max-height: 88vh;
+  overflow: auto;
+  text-align: left;
+}
+.till-pin-section {
+  margin-top: 18px;
+}
+.till-pin-section h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+}
+.till-pin-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.till-pin-input {
+  width: 110px;
+  padding: 10px 12px;
+  font-size: 18px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  background: #fff;
+  color: var(--text);
+}
+.till-pin-input.wide {
+  width: 180px;
+}
+.till-pin-ok {
+  color: #067647;
+  font-size: 14px;
+}
+.till-pin-err {
+  color: #b42318;
+  font-size: 14px;
+}
+.till-pin-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.till-pin-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.035);
+}
+.till-pin-list.compact li {
+  padding: 5px 10px;
+  font-size: 14px;
+}
+.till-pin-list small {
+  opacity: 0.7;
+}

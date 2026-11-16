@@ -7,6 +7,7 @@ import {
 } from "@simplewebauthn/browser";
 import { ApiError } from "./api";
 import { clearSession, loadSession, saveSession } from "./session";
+import { pinLogin } from "./posPin";
 import type { Session } from "./types";
 
 import { KERNEL_URL } from "./runtimeConfig";
@@ -81,6 +82,8 @@ interface AuthContextValue {
   /** `token` overrides the current session's, for a caller that just
    * signed someone in and can't wait for React to re-render. */
   addPasskey: (opts?: { platformOnly?: boolean; token?: string }) => Promise<void>;
+  /** Cashier PIN on a trusted till (lib/posPin.ts): a POS-only session. */
+  loginWithPin: (userId: string, pin: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -202,6 +205,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [session],
   );
 
+  const loginWithPin = useCallback(
+    async (userId: string, pin: string) => {
+      applyAuthResponse(await pinLogin(userId, pin));
+    },
+    [applyAuthResponse],
+  );
+
   const logout = useCallback(() => {
     clearSession();
     setSession(null);
@@ -219,6 +229,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       verifyPosCode,
       loginWithPasskey,
       addPasskey,
+      loginWithPin,
       logout,
     }),
     [
@@ -232,6 +243,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       verifyPosCode,
       loginWithPasskey,
       addPasskey,
+      loginWithPin,
       logout,
     ],
   );

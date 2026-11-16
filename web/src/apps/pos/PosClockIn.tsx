@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { useAuth } from "../../lib/auth";
@@ -6,6 +6,7 @@ import { ApiError } from "../../lib/api";
 import { Button } from "../../ui/Button";
 import { FieldWrap, Input } from "../../ui/Field";
 import { Icon } from "../../ui/Icon";
+import { listPosCashiers, posDeviceToken, type PosCashier } from "../../lib/posPin";
 import { PosTill } from "./PosTill";
 
 /** The auth gate *and* the biometric cashier clock-in gate, deliberately
@@ -29,7 +30,9 @@ import { PosTill } from "./PosTill";
 export function RequirePosAuth() {
   const { session, ready } = useAuth();
   if (!ready) return <div className="page spinner">Loading...</div>;
-  if (!session) return <Navigate to="/login" replace />;
+  // A till trusted for PIN sign-in shows the clock-in screen even with
+  // nobody signed in; any other device starts at the normal sign-in.
+  if (!session && !posDeviceToken()) return <Navigate to="/login" replace />;
   return <PosClockInGate />;
 }
 
@@ -41,9 +44,7 @@ function PosClockInGate() {
     import.meta.env.DEV && new URLSearchParams(window.location.search).has("preview"),
   );
 
-  if (!session) return null;
-
-  if (!clockedIn) {
+  if (!clockedIn || !session) {
     return <ClockInScreen onClockedIn={() => setClockedIn(true)} />;
   }
 
@@ -53,6 +54,8 @@ function PosClockInGate() {
         logout();
         setClockedIn(false);
       }}
+      // The next cashier signs in over this one; the till stays as it is.
+      onSwitchCashier={() => setClockedIn(false)}
     />
   );
 }
@@ -65,7 +68,10 @@ function PosClockInGate() {
  * more honest than guessing. */
 function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
   const { loginWithPasskey, requestPosCode, verifyPosCode, addPasskey } = useAuth();
-  const [mode, setMode] = useState<"scan" | "new-email" | "new-code">("scan");
+  const trusted = !!posDeviceToken();
+  const [mode, setMode] = useState<"scan" | "new-email" | "new-code" | "pin">(
+    trusted && !browserSupportsWebAuthn() ? "pin" : "scan",
+  );
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [code, setCode] = useState("");
@@ -167,12 +173,19 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
             <p className="field-label">
               Fingerprint not working? Use your Windows Hello PIN in the same prompt.
             </p>
+            {trusted ? (
+              <Button type="button" onClick={() => (setError(null), setMode("pin"))} disabled={submitting}>
+                <Icon name="shield-check" size={14} /> Use my cashier PIN
+              </Button>
+            ) : null}
             <p className="field-label" style={{ marginTop: 4 }}>
               <a href="#" onClick={(e) => (e.preventDefault(), setMode("new-email"))}>
                 New cashier? Set up your fingerprint
               </a>
             </p>
           </div>
+        ) : mode === "pin" ? (
+          <PinSignIn onClockedIn={onClockedIn} onBack={() => (setError(null), setMode("scan"))} />
         ) : mode === "new-email" ? (
           <form onSubmit={onRequestCode} className="form-grid">
             <FieldWrap label="Your email" required>
@@ -217,6 +230,114 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
       </div>
       </div>
       <div />
+    </div>
+  );
+}
+
+/** Pick your name, then type your 6-digit PIN. Works only on a till a
+ * manager trusted; the session reaches selling and shifts only. */
+function PinSignIn({ onClockedIn, onBack }: { onClockedIn: () => void; onBack: () => void }) {
+  const { loginWithPin } = useAuth();
+  const [people, setPeople] = useState<PosCashier[] | null>(null);
+  const [who, setWho] = useState<PosCashier | null>(null);
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    listPosCashiers()
+      .then((p) => {
+        setPeople(p);
+        if (p.length === 1) setWho(p[0]);
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load the cashiers"));
+  }, []);
+
+  async function submit(full: string) {
+    if (!who) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await loginWithPin(who.user_id, full);
+      onClockedIn();
+    } catch (err) {
+      setPin("");
+      if (err instanceof ApiError) {
+        const left = (err.data as { tries_left?: number } | undefined)?.tries_left;
+        setError(left !== undefined ? `Wrong PIN. ${left} ${left === 1 ? "try" : "tries"} left.` : err.message);
+      } else {
+        setError("Could not sign in");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function press(k: string) {
+    if (busy || pin.length >= 6) return;
+    const next = pin + k;
+    setPin(next);
+    if (next.length === 6) submit(next);
+  }
+
+  const back = (
+    <p className="field-label" style={{ marginTop: 4 }}>
+      <a href="#" onClick={(e) => (e.preventDefault(), who && people && people.length > 1 ? (setWho(null), setPin(""), setError(null)) : onBack())}>
+        {who && people && people.length > 1 ? "Not you? Pick your name" : "Back to fingerprint"}
+      </a>
+    </p>
+  );
+
+  if (!who) {
+    return (
+      <div className="form-grid">
+        {error ? <div className="error-banner">{error}</div> : null}
+        {people === null && !error ? <p className="till-text">Loading…</p> : null}
+        {people && people.length === 0 ? (
+          <p className="till-text">
+            Nobody has a PIN yet. Clock in with your fingerprint, then choose “Set my PIN” in the till menu.
+          </p>
+        ) : null}
+        <div className="till-pin-people">
+          {people?.map((p) => (
+            <button key={p.user_id} type="button" className="till-pin-person glass" onClick={() => setWho(p)}>
+              <span className="till-pin-avatar">{p.name.slice(0, 1).toUpperCase()}</span>
+              {p.name}
+              {p.locked_until ? <span className="till-pin-locked">Locked</span> : null}
+            </button>
+          ))}
+        </div>
+        {back}
+      </div>
+    );
+  }
+
+  return (
+    <div className="form-grid">
+      <p className="till-text" style={{ margin: 0, fontWeight: 600 }}>{who.name}</p>
+      {error ? <div className="error-banner">{error}</div> : null}
+      <div className="till-pin-dots" aria-label={`${pin.length} of 6 digits`}>
+        {Array.from({ length: 6 }, (_, i) => (
+          <span key={i} className={i < pin.length ? "on" : ""} />
+        ))}
+      </div>
+      <div className="till-pin-pad">
+        {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((k) => (
+          <button key={k} type="button" className="till-key" disabled={busy} onClick={() => press(k)}>
+            {k}
+          </button>
+        ))}
+        <button type="button" className="till-key" disabled={busy || !pin} onClick={() => setPin("")} aria-label="Clear">
+          C
+        </button>
+        <button type="button" className="till-key" disabled={busy} onClick={() => press("0")}>
+          0
+        </button>
+        <button type="button" className="till-key" disabled={busy || !pin} onClick={() => setPin((p) => p.slice(0, -1))} aria-label="Delete">
+          ⌫
+        </button>
+      </div>
+      {back}
     </div>
   );
 }

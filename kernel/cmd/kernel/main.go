@@ -123,6 +123,19 @@ func main() {
 	mux.Handle("POST /auth/passkey/register-options", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterOptions)))
 	mux.Handle("POST /auth/passkey/register-verify", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterVerify)))
 	mux.Handle("GET /auth/me", requireAuth(http.HandlerFunc(authHandlers.Me)))
+	// Cashier PIN (plan section 11): trusted tills, PINs, lockout.
+	mux.HandleFunc("GET /auth/pos/cashiers", authHandlers.PosCashiers)
+	mux.HandleFunc("POST /auth/pos/pin", authHandlers.PosPinLogin)
+	mux.Handle("POST /pos/devices", requireAuth(http.HandlerFunc(authHandlers.EnrolPosDevice)))
+	mux.Handle("GET /pos/devices", requireAuth(http.HandlerFunc(authHandlers.ListPosDevices)))
+	mux.Handle("DELETE /pos/devices/{id}", requireAuth(http.HandlerFunc(authHandlers.RevokePosDevice)))
+	mux.Handle("GET /pos/pin", requireAuth(http.HandlerFunc(authHandlers.MyPosPin)))
+	mux.Handle("PUT /pos/pin", requireAuth(http.HandlerFunc(authHandlers.SetPosPin)))
+	mux.Handle("GET /pos/pins", requireAuth(http.HandlerFunc(authHandlers.ListPosPins)))
+	mux.Handle("PUT /pos/pins/{user_id}", requireAuth(http.HandlerFunc(authHandlers.SetPosPin)))
+	mux.Handle("POST /pos/pins/{user_id}/unlock", requireAuth(http.HandlerFunc(authHandlers.UnlockPosPin)))
+	mux.Handle("DELETE /pos/pins/{user_id}", requireAuth(http.HandlerFunc(authHandlers.ClearPosPin)))
+	mux.Handle("GET /pos/pin-events", requireAuth(http.HandlerFunc(authHandlers.PosPinEvents)))
 	mux.Handle("POST /orgs/invites", requireAuth(http.HandlerFunc(authHandlers.InviteMember)))
 
 	orgSettings := &org.Settings{Pool: pool}
@@ -227,7 +240,7 @@ func withCORS(origin string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Pos-Device")
 		w.Header().Add("Vary", "Origin")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

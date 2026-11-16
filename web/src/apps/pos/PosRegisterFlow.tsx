@@ -138,11 +138,17 @@ export function OpenRegister({
   onOpened,
   onSwitchTill,
   onClockOut,
+  onSwitchCashier,
+  onPinSettings,
+  overlay,
 }: {
   register: PosRegister | null;
   onOpened: (s: PosShift) => void;
   onSwitchTill: () => void;
   onClockOut: () => void;
+  onSwitchCashier: () => void;
+  onPinSettings: () => void;
+  overlay?: React.ReactNode;
 }) {
   const [counting, setCounting] = useState(false);
   const amount = useAmountEntry();
@@ -171,9 +177,16 @@ export function OpenRegister({
           <button type="button" className="till-chip glass" style={{ cursor: "pointer" }} onClick={onSwitchTill}>
             Not this till?
           </button>
+          <button type="button" className="till-chip glass" style={{ cursor: "pointer" }} onClick={onSwitchCashier}>
+            Switch cashier
+          </button>
+          <button type="button" className="till-chip glass" style={{ cursor: "pointer" }} onClick={onPinSettings}>
+            Cashier PIN
+          </button>
           <button type="button" className="till-chip glass" style={{ cursor: "pointer" }} onClick={onClockOut}>
             Clock out
           </button>
+          {overlay}
         </>
       }
     >

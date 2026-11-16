@@ -3,11 +3,14 @@ import { ApiError } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { deviceRegisterId, listRegisters, setDeviceRegisterId, type PosRegister, type PosShift } from "../../lib/posApi";
 import { PosPage } from "./PosPage";
+import { PosPinSettings } from "./PosPinSettings";
 import { ChooseRegister, CloseRegister, OpenRegister } from "./PosRegisterFlow";
 
 /** Which screen the till shows: choose this device's till (once), the
  * idle "Open register" screen, selling, or closing with a count. */
-export function PosTill({ onClockOut }: { onClockOut: () => void }) {
+export function PosTill({ onClockOut, onSwitchCashier }: { onClockOut: () => void; onSwitchCashier: () => void }) {
+  const [pinSettings, setPinSettings] = useState(false);
+  const pinSheet = pinSettings ? <PosPinSettings onClose={() => setPinSettings(false)} /> : null;
   const { session } = useAuth();
   const [registers, setRegisters] = useState<PosRegister[] | null>(null);
   const [registerId, setRegisterId] = useState<string | null>(deviceRegisterId());
@@ -104,6 +107,9 @@ export function PosTill({ onClockOut }: { onClockOut: () => void }) {
         }}
         onSwitchTill={() => setChoosing(true)}
         onClockOut={onClockOut}
+        onSwitchCashier={onSwitchCashier}
+        onPinSettings={() => setPinSettings(true)}
+        overlay={pinSheet}
       />
     );
   }
@@ -125,13 +131,18 @@ export function PosTill({ onClockOut }: { onClockOut: () => void }) {
   }
 
   return (
-    <PosPage
-      register={register}
-      shift={shift}
-      onCloseRegister={() => setClosing(true)}
-      onSwitchTill={() => setChoosing(true)}
-      onClockOut={onClockOut}
-      onPendingChange={onPendingChange}
-    />
+    <>
+      <PosPage
+        register={register}
+        shift={shift}
+        onCloseRegister={() => setClosing(true)}
+        onSwitchTill={() => setChoosing(true)}
+        onClockOut={onClockOut}
+        onSwitchCashier={onSwitchCashier}
+        onPinSettings={() => setPinSettings(true)}
+        onPendingChange={onPendingChange}
+      />
+      {pinSheet}
+    </>
   );
 }
