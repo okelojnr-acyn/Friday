@@ -4,6 +4,7 @@ import { saveOrgSettings, useOrgSettings, type TaxProfile, type TaxRate } from "
 import { Button } from "../../ui/Button";
 import { Checkbox, FieldWrap, Input, Select, Textarea } from "../../ui/Field";
 import { SaveRow } from "./SaveRow";
+import { VatReturnCard } from "./VatReturnCard";
 
 // KRA's eTIMS tax types; what an org without saved tax settings starts with.
 const KENYA_RATES: TaxRate[] = [
@@ -73,6 +74,7 @@ export function TaxSection({ canEdit }: { canEdit: boolean }) {
 
   const tillRate = rates.find((r) => r.code.trim().toUpperCase() === p.default_code);
   return (
+    <>
     <div className="card card-padded form-grid">
       {error ? <div className="error-banner">{error}</div> : null}
 
@@ -176,6 +178,29 @@ export function TaxSection({ canEdit }: { canEdit: boolean }) {
         />
         Print the VAT amount on receipts
       </label>
+      <FieldWrap label="Address on receipts">
+        <Input
+          name="receipt-address"
+          autoComplete="street-address"
+          maxLength={120}
+          placeholder="Shop 4, Westlands Mall, Nairobi"
+          value={p.receipt_address ?? ""}
+          onChange={(e) => set("receipt_address", e.target.value)}
+          disabled={!canEdit}
+        />
+      </FieldWrap>
+      <FieldWrap label="Phone on receipts">
+        <Input
+          name="receipt-phone"
+          autoComplete="tel"
+          maxLength={40}
+          placeholder="0712 345 678"
+          value={p.receipt_phone ?? ""}
+          onChange={(e) => set("receipt_phone", e.target.value)}
+          disabled={!canEdit}
+          style={{ width: 220 }}
+        />
+      </FieldWrap>
       <FieldWrap label="Receipt footer">
         <Textarea
           rows={2}
@@ -188,6 +213,8 @@ export function TaxSection({ canEdit }: { canEdit: boolean }) {
       </FieldWrap>
       <SaveRow canEdit={canEdit} saving={saving} onSave={save} />
     </div>
+    {canEdit ? <VatReturnCard /> : null}
+    </>
   );
 }
 

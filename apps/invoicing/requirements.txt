@@ -2,3 +2,4 @@
 -e packages/py-common
 fastapi>=0.115
 uvicorn[standard]>=0.30
+segno==1.6.6  # QR code on the eTIMS receipt (pure Python, no dependencies)

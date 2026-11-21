@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String, Text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -176,6 +176,8 @@ class Supplier(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False, default="")
     phone: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # On the VAT return's purchases schedule (0013).
+    kra_pin: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -200,6 +202,14 @@ class PurchaseOrder(Base):
     )
     number: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    # The supplier's own invoice (0013): the VAT return lists it.
+    supplier_invoice_no: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    supplier_invoice_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Paying the supplier (0014): when, how, and their receipt or M-Pesa code.
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_method: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    paid_reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -227,7 +237,11 @@ class PurchaseOrderLine(Base):
     )
     uom_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     uom_factor: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False, default=1)
+    # Before VAT (0013); tax_code A-E ("" = the business default), and the
+    # VAT on the line, worked out when the goods are received.
     unit_cost_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    tax_code: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    vat_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
     purchase_order: Mapped["PurchaseOrder"] = relationship(back_populates="lines")
 

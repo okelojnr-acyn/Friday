@@ -13,7 +13,7 @@ import { initials } from "../../ui/resource/fieldFormat";
 import { chooseSerialDrawer, drawerMode, openDrawer, serialSupported, setDrawerMode, type DrawerMode } from "./drawer";
 import { PosNumpad } from "./PosNumpad";
 import { PosPayment, type Tender } from "./PosPayment";
-import { printReceipt } from "./receipt";
+import { printReceipt, type Receipt } from "./receipt";
 import { BuyerPin, type Buyer } from "./BuyerPin";
 import { lineTotalCents, tillTotals } from "./tax";
 import { fmtQty, unitLabel, useUnits } from "../../lib/units";
@@ -103,7 +103,7 @@ export function PosPage({
   const [buffer, setBuffer] = useState("");
   const [view, setView] = useState<"order" | "returns">("order");
   const [paying, setPaying] = useState(false);
-  const [paid, setPaid] = useState<{ change: number; total: number; drawer: string } | null>(null);
+  const [paid, setPaid] = useState<{ change: number; total: number; drawer: string; receipt?: Receipt } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [customName, setCustomName] = useState("");
@@ -341,6 +341,7 @@ export function PosPage({
     persistQueue();
 
     const soldLines = lines;
+    const soldTotals = totals;
     const total = totals.total;
     const tax = totals.tax;
     cart.clear();
@@ -362,15 +363,40 @@ export function PosPage({
         drawerNote = err instanceof Error ? err.message : "The drawer didn't open";
       }
     }
-    setPaid({ change, total, drawer: drawerNote });
-    if (hasCash && drawer === "printer") {
-      printReceipt({
+    const receipt: Receipt = {
         businessName: settings.name,
         registerName: register?.name ?? "Till",
         cashier: session?.email ?? "",
         number: sale.client_sale_id.slice(0, 8).toUpperCase(),
         at: new Date(),
-        lines: soldLines.map((l) => ({ description: l.description, quantity: l.quantity, totalCents: lineTotalCents(l) })),
+        lines: soldLines.map((l, i) => {
+          const p = l.product_id ? byId.get(l.product_id) : undefined;
+          const u = unitLabel(salesUnitOf(p));
+          return {
+            description: l.description,
+            quantity: l.quantity,
+            totalCents: lineTotalCents(l),
+            unitPriceCents: l.unit_price_cents,
+            unit: u && u !== "pc" ? u : undefined,
+            taxCode: soldTotals.lines[i]?.code,
+            discountBp: l.discount_bp || undefined,
+          };
+        }),
+        address: settings.tax?.receipt_address,
+        phone: settings.tax?.receipt_phone,
+        store: register?.location_name || undefined,
+        pricesIncludeVat: inclusive,
+        vat: registered
+          ? soldTotals.byCode.map((c) => {
+              const gross = soldTotals.lines.filter((l) => l.code === c.code).reduce((s2, l) => s2 + l.total_cents, 0);
+              return {
+                code: c.code,
+                ratePct: c.rate_bp / 100,
+                taxableCents: inclusive ? gross - c.vat_cents : gross,
+                vatCents: c.vat_cents,
+              };
+            })
+          : undefined,
         totalCents: total,
         taxCents: tax,
         taxLabel,
@@ -385,8 +411,9 @@ export function PosPage({
           .map((c) => ({ label: `${c.code} ${c.name} ${c.rate_bp / 100}%`, cents: c.vat_cents })),
         showTax: settings.tax ? settings.tax.vat_registered && settings.tax.receipt_show_breakdown : true,
         footer: settings.tax?.receipt_footer,
-      });
-    }
+      };
+    setPaid({ change, total, drawer: drawerNote, receipt });
+    if (hasCash && drawer === "printer") printReceipt(receipt);
 
     try {
       await api.post("/api/invoicing/pos/sales", sale);
@@ -562,6 +589,14 @@ export function PosPage({
                 title={drawer === "serial" ? "" : "Set up a direct drawer in the till menu"}
               >
                 Open drawer
+              </button>
+              <button
+                type="button"
+                className="till-btn"
+                disabled={!paid.receipt}
+                onClick={() => paid.receipt && printReceipt(paid.receipt)}
+              >
+                Print receipt
               </button>
               <button type="button" className="till-btn primary" autoFocus onClick={() => (setPaid(null), setError(null))}>
                 New order

@@ -166,3 +166,40 @@ async def test_automated_sending_against_a_fake_kra(client, admin, monkeypatch):
     # A manual number can't overwrite what KRA sent.
     r = await client.post(f"/etims/invoices/{ok['id']}/filed", json={"etims_invoice_no": "x"})
     assert r.status_code == 409
+
+
+async def test_a_reprinted_receipt_has_its_items_vat_and_once_signed_the_kra_block(client, admin, monkeypatch):
+    made = (await client.post("/pos/sales", json=sale("P051234567X"))).json()
+    r = (await client.get(f"/etims/receipt/{made['number']}")).json()
+    assert r["number"] == made["number"] and r["buyer_pin"] == "P051234567X" and r["prices_include_vat"]
+    assert [(line["description"], line["unit"], line["tax_code"]) for line in r["lines"]] == [("Cooking oil 1L", "LTR", "B"), ("Maize flour 2kg", "", "A")]
+    assert r["vat"] == [
+        {"code": "A", "rate_pct": 0, "taxable_cents": 5000, "vat_cents": 0},
+        {"code": "B", "rate_pct": 16, "taxable_cents": 100000, "vat_cents": 16000},
+    ]
+    assert r["total_cents"] == 121000 and r["vat_cents"] == 16000
+    assert r["payments"] == [{"method": "mpesa", "cents": 121000}]
+    assert r["etims"] is None  # not filed with KRA yet
+
+    # Signed by eTIMS (the automated sender, against a fake KRA).
+    monkeypatch.setenv("ETIMS_AUTOMATION", "1")
+
+    def kra(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/selectCustomer"):
+            return httpx.Response(200, json={"resultCd": "000", "data": {"custList": [{"tin": "P051234567X", "taxprNm": "MAMA MBOGA LTD", "taxprSttsCd": "A"}]}})
+        return httpx.Response(200, json={"resultCd": "000", "data": {"curRcptNo": 7, "totRcptNo": 9, "intrlData": "INTRL", "rcptSign": "SIGN", "sdcDateTime": "20261116120000"}})
+
+    real = etims_routes.OscuClient
+    monkeypatch.setattr(etims_routes, "OscuClient", lambda cfg: real(cfg, transport=httpx.MockTransport(kra)))
+    assert (await client.post("/etims/send")).json()["sent"] == 1
+    e = (await client.get(f"/etims/receipt/{made['number']}")).json()["etims"]
+    assert (e["invoice_no"], e["internal_data"], e["receipt_sign"], e["sdc_time"]) == ("7/9", "INTRL", "SIGN", "20261116120000")
+    assert e["check_url"].endswith("P051234567X00SIGN")
+    assert e["qr_svg"].startswith("<svg") and "qrline" in e["qr_svg"]
+
+
+async def test_a_receipt_filed_by_hand_carries_krAs_number_without_a_qr(client, admin):
+    made = (await client.post("/pos/sales", json=sale("P051234567X"))).json()
+    await client.post(f"/etims/invoices/{made['id']}/filed", json={"etims_invoice_no": "KRAMW0012345"})
+    e = (await client.get(f"/etims/receipt/{made['number']}")).json()["etims"]
+    assert e["invoice_no"] == "KRAMW0012345" and e["check_url"] == "" and e["qr_svg"] == ""

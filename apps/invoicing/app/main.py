@@ -1,10 +1,10 @@
 import logging
 import uuid
-from decimal import Decimal
-from datetime import UTC, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from friday_common.importer import ImportField, ImportTarget, import_router
 from friday_common import (
     FieldSpec,
@@ -52,6 +52,7 @@ from .schemas import (
     QuoteStatusUpdate,
 )
 from friday_common.etims import normalize_pin
+from friday_common.etims.kernel import get_etims_config
 
 from .etims_routes import router as etims_router
 from .registers import router as registers_router
@@ -482,8 +483,28 @@ async def generate_recurring_invoices(
     return [InvoiceOut.from_model(inv) for inv in created]
 
 
+def _fill_vat(invoice_line: "InvoiceLine", cfg: dict) -> None:
+    """VAT inside a line's price, for a sale that didn't work it out itself
+    (Guss sends shelf prices; the till computes VAT on the device). Uses
+    the line's tax type, else the business default, and the business's
+    rates; nothing for a business that isn't VAT-registered."""
+    code = invoice_line.tax_code or cfg.get("default_code") or "B"
+    invoice_line.tax_code = code
+    if cfg.get("vat_registered") is False:
+        return
+    rates = {r["code"]: int(r["rate_bp"]) for r in cfg.get("rates") or []}
+    rate = rates.get(code, 1600 if code == "B" else 0)
+    total = invoice_line.total_cents
+    invoice_line.vat_cents = int((Decimal(total) * rate / (10_000 + rate)).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
 async def _apply_pos_sale_lines(
-    session: AsyncSession, principal: Principal, invoice: Invoice, lines_in: list[dict], body: dict
+    session: AsyncSession,
+    principal: Principal,
+    invoice: Invoice,
+    lines_in: list[dict],
+    body: dict,
+    vat_cfg: dict | None = None,
 ) -> int:
     """Builds InvoiceLine rows for a POS sale and reconciles pos-engine's
     charged total against the lines' own total. Shared by record_pos_sale
@@ -508,6 +529,8 @@ async def _apply_pos_sale_lines(
             product_id=uuid.UUID(product_id) if product_id else None,
             **_etims_line_fields(line),
         )
+        if vat_cfg is not None and "vat_cents" not in line:
+            _fill_vat(invoice_line, vat_cfg)
         session.add(invoice_line)
         total_cents += invoice_line.total_cents
 
@@ -615,10 +638,18 @@ async def record_pos_sale(
         if existing is not None:
             return InvoiceOut.from_model(existing)
     now = _sale_time(body)
-    shift_id = await shift_for_sale(session, principal, body.get("shift_id"))
+    # A sale made through Guss never joins a till's shift (its cash isn't
+    # in that drawer), and its VAT is worked out here from shelf prices.
+    channel = "guss" if body.get("channel") == "guss" else "till"
+    shift_id = None if channel == "guss" else await shift_for_sale(session, principal, body.get("shift_id"))
+    vat_cfg = None
+    if channel == "guss" and any("vat_cents" not in line for line in lines_in):
+        vat_cfg = await get_etims_config(principal.org_id)
 
     invoice = Invoice(
         org_id=uuid.UUID(principal.org_id),
+        channel=channel,
+        prices_include_tax=True if channel == "guss" else None,
         number=f"POS-{now:%Y%m%d}-{uuid.uuid4().hex[:6].upper()}",
         status="paid",
         currency=body.get("currency", "USD"),
@@ -634,7 +665,7 @@ async def record_pos_sale(
     session.add(invoice)
     await session.flush()
 
-    charged_cents = await _apply_pos_sale_lines(session, principal, invoice, lines_in, body)
+    charged_cents = await _apply_pos_sale_lines(session, principal, invoice, lines_in, body, vat_cfg)
 
     # Split tender (see pos-engine's Sale.payments): one Payment row per
     # tender instead of one for the whole charged_cents. Falls back to
@@ -802,6 +833,47 @@ async def _get_pos_sale(session: AsyncSession, principal: Principal, number: str
     if inv is None:
         raise HTTPException(404, "pos sale not found")
     return inv
+
+
+@pos_router.get("/sales")
+async def list_pos_sales(
+    day: date = Query(..., description="YYYY-MM-DD, in UTC"),
+    channel: str | None = Query(None, pattern="^(till|guss)$"),
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """One day's sales from every till and Guss, newest first: what Guss
+    reads back to answer "what did we sell today". Returns are included
+    as negative sales."""
+    start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+    q = select(Invoice).where(
+        Invoice.org_id == uuid.UUID(principal.org_id),
+        Invoice.source == "pos",
+        Invoice.issued_at >= start,
+        Invoice.issued_at < start + timedelta(days=1),
+        Invoice.status.in_(("paid", "void")),
+    )
+    if channel:
+        q = q.where(Invoice.channel == channel)
+    rows = (await session.execute(q.order_by(Invoice.issued_at.desc()).limit(500))).scalars().all()
+    return [
+        {
+            "number": inv.number,
+            "channel": inv.channel,
+            "status": inv.status,
+            "issued_at": inv.issued_at,
+            "cashier": inv.cashier_email or "",
+            "currency": inv.currency,
+            "total_cents": sum(line.total_cents + line.tax_cents for line in inv.lines),
+            "payments": [{"method": p.method, "cents": p.amount_cents} for p in inv.payments],
+            "lines": [
+                {"description": line.description, "quantity": float(line.quantity), "product_id": line.product_id}
+                for line in inv.lines
+                if not line.is_adjustment
+            ],
+        }
+        for inv in rows
+    ]
 
 
 @pos_router.get("/sales/{number}", response_model=InvoiceOut)

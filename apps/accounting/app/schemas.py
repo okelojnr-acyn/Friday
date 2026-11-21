@@ -162,6 +162,16 @@ class ReportLineOut(BaseModel):
     amount_cents: int
 
 
+class VatLedgerOut(BaseModel):
+    """A month's VAT as the books have it: what the VAT return's files
+    should add up to."""
+
+    month: str
+    output_vat_cents: int  # 2200 VAT Output: credits less debits
+    input_vat_cents: int  # 1500 VAT Input: debits less credits
+    net_vat_cents: int  # output less input: positive is owed to KRA
+
+
 class ProfitAndLossOut(BaseModel):
     start_date: date
     end_date: date

@@ -31,7 +31,8 @@ from friday_common.etims import (
     normalize_pin,
     sale_body,
 )
-from friday_common.etims.codes import PIN_CHECKER_URL, RECEIPT_CHECK
+import segno
+from friday_common.etims.codes import PIN_CHECKER_URL, RECEIPT_CHECK, TAX_TYPES
 from friday_common.etims.kernel import automation_on, get_etims_config
 from friday_common.etims.payload import line_amounts
 from pydantic import BaseModel, Field
@@ -156,10 +157,7 @@ def _row(inv: Invoice, cfg: dict, originals: dict[str, Invoice]) -> EtimsRow:
     orig = originals.get(inv.source_ref or "") if is_credit_note(inv) else None
     doc = document_for(inv, cfg, credit_note_of=(orig.etims_trader_no or 0) if orig else 0)
     codes = tax_by_code(doc)
-    check = ""
-    if inv.etims_receipt_sign and cfg.get("tax_pin"):
-        base = RECEIPT_CHECK.get(cfg.get("environment") or "sandbox", "")
-        check = f"{base}{cfg['tax_pin']}{cfg.get('branch_id') or '00'}{inv.etims_receipt_sign}"
+    check = receipt_check_url(inv, cfg)
     return EtimsRow(
         id=inv.id,
         number=inv.number,
@@ -192,6 +190,81 @@ def _month_bounds(month: str | None) -> tuple[datetime, datetime] | None:
         raise HTTPException(422, "month is YYYY-MM") from None
     end = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
     return start, end
+
+
+def receipt_check_url(inv: Invoice, cfg: dict) -> str:
+    """KRA's receipt check link (the receipt's QR code), once eTIMS has
+    signed the sale."""
+    if not (inv.etims_receipt_sign and cfg.get("tax_pin")):
+        return ""
+    base = RECEIPT_CHECK.get(cfg.get("environment") or "sandbox", "")
+    return f"{base}{cfg['tax_pin']}{cfg.get('branch_id') or '00'}{inv.etims_receipt_sign}"
+
+
+@router.get("/receipt/{number}")
+async def receipt_for_reprint(
+    number: str,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Everything a reprinted till receipt needs, from the stored sale: the
+    items with their tax types, the VAT per tax type, the payments, and,
+    once the sale is filed with KRA, the eTIMS block (invoice number,
+    internal data, receipt signature, time and the check QR code). Any
+    signed-in till may reprint, like it may look a sale up for a return."""
+    from .main import _get_pos_sale  # main imports this module
+
+    inv = await _get_pos_sale(session, principal, number)
+    cfg = await get_etims_config(principal.org_id)
+    doc = document_for(inv, cfg)
+    rates = {c: pct for c, (_, pct) in TAX_TYPES.items()} | doc.rates
+    lines = [
+        {
+            "description": line.description,
+            "quantity": float(line.quantity),
+            "unit": "" if line.is_adjustment or line.quantity_unit in ("", "U") else line.quantity_unit,
+            "unit_price_cents": line.unit_price_cents,
+            "discount_bp": line.discount_bp,
+            "total_cents": line.total_cents + (0 if _inclusive(inv) else line.tax_cents),
+            "tax_code": "" if line.is_adjustment else (line.tax_code or cfg.get("default_code") or "B"),
+        }
+        for line in inv.lines
+    ]
+    vat = [
+        {
+            "code": code,
+            "rate_pct": rates.get(code, 0),
+            "taxable_cents": row["gross_cents"] - row["vat_cents"],
+            "vat_cents": row["vat_cents"],
+        }
+        for code, row in sorted(tax_by_code(doc).items())
+    ]
+    check = receipt_check_url(inv, cfg)
+    filed = inv.etims_status == "submitted" and inv.etims_invoice_no
+    return {
+        "number": inv.number,
+        "issued_at": inv.issued_at or inv.created_at,
+        "cashier": inv.cashier_email or "",
+        "currency": inv.currency,
+        "buyer_pin": inv.buyer_pin,
+        "buyer_name": inv.buyer_name,
+        "prices_include_vat": _inclusive(inv),
+        "lines": lines,
+        "vat": vat,
+        "vat_cents": sum(v["vat_cents"] for v in vat),
+        "total_cents": sum(line.total_cents + line.tax_cents for line in inv.lines),
+        "payments": [{"method": p.method, "cents": p.amount_cents} for p in inv.payments],
+        "etims": {
+            "invoice_no": inv.etims_invoice_no,
+            "internal_data": inv.etims_internal_data,
+            "receipt_sign": inv.etims_receipt_sign,
+            "sdc_time": inv.etims_sdc_time,
+            "check_url": check,
+            "qr_svg": segno.make(check, error="m").svg_inline(scale=2, border=2) if check else "",
+        }
+        if filed
+        else None,
+    }
 
 
 @router.get("/invoices", response_model=list[EtimsRow])

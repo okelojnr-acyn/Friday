@@ -59,6 +59,9 @@ interface PurchaseOrderCreateModalProps {
  * contract on when a resource earns a hand-written create screen). */
 export function PurchaseOrderCreateModal({ onClose, onSaved }: PurchaseOrderCreateModalProps) {
   const [supplierId, setSupplierId] = useState<unknown>(null);
+  // The supplier's own invoice: the VAT return lists purchases by it.
+  const [invoiceNo, setInvoiceNo] = useState("");
+  const [invoiceDate, setInvoiceDate] = useState("");
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -92,6 +95,8 @@ export function PurchaseOrderCreateModal({ onClose, onSaved }: PurchaseOrderCrea
     try {
       const saved = await createRecord("inventory", "purchase_order", {
         supplier_id: supplierId || null,
+        supplier_invoice_no: invoiceNo.trim(),
+        supplier_invoice_date: invoiceDate || null,
         lines: validLines.map((l) => ({
           product_id: l.productId || null,
           description: l.description,
@@ -130,6 +135,15 @@ export function PurchaseOrderCreateModal({ onClose, onSaved }: PurchaseOrderCrea
         <ReferenceInput field={SUPPLIER_FIELD} value={supplierId} onChange={setSupplierId} />
       </FieldWrap>
 
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <FieldWrap label="Supplier's invoice number">
+          <Input name="supplier-invoice-no" autoComplete="off" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
+        </FieldWrap>
+        <FieldWrap label="Invoice date">
+          <Input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+        </FieldWrap>
+      </div>
+      <p className="field-label" style={{ margin: 0 }}>Unit costs are before VAT; the VAT is worked out when the goods are received.</p>
       <div className="invoice-lines">
         <span className="field-label">Lines</span>
         {lines.map((line, i) => (

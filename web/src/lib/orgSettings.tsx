@@ -20,6 +20,8 @@ export interface TaxProfile {
   receipt_show_pin: boolean;
   receipt_show_breakdown: boolean;
   receipt_footer: string;
+  receipt_address?: string;
+  receipt_phone?: string;
 }
 
 export interface OrgSettings {
