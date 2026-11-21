@@ -90,6 +90,16 @@ func (p *People) MyPermissions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// AccessRules (GET /orgs/access/rules): the whole who-sees-what table,
+// for the People page's "what can this role do?" panel.
+func (p *People) AccessRules(w http.ResponseWriter, r *http.Request) {
+	if _, ok := auth.FromContext(r.Context()); !ok {
+		peopleError(w, http.StatusUnauthorized, "missing or invalid token")
+		return
+	}
+	peopleJSON(w, http.StatusOK, map[string]any{"roles": access.Roles, "perms": access.Perms, "rules": access.Rules})
+}
+
 func orEmpty(s []string) []string {
 	if s == nil {
 		return []string{}

@@ -8,7 +8,7 @@ import { AcceptInvitePage } from "./shell/AcceptInvitePage";
 import { SsoLoginPage } from "./shell/SsoLoginPage";
 import { DashboardPage } from "./shell/DashboardPage";
 import { AppsIntegrationsPage } from "./shell/AppsIntegrationsPage";
-import { MembersSettingsPage } from "./shell/MembersSettingsPage";
+import { PeoplePage } from "./shell/PeoplePage";
 import { ImportPage } from "./shell/ImportPage";
 import { BusinessSettingsPage } from "./shell/BusinessSettingsPage";
 import { EtimsFilingPage } from "./shell/EtimsFilingPage";
@@ -43,7 +43,8 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/apps" element={<AppsIntegrationsPage />} />
           <Route path="/settings/integrations" element={<IntegrationsRedirect />} />
-          <Route path="/settings/members" element={<MembersSettingsPage />} />
+          <Route path="/settings/people" element={<PeoplePage />} />
+          <Route path="/settings/members" element={<Navigate to="/settings/people" replace />} />
           <Route path="/settings/import" element={<ImportPage />} />
           <Route path="/settings/business" element={<BusinessSettingsPage />} />
           <Route path="/etims" element={<EtimsFilingPage />} />

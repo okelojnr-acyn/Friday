@@ -39,6 +39,17 @@ const kernelPost = <T,>(path: string, body?: unknown, headers?: Record<string, s
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
+/** What an invite link offers, before joining (kernel GET /invites/{token}). */
+export interface InvitePreview {
+  org_name: string;
+  email: string;
+  full_name: string;
+  role: string;
+  role_words: string;
+}
+
+export const previewInvite = (token: string) => kernelFetch<InvitePreview>(`/invites/${encodeURIComponent(token)}`);
+
 interface AuthContextValue {
   session: Session | null;
   ready: boolean;
@@ -57,6 +68,8 @@ interface AuthContextValue {
    * creating a brand new org (see kernel/internal/auth/invites.go's
    * AcceptInvite). */
   acceptInvite: (email: string, code: string, fullName: string) => Promise<void>;
+  /** Joins through an invite link (plan section 12.6) and signs in. */
+  acceptInviteLink: (token: string, fullName: string) => Promise<void>;
   /** POS clock-in's own "email me a code" -- unlike requestLoginCode,
    * this is honest about whether the email is actually known (an
    * existing account, or one an admin already invited), since the
@@ -138,6 +151,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const acceptInvite = useCallback(
     async (email: string, code: string, fullName: string) => {
       const resp = await kernelPost<AuthResponse>("/auth/invites/accept", { email, code, full_name: fullName });
+      applyAuthResponse(resp);
+    },
+    [applyAuthResponse],
+  );
+
+  const acceptInviteLink = useCallback(
+    async (token: string, fullName: string) => {
+      const resp = await kernelPost<AuthResponse>(`/invites/${encodeURIComponent(token)}/accept`, { full_name: fullName });
       applyAuthResponse(resp);
     },
     [applyAuthResponse],
@@ -225,6 +246,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       requestLoginCode,
       verifyCode,
       acceptInvite,
+      acceptInviteLink,
       requestPosCode,
       verifyPosCode,
       loginWithPasskey,
@@ -239,6 +261,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       requestLoginCode,
       verifyCode,
       acceptInvite,
+      acceptInviteLink,
       requestPosCode,
       verifyPosCode,
       loginWithPasskey,

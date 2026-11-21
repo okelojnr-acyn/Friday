@@ -28,6 +28,8 @@ type Handlers struct {
 	WebAuthn *webauthn.WebAuthn
 	Mailer   *mail.Mailer
 	Otp      *OtpStore
+	// WebURL is Friday's web address, for invite links.
+	WebURL string
 }
 
 type registerRequest struct {

@@ -14,70 +14,8 @@ import (
 // a strange way to create one.
 var invitableRoles = map[string]bool{"admin": true, "branch_manager": true, "team_leader": true, "member": true, "viewer": true}
 
-type inviteRequest struct {
-	Email string `json:"email"`
-	Role  string `json:"role"`
-}
-
-// InviteMember emails an invite code to join the caller's org -- reuses
-// the exact same OtpStore machinery as Register (same 6-digit code, same
-// cooldown/attempt limits), just with purpose "invite" and a payload
-// carrying which org/role to join instead of which org to create. Gated
-// to admin/owner, same inline role check every other admin-only kernel
-// endpoint uses (see org.Catalog.SetInstalled, integrations.Handlers).
-func (h *Handlers) InviteMember(w http.ResponseWriter, r *http.Request) {
-	claims, ok := FromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing or invalid token")
-		return
-	}
-	if !(claims.Role == "owner" || claims.Role == "admin") {
-		writeError(w, http.StatusForbidden, "requires admin or owner")
-		return
-	}
-
-	var req inviteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if req.Email == "" {
-		writeError(w, http.StatusBadRequest, "email is required")
-		return
-	}
-	if !invitableRoles[req.Role] {
-		writeError(w, http.StatusBadRequest, "role must be one of admin, branch_manager, team_leader, member, viewer")
-		return
-	}
-
-	ctx := r.Context()
-	var exists bool
-	if err := h.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM core.users WHERE email = $1)`, req.Email).Scan(&exists); err != nil {
-		writeError(w, http.StatusInternalServerError, "db error")
-		return
-	}
-	if exists {
-		writeError(w, http.StatusConflict, "an account with that email already exists -- multi-org membership for an existing account isn't supported yet")
-		return
-	}
-
-	code, err := h.Otp.Request(ctx, req.Email, "invite", map[string]any{
-		"org_id": claims.OrgID,
-		"role":   req.Role,
-	})
-	if err != nil {
-		writeError(w, http.StatusTooManyRequests, err.Error())
-		return
-	}
-	_ = h.Mailer.Send(req.Email, "You've been invited to join a Friday organization",
-		"Your invite code is "+code+". It expires in 10 minutes. "+
-			"Go to the Friday login page, choose \"Join with an invite\", and enter this code to finish joining.")
-
-	writeJSON(w, http.StatusAccepted, map[string]string{
-		"message": "invite sent",
-		"email":   req.Email,
-	})
-}
+// Invites are links now (invite_links.go). AcceptInvite below still
+// takes codes sent before links, until they expire.
 
 type acceptInviteRequest struct {
 	Email    string `json:"email"`
@@ -123,6 +61,32 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, authResponse{Token: token, OrgID: orgID, Role: role, Email: req.Email})
 }
 
+// applyInviteLink gives someone who joined through another door (the
+// till's emailed code) what their open invite link decided: permissions,
+// locations, reporting line; and uses the link up.
+func (h *Handlers) applyInviteLink(ctx context.Context, email, orgID, userID string) {
+	var perms, locs []string
+	var reportsTo *string
+	err := h.Pool.QueryRow(ctx, `
+		UPDATE core.invites SET accepted_at = now()
+		WHERE id = (SELECT id FROM core.invites WHERE org_id = $1 AND lower(email) = $2
+		            AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+		            ORDER BY created_at DESC LIMIT 1)
+		RETURNING perms, ARRAY(SELECT unnest(locations)::text), reports_to::text`,
+		orgID, strings.ToLower(strings.TrimSpace(email))).Scan(&perms, &locs, &reportsTo)
+	if err != nil {
+		return
+	}
+	h.Pool.Exec(ctx, `UPDATE core.memberships SET perms = $3,
+		reports_to = (SELECT user_id FROM core.memberships WHERE org_id = $1 AND user_id::text = $4)
+		WHERE org_id = $1 AND user_id::text = $2`, orgID, userID, perms, reportsTo)
+	for _, l := range locs {
+		h.Pool.Exec(ctx, `INSERT INTO core.membership_locations (org_id, user_id, location_id)
+			SELECT $1, $2::uuid, id FROM core.locations WHERE org_id = $1 AND id::text = $3 ON CONFLICT DO NOTHING`,
+			orgID, userID, l)
+	}
+}
+
 // joinOrg creates the user + membership row an accepted invite needs --
 // shared by AcceptInvite and PosVerifyCode below, since both end with
 // "this email, which an admin already decided should join orgID at
@@ -163,6 +127,9 @@ func (h *Handlers) joinOrg(ctx context.Context, email, fullName, orgID, role str
 // findUserByEmail first), so there's no risk of resurrecting a stale
 // invite for someone who already has an account.
 func (h *Handlers) findPendingInvitePayload(ctx context.Context, email string) (orgID, role string, ok bool) {
+	if orgID, role, ok := h.pendingInviteFor(ctx, email); ok {
+		return orgID, role, true
+	}
 	var payloadRaw []byte
 	err := h.Pool.QueryRow(ctx, `
 		SELECT payload FROM core.otp_codes WHERE email = $1 AND purpose = 'invite'
@@ -276,6 +243,7 @@ func (h *Handlers) PosVerifyCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
+	h.applyInviteLink(ctx, req.Email, orgID, userID)
 	token, err := h.Issuer.Issue(userID, orgID, role, req.Email)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not issue token")

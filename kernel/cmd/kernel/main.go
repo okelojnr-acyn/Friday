@@ -101,6 +101,7 @@ func main() {
 		WebAuthn: webAuthn,
 		Mailer:   mail.New(),
 		Otp:      &auth.OtpStore{Pool: pool},
+		WebURL:   corsOrigin,
 	}
 	requireAuth := auth.RequireAuth(issuer)
 
@@ -140,7 +141,11 @@ func main() {
 	mux.Handle("POST /pos/pins/{user_id}/unlock", requireAuth(http.HandlerFunc(authHandlers.UnlockPosPin)))
 	mux.Handle("DELETE /pos/pins/{user_id}", requireAuth(http.HandlerFunc(authHandlers.ClearPosPin)))
 	mux.Handle("GET /pos/pin-events", requireAuth(http.HandlerFunc(authHandlers.PosPinEvents)))
-	mux.Handle("POST /orgs/invites", requireAuth(http.HandlerFunc(authHandlers.InviteMember)))
+	mux.Handle("POST /orgs/invites", requireAuth(http.HandlerFunc(authHandlers.CreateInvite)))
+	mux.Handle("GET /orgs/invites", requireAuth(http.HandlerFunc(authHandlers.ListInvites)))
+	mux.Handle("DELETE /orgs/invites/{id}", requireAuth(http.HandlerFunc(authHandlers.RevokeInvite)))
+	mux.HandleFunc("GET /invites/{token}", authHandlers.PreviewInvite)
+	mux.HandleFunc("POST /invites/{token}/accept", authHandlers.AcceptInviteLink)
 
 	orgSettings := &org.Settings{Pool: pool}
 	mux.Handle("GET /orgs/settings", requireAuth(http.HandlerFunc(orgSettings.Get)))
@@ -161,6 +166,7 @@ func main() {
 	mux.HandleFunc("GET /internal/people/{org_id}", people.AtLocations)
 	mux.Handle("PATCH /orgs/members/{user_id}", requireAuth(http.HandlerFunc(people.UpdatePerson)))
 	mux.Handle("GET /orgs/me/permissions", requireAuth(http.HandlerFunc(people.MyPermissions)))
+	mux.Handle("GET /orgs/access/rules", requireAuth(http.HandlerFunc(people.AccessRules)))
 	mux.Handle("GET /orgs/locations", requireAuth(http.HandlerFunc(people.Locations)))
 	mux.Handle("POST /orgs/locations", requireAuth(http.HandlerFunc(people.SaveLocation)))
 	mux.Handle("PATCH /orgs/locations/{id}", requireAuth(http.HandlerFunc(people.SaveLocation)))
