@@ -149,6 +149,13 @@ def require_place(scope: Scope, location_id, what: str = "that place") -> None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"{what} is at a location that isn't yours")
 
 
+def whole_business(scope: Scope) -> None:
+    """For what has no location (the books, the treasury): a scope limited
+    to some locations doesn't cover it."""
+    if not scope.everywhere:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "this covers the whole business; ask an admin")
+
+
 def scope_for(principal: Principal, rule: str) -> Scope | None:
     kind = scope_of(principal.role, principal.perms, rule)
     if not kind:

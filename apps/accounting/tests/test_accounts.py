@@ -32,7 +32,7 @@ async def test_org_isolation_on_accounts(client, as_principal, principal):
     first_org_accounts = (await client.get("/accounts")).json()
     first_org_ids = {a["id"] for a in first_org_accounts}
 
-    as_principal(make_principal())
+    as_principal(make_principal(role="admin"))
     second_org_accounts = (await client.get("/accounts")).json()
     second_org_ids = {a["id"] for a in second_org_accounts}
 
