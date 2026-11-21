@@ -89,6 +89,7 @@ const METHOD_LABEL: Record<string, string> = {
   mpesa: "M-Pesa (till/paybill)",
   card: "Card (PDQ)",
   pesapal: "Pesapal",
+  paystack: "Card or bank (Paystack)",
   other: "Other",
 };
 
