@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider } from "./lib/auth";
 import { OrgSettingsProvider } from "./lib/orgSettings";
 import { RequireAuth } from "./shell/Layout";
@@ -7,8 +7,7 @@ import { RegisterPage } from "./shell/RegisterPage";
 import { AcceptInvitePage } from "./shell/AcceptInvitePage";
 import { SsoLoginPage } from "./shell/SsoLoginPage";
 import { DashboardPage } from "./shell/DashboardPage";
-import { AppsCatalogPage } from "./shell/AppsCatalogPage";
-import { IntegrationsSettingsPage } from "./shell/IntegrationsSettingsPage";
+import { AppsIntegrationsPage } from "./shell/AppsIntegrationsPage";
 import { MembersSettingsPage } from "./shell/MembersSettingsPage";
 import { ImportPage } from "./shell/ImportPage";
 import { BusinessSettingsPage } from "./shell/BusinessSettingsPage";
@@ -21,6 +20,16 @@ import { ReportsPage } from "./apps/accounting/ReportsPage";
 import { PipelinePage } from "./apps/crm/PipelinePage";
 import { ReceivablesPage } from "./apps/invoicing/ReceivablesPage";
 
+// Integrations moved onto Apps & integrations; Google's OAuth callback
+// still lands here, so its result rides along and opens Google Calendar.
+function IntegrationsRedirect() {
+  const { search } = useLocation();
+  const p = new URLSearchParams(search);
+  if (p.has("google_calendar")) p.set("item", "google_calendar");
+  const q = p.toString();
+  return <Navigate to={`/apps${q ? `?${q}` : ""}`} replace />;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -32,8 +41,8 @@ export default function App() {
         <Route path="/sso" element={<SsoLoginPage />} />
         <Route element={<RequireAuth />}>
           <Route path="/" element={<DashboardPage />} />
-          <Route path="/apps" element={<AppsCatalogPage />} />
-          <Route path="/settings/integrations" element={<IntegrationsSettingsPage />} />
+          <Route path="/apps" element={<AppsIntegrationsPage />} />
+          <Route path="/settings/integrations" element={<IntegrationsRedirect />} />
           <Route path="/settings/members" element={<MembersSettingsPage />} />
           <Route path="/settings/import" element={<ImportPage />} />
           <Route path="/settings/business" element={<BusinessSettingsPage />} />

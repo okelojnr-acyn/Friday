@@ -23,9 +23,9 @@ export function TopBar({ email, role, onLogout }: TopBarProps) {
             <Icon name="arrow-up-right" size={16} />
             <span className="topbar-label">Friday Host</span>
         </a>
-        <Link to="/apps" title="Apps catalog" aria-label="Apps catalog" className="btn btn-secondary btn-sm btn-pill">
+        <Link to="/apps" title="Apps & integrations" aria-label="Apps and integrations" className="btn btn-secondary btn-sm btn-pill">
             <Icon name="apps" size={16} />
-            <span className="topbar-label">Apps</span>
+            <span className="topbar-label">Apps & integrations</span>
         </Link>
         <Link to="/settings/members" title="Admins and managers" aria-label="Admins" className="btn btn-secondary btn-sm btn-pill">
             <Icon name="users" size={16} />
@@ -41,10 +41,6 @@ export function TopBar({ email, role, onLogout }: TopBarProps) {
             <span className="topbar-label">Import</span>
           </Link>
         ) : null}
-        <Link to="/settings/integrations" title="Integrations" aria-label="Integrations" className="btn btn-secondary btn-sm btn-pill">
-            <Icon name="link-2" size={16} />
-            <span className="topbar-label">Integrations</span>
-        </Link>
         <span className="topbar-user" title={role}>
           <Avatar label={initials(email)} title={email} size={26} />
           <span className="topbar-email">{email}</span>
