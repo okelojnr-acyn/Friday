@@ -121,3 +121,13 @@ async def test_part_of_a_sale_can_come_back(client, events):
     assert float(rest.json()["lines"][0]["quantity"]) == -2
     assert (await client.get(f"/pos/sales/{made['number']}")).json()["status"] == "void"
     assert (await client.post(f"/pos/sales/{made['number']}/return", json={})).status_code == 400
+
+
+async def test_a_return_sent_twice_refunds_once(client, events):
+    made = (await client.post("/pos/sales", json=sale(qty=3, price=10000))).json()
+    body = {"client_return_id": "guss:r1", "lines": [{"line_id": made["lines"][0]["id"], "quantity": 1}]}
+    first = await client.post(f"/pos/sales/{made['number']}/return", json=body)
+    again = await client.post(f"/pos/sales/{made['number']}/return", json=body)
+    assert first.status_code == again.status_code == 201
+    assert again.json()["id"] == first.json()["id"]
+    assert len([t for t, _ in events if t == "invoicing.invoice.paid"]) == 2  # the sale, one refund
