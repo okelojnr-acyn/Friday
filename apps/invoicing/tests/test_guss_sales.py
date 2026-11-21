@@ -51,7 +51,7 @@ async def test_a_guss_sale_gets_its_vat_here_and_reaches_accounting_like_a_till_
     assert again.json()["id"] == made.json()["id"]
 
 
-async def test_a_guss_sale_never_counts_in_a_tills_cash(client, monkeypatch):
+async def test_a_guss_sale_never_counts_in_a_tills_cash(client, a_till, monkeypatch):
     async def cfg(org_id):
         return CFG
 
