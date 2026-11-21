@@ -66,6 +66,8 @@ class Invoice(Base):
     # pay_with_card below) -- lets the Stripe webhook find its way back to
     # the right invoice without trusting the webhook body alone.
     stripe_payment_intent_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The store or warehouse the sale was made at (0017, from its till).
+    location_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     # The latest Paystack checkout's reference (0016), so a till's poll can
     # verify it even when the webhook never arrives (see paystack_pay.py).
     paystack_reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -227,6 +229,8 @@ class PosRegister(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     location_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # The kernel location the till stands in (0017); None = not set.
+    location_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     # The payment methods this till offers (0016); None follows the
     # business's own list (Business settings > Payment methods).
     payment_methods: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)

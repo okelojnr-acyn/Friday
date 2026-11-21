@@ -98,6 +98,9 @@ async def test_a_return_at_the_till_comes_out_of_the_drawer(client, a_till):
 
 
 async def test_only_admins_make_registers_and_a_shift_from_elsewhere_is_refused(client, as_principal, principal):
+    from dataclasses import replace
+
+    as_principal(replace(principal, role="member", perms=("cashier",)))
     assert (await client.post("/pos/registers", json={"name": "Sneaky"})).status_code == 403
     r = await client.post("/pos/sales", json=sale(100, shift_id=str(uuid.uuid4())))
     assert r.status_code == 422

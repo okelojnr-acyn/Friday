@@ -56,6 +56,7 @@ from .schemas import (
     QuoteCreate,
     QuoteStatusUpdate,
 )
+from friday_common.access import Scope, require, scope_for
 from friday_common.etims import normalize_pin
 from friday_common.etims.kernel import get_etims_config
 
@@ -66,7 +67,7 @@ from .paystack_pay import settle as settle_paystack
 from .paystack_pay import start_checkout as start_paystack_checkout
 from .paystack_pay import start_mpesa_prompt
 from .registers import router as registers_router
-from .registers import shift_for_sale
+from .registers import at_place, shift_for_sale, till_location
 from .webhooks import external_router
 from .webhooks import router as webhooks_router
 
@@ -226,6 +227,7 @@ pos_router = APIRouter(prefix="/pos", tags=["pos-sync"])
 @customers_router.get("", response_model=list[CustomerOut])
 async def list_customers(
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("customers.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(
@@ -238,6 +240,7 @@ async def list_customers(
 async def create_customer(
     body: CustomerCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("customers.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     customer = Customer(org_id=uuid.UUID(principal.org_id), created_at=datetime.now(UTC), **body.model_dump())
@@ -251,6 +254,7 @@ async def create_customer(
 async def bulk_create_customers(
     body: CustomerBulkCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("customers.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Mirrors apps/inventory/app/main.py's bulk_create_products -- lets a
@@ -265,28 +269,54 @@ async def bulk_create_customers(
     return created
 
 
+def _doc_allowed(scope: Scope | None, inv: Invoice) -> bool:
+    """Whether `scope` covers this document: everywhere; at one of their
+    locations; or (team/own) rung up by them or their team."""
+    if scope is None:
+        return False
+    if scope.everywhere:
+        return True
+    if scope.kind == "loc":
+        return inv.location_id is not None and scope.allows_location(str(inv.location_id))
+    return scope.allows_person(inv.cashier_user_id)
+
+
 async def _get_invoice(
-    session: AsyncSession, principal: Principal, invoice_id: uuid.UUID, kind: str = "invoice"
+    session: AsyncSession,
+    principal: Principal,
+    invoice_id: uuid.UUID,
+    kind: str = "invoice",
+    scope: Scope | None = None,
 ) -> Invoice:
     """`kind` keeps /invoices/{id} and /quotes/{id} from acting on each
     other's documents (same table, see 0009_quotes.sql) -- e.g. marking a
-    quote "paid" through the invoice status endpoint."""
+    quote "paid" through the invoice status endpoint. With `scope`, a
+    document outside it reads as not found."""
     inv = await session.get(Invoice, invoice_id)
     if inv is None or str(inv.org_id) != principal.org_id or inv.kind != kind:
         raise HTTPException(404, f"{kind} not found")
+    if scope is not None and not _doc_allowed(scope, inv):
+        raise HTTPException(404, f"{kind} not found")
     return inv
+
+
+def _in_scope(q, scope: Scope):
+    """Narrows an Invoice query to `scope`."""
+    if scope.everywhere:
+        return q
+    if scope.kind == "loc":
+        return q.where(Invoice.location_id.in_([uuid.UUID(x) for x in scope.locs if x != "*"]))
+    return scope.filter_people(q, Invoice.cashier_user_id)
 
 
 @invoices_router.get("", response_model=list[InvoiceOut])
 async def list_invoices(
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("invoices.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
-    rows = await session.execute(
-        select(Invoice)
-        .where(Invoice.org_id == uuid.UUID(principal.org_id), Invoice.kind == "invoice")
-        .order_by(Invoice.created_at.desc())
-    )
+    q = select(Invoice).where(Invoice.org_id == uuid.UUID(principal.org_id), Invoice.kind == "invoice")
+    rows = await session.execute(_in_scope(q, scope).order_by(Invoice.created_at.desc()))
     return [InvoiceOut.from_model(inv) for inv in rows.scalars().all()]
 
 
@@ -294,6 +324,7 @@ async def list_invoices(
 async def create_invoice(
     body: InvoiceCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("invoices.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     if body.recurring_interval not in RECURRING_INTERVALS:
@@ -344,6 +375,8 @@ async def get_invoice(
     session: AsyncSession = Depends(get_org_session),
 ):
     inv = await _get_invoice(session, principal, invoice_id)
+    if not (_doc_allowed(scope_for(principal, "invoices.read"), inv) or _doc_allowed(scope_for(principal, "sales.read"), inv)):
+        raise HTTPException(404, "invoice not found")
     return InvoiceOut.from_model(inv)
 
 
@@ -352,11 +385,12 @@ async def set_invoice_status(
     invoice_id: uuid.UUID,
     body: InvoiceStatusUpdate,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("invoices.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     if body.status not in INVOICE_STATUSES:
         raise HTTPException(422, f"status must be one of {INVOICE_STATUSES}")
-    inv = await _get_invoice(session, principal, invoice_id)
+    inv = await _get_invoice(session, principal, invoice_id, scope=scope)
     inv.status = body.status
     inv.updated_at = datetime.now(UTC)
     newly_sent = body.status == "sent" and inv.issued_at is None
@@ -374,9 +408,10 @@ async def record_payment(
     invoice_id: uuid.UUID,
     body: PaymentCreate,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("invoices.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
-    inv = await _get_invoice(session, principal, invoice_id)
+    inv = await _get_invoice(session, principal, invoice_id, scope=scope)
     if inv.kind != "invoice":
         raise HTTPException(400, "payments can only be recorded against an invoice, not a quote")
     session.add(
@@ -411,6 +446,7 @@ async def record_payment(
 async def pay_with_card(
     invoice_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("invoices.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Creates a Stripe PaymentIntent for the invoice's outstanding
@@ -419,7 +455,7 @@ async def pay_with_card(
     happens in the webhook below once Stripe reports success, never here
     (this request can be abandoned mid-checkout; the webhook is the only
     thing that moves money server-side)."""
-    inv = await _get_invoice(session, principal, invoice_id)
+    inv = await _get_invoice(session, principal, invoice_id, scope=scope)
     config = await get_integration_config(principal.org_id, "stripe")
     if not config.get("secret_key"):
         raise HTTPException(400, "Stripe is not connected -- add a secret key in Settings > Integrations")
@@ -444,13 +480,14 @@ async def pay_with_card(
 async def paystack_pay_link(
     invoice_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("invoices.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """A Paystack page for the invoice's outstanding balance, to send to
     the customer (card, M-Pesa or bank). Paid only once Paystack's verify
     says so (paystack_pay.settle); a new link replaces the last one, and
     a payment on either still counts once."""
-    inv = await _get_invoice(session, principal, invoice_id)
+    inv = await _get_invoice(session, principal, invoice_id, scope=scope)
     if inv.kind != "invoice":
         raise HTTPException(400, "a quote can't be paid -- convert it to an invoice first")
     if inv.status in ("void", "pending"):
@@ -472,6 +509,7 @@ async def paystack_pay_link(
 @invoices_router.post("/generate-recurring")
 async def generate_recurring_invoices(
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("invoices.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Clones every recurring template invoice whose `next_recurrence_at`
@@ -659,6 +697,7 @@ async def _pos_sale_by_client_id(session: AsyncSession, principal: Principal, cl
 async def record_pos_sale(
     body: dict,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("pos.sell")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Where the Rust POS engine's offline sync queue lands once a device
@@ -694,6 +733,9 @@ async def record_pos_sale(
         if customer is None:
             raise HTTPException(422, "a credit sale needs the customer's name")
     shift_id = None if channel == "guss" else await shift_for_sale(session, principal, body.get("shift_id"))
+    # Where it was sold: the till's location (a Guss sale has no till).
+    location_id = await till_location(session, shift_id)
+    at_place(scope, location_id)
     vat_cfg = None
     if channel == "guss" and any("vat_cents" not in line for line in lines_in):
         vat_cfg = await get_etims_config(principal.org_id)
@@ -712,6 +754,7 @@ async def record_pos_sale(
         cashier_user_id=principal.user_id,
         cashier_email=principal.email,
         pos_shift_id=shift_id,
+        location_id=location_id,
         issued_at=now,
         created_at=now,
         updated_at=now,
@@ -783,6 +826,7 @@ async def record_pos_sale(
 async def pay_with_pesapal(
     body: dict,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("pos.sell")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Starts a real Pesapal checkout for a POS sale -- unlike
@@ -856,6 +900,7 @@ async def pay_with_pesapal(
 async def pay_with_paystack(
     body: dict,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("pos.sell")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """A POS sale paid through the business's own Paystack (card, M-Pesa,
@@ -869,6 +914,8 @@ async def pay_with_paystack(
     if not lines_in:
         raise HTTPException(422, "sale must have at least one line")
     shift_id = await shift_for_sale(session, principal, body.get("shift_id"))
+    location_id = await till_location(session, shift_id)
+    at_place(scope, location_id)
     invoice = Invoice(
         org_id=uuid.UUID(principal.org_id),
         number=f"POS-{now:%Y%m%d}-{uuid.uuid4().hex[:6].upper()}",
@@ -879,6 +926,7 @@ async def pay_with_paystack(
         cashier_user_id=principal.user_id,
         cashier_email=principal.email,
         pos_shift_id=shift_id,
+        location_id=location_id,
         issued_at=now,
         created_at=now,
         updated_at=now,
@@ -908,6 +956,7 @@ async def pay_with_paystack(
 async def get_pos_sale_status(
     invoice_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("pos.sell")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Lightweight poll target for the frontend while a Pesapal payment is
@@ -989,6 +1038,7 @@ async def list_pos_sales(
     day: date = Query(..., description="YYYY-MM-DD, in UTC"),
     channel: str | None = Query(None, pattern="^(till|guss)$"),
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("sales.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """One day's sales from every till and Guss, newest first: what Guss
@@ -1004,6 +1054,9 @@ async def list_pos_sales(
     )
     if channel:
         q = q.where(Invoice.channel == channel)
+    # Staff see their own, team leaders their team's, branch managers their
+    # locations' (plan 12.2).
+    q = _in_scope(q, scope)
     rows = (await session.execute(q.order_by(Invoice.issued_at.desc()).limit(500))).scalars().all()
     return [
         {
@@ -1029,11 +1082,13 @@ async def list_pos_sales(
 async def get_pos_sale(
     number: str,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("pos.sell")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Looks up a past sale by receipt number -- what the POS register's
     returns screen calls before offering to refund it."""
     inv = await _get_pos_sale(session, principal, number)
+    at_place(scope, inv.location_id, "that sale")
     return InvoiceOut.from_model(inv)
 
 
@@ -1043,6 +1098,7 @@ async def return_pos_sale(
     shift_id: uuid.UUID | None = None,
     body: dict | None = None,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("pos.sell")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Refunds a past POS sale in full: a new invoice mirroring every
@@ -1054,6 +1110,9 @@ async def return_pos_sale(
     makes Inventory's existing pos_sale_recorded webhook restock
     automatically -- zero Inventory code needed for returns."""
     original = await _get_pos_sale(session, principal, number)
+    # shortcut: any cashier at the sale's location may take a return; plan
+    # 12.2 wants a team leader's approval for staff (with section 16.4).
+    at_place(scope, original.location_id, "that sale")
     # Sent again with the same client_return_id (a retry whose reply was
     # lost): the refund it made, never a second one. The refund's Payment
     # carries the id.
@@ -1117,6 +1176,7 @@ async def return_pos_sale(
         cashier_user_id=principal.user_id,
         cashier_email=principal.email,
         pos_shift_id=await shift_for_sale(session, principal, shift_id),
+        location_id=original.location_id,
         issued_at=now,
         created_at=now,
         updated_at=now,
@@ -1210,6 +1270,7 @@ async def return_pos_sale(
 async def create_credit_note(
     invoice_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("invoices.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Credit notes as a first-class concept for manual invoices -- same
@@ -1219,7 +1280,7 @@ async def create_credit_note(
     every real-world accounting system treats it). Unlike a POS return,
     the original isn't voided -- a credit note can be partial, or issued
     against an invoice that was never actually paid in full."""
-    original = await _get_invoice(session, principal, invoice_id)
+    original = await _get_invoice(session, principal, invoice_id, scope=scope)
     await session.refresh(original, attribute_names=["lines", "payments"])
 
     now = datetime.now(UTC)
@@ -1297,6 +1358,7 @@ def _copy_line(org_id: uuid.UUID, document_id: uuid.UUID, line) -> InvoiceLine:
 @quotes_router.get("", response_model=list[InvoiceOut])
 async def list_quotes(
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("invoices.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(
@@ -1311,6 +1373,7 @@ async def list_quotes(
 async def create_quote(
     body: QuoteCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("invoices.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     org_id = uuid.UUID(principal.org_id)
@@ -1345,9 +1408,10 @@ async def create_quote(
 async def get_quote(
     quote_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("invoices.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
-    return InvoiceOut.from_model(await _get_invoice(session, principal, quote_id, kind="quote"))
+    return InvoiceOut.from_model(await _get_invoice(session, principal, quote_id, kind="quote", scope=scope))
 
 
 @quotes_router.patch("/{quote_id}/status", response_model=InvoiceOut)
@@ -1355,13 +1419,14 @@ async def set_quote_status(
     quote_id: uuid.UUID,
     body: QuoteStatusUpdate,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("invoices.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     if body.status not in QUOTE_MANUAL_STATUSES:
         raise HTTPException(
             422, f"status must be one of {QUOTE_MANUAL_STATUSES} (accept a quote by converting it to an invoice)"
         )
-    quote = await _get_invoice(session, principal, quote_id, kind="quote")
+    quote = await _get_invoice(session, principal, quote_id, kind="quote", scope=scope)
     if quote.status == "accepted":
         raise HTTPException(409, "this quote was already converted to an invoice")
     quote.status = body.status
@@ -1377,13 +1442,14 @@ async def set_quote_status(
 async def convert_quote(
     quote_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("invoices.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Customer accepted: create a draft invoice with the quote's exact
     lines, mark the quote accepted, link both ways (invoice.source =
     "quote", source_ref = quote id). The invoice starts as draft so the
     user reviews it before "sent" emails the customer."""
-    quote = await _get_invoice(session, principal, quote_id, kind="quote")
+    quote = await _get_invoice(session, principal, quote_id, kind="quote", scope=scope)
     if quote.status in ("accepted", "declined"):
         raise HTTPException(409, f"quote is already {quote.status}")
     now = datetime.now(UTC)
@@ -1440,8 +1506,11 @@ def _aging_bucket(days_past_due: int) -> str:
 @reports_router.get("/ar-aging", response_model=ArAgingOut)
 async def ar_aging(
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("invoices.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    if not scope.everywhere:
+        raise HTTPException(403, "the receivables report covers the whole business; ask an admin")
     """Accounts-receivable aging: what customers owe and how late it is.
     Only issued invoices (status "sent") with an outstanding balance --
     drafts aren't owed yet, paid/void owe nothing. No due date = current."""
