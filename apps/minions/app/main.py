@@ -18,6 +18,7 @@ from friday_common import (
     resource,
     set_org_context,
 )
+from friday_common.access import APPROVAL_LIMIT_CENTS, Scope, people_in, require, scope_for, who_can
 from friday_common.integrations import AcynWalletProvider, GoogleCalendarProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -282,11 +283,15 @@ webhooks_router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
 @employee_sales_router.get("", response_model=list[EmployeeSaleOut])
 async def list_employee_sales(
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("sales.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
-    rows = await session.execute(
-        select(EmployeeSale).where(EmployeeSale.org_id == _org(principal)).order_by(EmployeeSale.created_at.desc())
-    )
+    """Sales by person: your own, your team's, your locations' or all."""
+    q = select(EmployeeSale).where(EmployeeSale.org_id == _org(principal))
+    ids = await _visible_employee_ids(session, principal, scope)
+    if ids is not None:
+        q = q.where(EmployeeSale.employee_id.in_(ids))
+    rows = await session.execute(q.order_by(EmployeeSale.created_at.desc()))
     return rows.scalars().all()
 
 
@@ -412,19 +417,49 @@ async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_sess
     await session.commit()
 
 
+async def _visible_employee_ids(session: AsyncSession, principal: Principal, scope: Scope):
+    """The employees `scope` covers, by their Friday account: None for all.
+    shortcut: an employee who has never signed in (no user_id yet) is seen
+    only with "all" scope; People merges employees with memberships in
+    plan 12.8 step 3."""
+    people = await people_in(scope, principal.org_id)
+    if people is None:
+        return None
+    rows = await session.execute(
+        select(Employee.id).where(Employee.org_id == _org(principal), Employee.user_id.in_(list(people)))
+    )
+    return [r[0] for r in rows.all()]
+
+
 @employees_router.get("", response_model=list[EmployeeOut])
 async def list_employees(
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("staff.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
-    rows = await session.execute(select(Employee).where(Employee.org_id == _org(principal)).order_by(Employee.name))
-    return rows.scalars().all()
+    """Staff list by role (plan 12.2): everyone, their locations or their
+    team. Pay rates and wallets only for those who handle pay, and each
+    person's own."""
+    q = select(Employee).where(Employee.org_id == _org(principal)).order_by(Employee.name)
+    ids = await _visible_employee_ids(session, principal, scope)
+    if ids is not None:
+        q = q.where(Employee.id.in_(ids))
+    pay = scope_for(principal, "pay.read")
+    sees_pay = pay is not None and pay.kind == "all"
+    out = []
+    for e in (await session.execute(q)).scalars().all():
+        row = EmployeeOut.model_validate(e)
+        if not sees_pay and e.user_id != principal.user_id:
+            row = row.model_copy(update={"pay_rate_cents": None, "wallet_address": "", "wallet_network": ""})
+        out.append(row)
+    return out
 
 
 @employees_router.post("", response_model=EmployeeOut, status_code=201)
 async def create_employee(
     body: EmployeeCreate,
-    principal: Principal = Depends(require_role("admin")),
+    principal: Principal = Depends(get_current_principal),
+    _pay: Scope = Depends(require("pay.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     if body.pay_frequency not in PAY_FREQUENCIES:
@@ -456,7 +491,8 @@ async def _get_owned_employee(session: AsyncSession, principal: Principal, emplo
 async def update_employee(
     employee_id: uuid.UUID,
     body: EmployeeCreate,
-    principal: Principal = Depends(require_role("admin")),
+    principal: Principal = Depends(get_current_principal),
+    _pay: Scope = Depends(require("pay.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     if body.pay_frequency not in PAY_FREQUENCIES:
@@ -533,12 +569,19 @@ async def my_payroll(
 async def list_expense_claims(
     mine: bool = False,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("claims.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    """Claims by role: your own, your team's, your locations' or all;
+    `mine` narrows to your own whatever your role."""
     query = select(ExpenseClaim).where(ExpenseClaim.org_id == _org(principal))
-    if mine:
+    if mine or scope.kind == "own":
         employee = await _resolve_my_employee(session, principal)
         query = query.where(ExpenseClaim.employee_id == employee.id)
+    else:
+        ids = await _visible_employee_ids(session, principal, scope)
+        if ids is not None:
+            query = query.where(ExpenseClaim.employee_id.in_(ids))
     rows = await session.execute(query.order_by(ExpenseClaim.submitted_at.desc()))
     return rows.scalars().all()
 
@@ -576,7 +619,8 @@ async def _get_owned_claim(session: AsyncSession, principal: Principal, claim_id
 async def set_expense_claim_status(
     claim_id: uuid.UUID,
     body: ExpenseClaimStatusUpdate,
-    principal: Principal = Depends(require_role("admin")),
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("claims.approve")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Approve/reject only -- "paid" is reached exclusively through
@@ -588,6 +632,20 @@ async def set_expense_claim_status(
     claim = await _get_owned_claim(session, principal, claim_id)
     if claim.status != "submitted":
         raise HTTPException(400, f"claim is '{claim.status}', not 'submitted'")
+    # Who may decide: someone over the claimant (their team, location or
+    # everyone), never the claimant themselves (owners excepted), and
+    # within their approval limit.
+    claimant = await _get_owned_employee(session, principal, claim.employee_id)
+    ids = await _visible_employee_ids(session, principal, scope)
+    if ids is not None and claimant.id not in ids:
+        raise HTTPException(403, f"{claimant.name} isn't in your team or locations; ask {who_can('claims.approve', principal.role)}")
+    if claimant.user_id == principal.user_id and principal.role != "owner":
+        raise HTTPException(403, f"nobody decides their own claim; ask {who_can('claims.approve', principal.role)}")
+    limit = APPROVAL_LIMIT_CENTS.get(principal.role)
+    if limit is not None and claim.amount_cents > limit:
+        raise HTTPException(
+            403, f"above your approval limit ({limit // 100:,}); ask {who_can('claims.approve', principal.role)}"
+        )
     claim.status = body.status
     await session.commit()
     await session.refresh(claim)
@@ -597,7 +655,8 @@ async def set_expense_claim_status(
 @expense_claims_router.post("/{claim_id}/pay", response_model=ExpenseClaimOut)
 async def pay_expense_claim(
     claim_id: uuid.UUID,
-    principal: Principal = Depends(require_role("admin")),
+    principal: Principal = Depends(get_current_principal),
+    _pay: Scope = Depends(require("pay.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     claim = await _get_owned_claim(session, principal, claim_id)

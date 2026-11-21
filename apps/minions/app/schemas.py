@@ -20,7 +20,8 @@ class EmployeeOut(BaseModel):
     name: str
     email: str
     department: str
-    pay_rate_cents: int
+    # None when the caller doesn't handle pay (plan 12.2).
+    pay_rate_cents: int | None
     pay_frequency: str
     status: str
     wallet_address: str

@@ -32,6 +32,12 @@ PERMS = ("cashier", "warehouse", "logistics", "purchasing", "sales", "accounting
 # Stands in for a team too big to list in a token (kernel access.TeamByLocation).
 TEAM_BY_LOCATION = "*loc"
 
+# Approval limits per item, in the currency's cents (plan 12.9: KES 2,000
+# for team leaders, KES 20,000 for branch managers; owners and admins have
+# none). shortcut: one limit for every business and currency; make them a
+# business setting when a business asks.
+APPROVAL_LIMIT_CENTS = {"team_leader": 200_000, "branch_manager": 2_000_000}
+
 ROLE_NAMES = {
     "owner": "an owner",
     "admin": "an admin",
