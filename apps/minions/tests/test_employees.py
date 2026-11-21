@@ -76,6 +76,6 @@ async def test_org_isolation_on_employees(client, as_principal, principal):
     _as_admin(as_principal, principal)
     await client.post("/employees", json={"name": "Jane", "email": "jane@example.com"})
 
-    as_principal(make_principal())  # different org entirely
+    as_principal(make_principal(role="admin"))  # an admin of a different org entirely
     resp = await client.get("/employees")
     assert resp.json() == []

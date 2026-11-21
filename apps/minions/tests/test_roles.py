@@ -1,10 +1,6 @@
 """Plan section 12, step 2 in Minions: who sees which staff, pay and
 claims, and who may decide a claim."""
 
-import uuid
-
-from app.models import Employee
-from friday_common.db import _session_factory, set_org_context
 from friday_common.testing import make_principal
 
 
@@ -23,13 +19,12 @@ async def _staff(client, as_principal, principal, people):
             )
         ).json()
         out[name] = e
-    # Their Friday accounts: what their first sign-in would have claimed.
-    async with _session_factory()() as session:
-        await set_org_context(session, principal.org_id)
-        for name, user_id, _ in people:
-            row = await session.get(Employee, uuid.UUID(out[name]["id"]))
-            row.user_id = user_id
-        await session.commit()
+    # Their Friday accounts: each opens their own wallet once, which claims
+    # the employee row for their account (as a first sign-in does).
+    for name, user_id, _ in people:
+        me = make_principal(org_id=principal.org_id, email=f"{name.lower()}@x.test")
+        as_principal(me.__class__(**{**me.__dict__, "user_id": user_id}))
+        assert (await client.get("/me/wallet")).status_code == 200
     return out
 
 
