@@ -35,6 +35,7 @@ MONEY_ACCOUNT = {
     "bank_transfer": "1030",
     "bank": "1030",
     "stripe": "1030",
+    "cheque": "1030",
 }
 
 
@@ -201,6 +202,50 @@ async def purchase_received(body: dict, session: AsyncSession = Depends(get_sess
     if vat_cents:
         session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=vat_input.id, debit_cents=vat_cents, credit_cents=0, description="VAT on purchases"))
     session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=payable.id, debit_cents=0, credit_cents=net_cents + vat_cents, description=f"Owed to {supplier}"))
+    await session.commit()
+
+
+@webhooks_router.post("/purchase-paid", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def purchase_paid(body: dict, session: AsyncSession = Depends(get_session)):
+    """Subscribed to inventory.purchase.paid: the supplier is paid.
+    Dr Accounts Payable, Cr the account the money left from (cash, M-Pesa,
+    card and bank), so the payable goes back to zero."""
+    payload = body.get("payload", {})
+    org_id = uuid.UUID(body["org_id"])
+    await set_org_context(session, str(org_id))
+    if not await first_delivery(session, body):
+        return
+    ref = "paid:" + (payload.get("purchase_order_id") or "")
+    if await _already_posted(session, org_id, "inventory", ref):
+        return
+    amount_cents = int(payload.get("amount_cents", 0) or 0)
+    if amount_cents <= 0:
+        return
+
+    await ensure_default_accounts(session, org_id)
+    payable = await get_account_by_code(session, org_id, "2000")
+    money = await get_account_by_code(session, org_id, MONEY_ACCOUNT.get(payload.get("method", ""), "1010"))
+
+    now = datetime.now(UTC)
+    supplier = payload.get("supplier_name") or "supplier"
+    memo = f"Paid {supplier} for {payload.get('po_number', '')}"
+    if payload.get("reference"):
+        memo += f" ({payload['reference']})"
+    entry = JournalEntry(
+        org_id=org_id,
+        number=_new_entry_number(now),
+        entry_date=now.date(),
+        memo=memo,
+        source="inventory",
+        source_ref=ref,
+        status="posted",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(entry)
+    await session.flush()
+    session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=payable.id, debit_cents=amount_cents, credit_cents=0, description=f"Paid {supplier}"))
+    session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=money.id, debit_cents=0, credit_cents=amount_cents, description=f"Paid out ({money.name})"))
     await session.commit()
 
 

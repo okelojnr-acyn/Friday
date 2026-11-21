@@ -10,6 +10,7 @@ import { SmartButtons } from "./SmartButtons";
 import { PayWithCardPanel } from "../../apps/invoicing/PayWithCardPanel";
 import { DocumentActionsPanel } from "../../apps/invoicing/DocumentActionsPanel";
 import { CreatePurchaseOrderPanel } from "../../apps/inventory/CreatePurchaseOrderPanel";
+import { PayPurchaseOrderPanel } from "../../apps/inventory/PayPurchaseOrderPanel";
 import { amountInputToCents, centsToAmountInput, toDateInputValue, toDatetimeInputValue } from "./fieldFormat";
 
 interface FormViewProps {
@@ -141,6 +142,9 @@ export function FormView({ spec, app, schema, record, onClose, onSaved }: FormVi
           onHandQty={Number(record!.on_hand_qty ?? 0)}
           reorderPoint={Number(record!.reorder_point ?? 0)}
         />
+      ) : null}
+      {isEdit && app === "inventory" && spec.name === "purchase_order" ? (
+        <PayPurchaseOrderPanel record={record!} onChanged={onSaved} />
       ) : null}
     </Modal>
   );

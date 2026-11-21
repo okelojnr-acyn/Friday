@@ -233,6 +233,12 @@ class PurchaseOrderCreate(BaseModel):
     lines: list[PurchaseOrderLineIn] = []
 
 
+class PurchaseOrderPay(BaseModel):
+    # cash, mpesa, bank_transfer, card, ... (Accounting maps each to an account)
+    method: str = Field(min_length=1, max_length=30)
+    reference: str = Field(default="", max_length=80)
+
+
 class PurchaseOrderStatusUpdate(BaseModel):
     status: str
     # Given when receiving: the supplier's invoice that came with the goods.
@@ -249,10 +255,15 @@ class PurchaseOrderOut(BaseModel):
     supplier_invoice_no: str = ""
     supplier_invoice_date: date | None = None
     received_at: datetime | None = None
+    paid_at: datetime | None = None
+    paid_method: str = ""
+    paid_reference: str = ""
     created_at: datetime
     updated_at: datetime
     lines: list[PurchaseOrderLineOut]
     total_cost_cents: int
+    # Cost plus VAT: what the supplier is owed once the goods are in.
+    total_due_cents: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -267,6 +278,9 @@ class PurchaseOrderOut(BaseModel):
             supplier_invoice_no=po.supplier_invoice_no,
             supplier_invoice_date=po.supplier_invoice_date,
             received_at=po.received_at,
+            paid_at=po.paid_at,
+            paid_method=po.paid_method,
+            paid_reference=po.paid_reference,
             created_at=po.created_at,
             updated_at=po.updated_at,
             lines=[
@@ -286,4 +300,5 @@ class PurchaseOrderOut(BaseModel):
                 for line in po.lines
             ],
             total_cost_cents=sum(line.total_cost_cents for line in po.lines),
+            total_due_cents=sum(line.total_cost_cents + line.vat_cents for line in po.lines),
         )

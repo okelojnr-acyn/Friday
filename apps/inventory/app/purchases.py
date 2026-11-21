@@ -26,6 +26,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Product, PurchaseOrder, Supplier
+from .schemas import PurchaseOrderOut, PurchaseOrderPay
+
+PAY_METHODS = ("cash", "mpesa", "airtel", "pesapal", "card", "bank_transfer", "cheque")
 
 router = APIRouter(prefix="/purchase_orders", tags=["purchases"])
 
@@ -70,6 +73,48 @@ async def publish_purchase_received(session: AsyncSession, org_id: str, po: Purc
             "vat_cents": vat,
         },
     )
+
+
+@router.post("/{po_id}/pay", response_model=PurchaseOrderOut)
+async def pay_purchase_order(
+    po_id: uuid.UUID,
+    body: PurchaseOrderPay,
+    principal: Principal = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The supplier is paid in full (cost plus VAT). Accounting books Dr
+    Accounts Payable, Cr the account the money left from. Paying twice is
+    refused, so the payable is never cleared twice."""
+    method = body.method.strip().lower()
+    if method not in PAY_METHODS:
+        raise HTTPException(422, f"method must be one of {', '.join(PAY_METHODS)}")
+    po = await session.get(PurchaseOrder, po_id)
+    if po is None or str(po.org_id) != principal.org_id:
+        raise HTTPException(404, "purchase order not found")
+    if po.status != "received":
+        raise HTTPException(409, "receive the goods first: a supplier is owed only for what came in")
+    if po.paid_at is not None:
+        raise HTTPException(409, "this purchase order is already paid")
+    po.paid_at = datetime.now(UTC)
+    po.paid_method = method
+    po.paid_reference = body.reference.strip()
+    po.updated_at = po.paid_at
+    await session.commit()
+    await session.refresh(po, attribute_names=["lines"])
+    supplier = await session.get(Supplier, po.supplier_id) if po.supplier_id else None
+    await publish_event(
+        "inventory.purchase.paid",
+        principal.org_id,
+        {
+            "purchase_order_id": str(po.id),
+            "po_number": po.number,
+            "supplier_name": supplier.name if supplier else "",
+            "amount_cents": sum(line.total_cost_cents + line.vat_cents for line in po.lines),
+            "method": method,
+            "reference": po.paid_reference,
+        },
+    )
+    return PurchaseOrderOut.from_model(po)
 
 
 @router.get("/vat-purchases.csv")

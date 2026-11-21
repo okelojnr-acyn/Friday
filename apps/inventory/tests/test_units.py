@@ -201,3 +201,53 @@ async def test_goods_received_carry_vat_into_the_purchases_schedule(client, as_p
     assert rows[0][1] == "PIN of Supplier"
     b = [r for r in rows[1:] if r[7] == "B"][0]
     assert b[1] == "P051234567X" and b[4] == "MS-1001" and b[8:10] == ["5000.00", "800.00"] and b[12] == ""
+
+
+async def test_paying_a_supplier_once_for_what_came_in(client, as_principal, principal, monkeypatch):
+    from app import purchases
+
+    async def no_kernel(org_id):
+        return {"vat_registered": True, "default_code": "B", "rates": [{"code": "B", "rate_bp": 1600}]}
+
+    sent = []
+
+    async def fake_publish(event_type, org_id, payload):
+        sent.append((event_type, payload))
+
+    monkeypatch.setattr(purchases, "get_etims_config", no_kernel)
+    monkeypatch.setattr(purchases, "publish_event", fake_publish)
+    as_principal(replace(principal, role="admin"))
+    sup = (await client.post("/suppliers", json={"name": "Bidco"})).json()
+    oil = (await client.post("/products", json={"name": "Oil"})).json()
+    po = (await client.post("/purchase_orders", json={"supplier_id": sup["id"], "lines": [{"product_id": oil["id"], "quantity": 4, "unit_cost_cents": 25000}]})).json()
+
+    early = await client.post(f"/purchase_orders/{po['id']}/pay", json={"method": "mpesa"})
+    assert early.status_code == 409  # nothing received, nothing owed yet
+
+    await client.patch(f"/purchase_orders/{po['id']}/status", json={"status": "received"})
+    assert (await client.post(f"/purchase_orders/{po['id']}/pay", json={"method": "barter"})).status_code == 422
+    paid = await client.post(f"/purchase_orders/{po['id']}/pay", json={"method": "mpesa", "reference": "SKD8XYZ"})
+    assert paid.status_code == 200
+    body = paid.json()
+    assert body["paid_method"] == "mpesa" and body["paid_reference"] == "SKD8XYZ" and body["paid_at"]
+    assert body["total_due_cents"] == 116000
+    event = [p for t, p in sent if t == "inventory.purchase.paid"]
+    assert event == [{"purchase_order_id": po["id"], "po_number": po["number"], "supplier_name": "Bidco", "amount_cents": 116000, "method": "mpesa", "reference": "SKD8XYZ"}]
+
+    again = await client.post(f"/purchase_orders/{po['id']}/pay", json={"method": "cash"})
+    assert again.status_code == 409
+
+
+async def test_a_business_not_registered_for_vat_claims_no_input_vat(client, as_principal, principal, monkeypatch):
+    from app import purchases
+
+    async def not_registered(org_id):
+        return {"vat_registered": False, "default_code": "B", "rates": [{"code": "B", "rate_bp": 1600}]}
+
+    monkeypatch.setattr(purchases, "get_etims_config", not_registered)
+    as_principal(replace(principal, role="admin"))
+    sugar = (await client.post("/products", json={"name": "Sugar"})).json()
+    po = (await client.post("/purchase_orders", json={"lines": [{"product_id": sugar["id"], "quantity": 2, "unit_cost_cents": 10000}]})).json()
+    received = (await client.patch(f"/purchase_orders/{po['id']}/status", json={"status": "received"})).json()
+    assert [line["vat_cents"] for line in received["lines"]] == [0]
+    assert received["total_due_cents"] == 20000

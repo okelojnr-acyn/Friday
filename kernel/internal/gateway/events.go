@@ -47,6 +47,7 @@ var subscriptions = []subscription{
 	{Event: "invoicing.pos_sale.recorded", App: "minions", WebhookPath: "/internal/webhooks/pos-sale"},
 	{Event: "minions.payroll_run.paid", App: "accounting", WebhookPath: "/internal/webhooks/payroll-paid"},
 	{Event: "inventory.purchase.received", App: "accounting", WebhookPath: "/internal/webhooks/purchase-received"},
+	{Event: "inventory.purchase.paid", App: "accounting", WebhookPath: "/internal/webhooks/purchase-paid"},
 }
 
 func newEventID() string {

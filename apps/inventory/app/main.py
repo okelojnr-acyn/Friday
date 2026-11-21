@@ -176,6 +176,7 @@ resource(
             FieldSpec("supplier_id", "Supplier", "reference", reference="inventory.supplier", form_visible=False),
             FieldSpec("status", "Status", "select", options=PURCHASE_ORDER_STATUSES, required=True),
             FieldSpec("total_cost_cents", "Total cost", "currency", form_visible=False),
+            FieldSpec("paid_at", "Paid", "datetime", form_visible=False),
             FieldSpec("created_at", "Created", "datetime", form_visible=False),
         ),
     )

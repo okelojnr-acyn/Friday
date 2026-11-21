@@ -206,6 +206,10 @@ class PurchaseOrder(Base):
     supplier_invoice_no: Mapped[str] = mapped_column(Text, nullable=False, default="")
     supplier_invoice_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Paying the supplier (0014): when, how, and their receipt or M-Pesa code.
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_method: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    paid_reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
