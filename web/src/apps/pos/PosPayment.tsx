@@ -8,9 +8,11 @@ export interface OnlineMethod {
   key: string;
   label: string;
   hint: string;
+  /** Asks for the customer's phone first (an M-Pesa prompt sent to it). */
+  askPhone?: boolean;
   /** Gets the till's own part of a split (typed before pressing it), or
-   * none when the whole sale goes online. */
-  start: (tenders: Tender[]) => void;
+   * none when the whole sale goes online; and the phone, if asked. */
+  start: (tenders: Tender[], phone?: string) => void;
 }
 
 export interface Tender {
@@ -60,6 +62,9 @@ export function PosPayment({
   const [lines, setLines] = useState<Tender[]>(manual.length ? [{ method: manual[0], cents: totalCents }] : []);
   const [selected, setSelected] = useState(0);
   const [entry, setEntry] = useState<string | null>(null);
+  // The online method waiting for the customer's phone number.
+  const [phoneFor, setPhoneFor] = useState<OnlineMethod | null>(null);
+  const [phone, setPhone] = useState("");
 
   const paid = lines.reduce((s, l) => s + l.cents, 0);
   const remaining = Math.max(0, totalCents - paid);
@@ -88,6 +93,11 @@ export function PosPayment({
     const next = (entry ?? "").slice(0, -1);
     setEntry(next);
     setSelectedCents(Math.round((Number.parseFloat(next || "0") || 0) * 100));
+  }
+
+  // The till's own part of a split, when one was typed before going online.
+  function splitPart(): Tender[] {
+    return paid > 0 && paid < totalCents ? lines.filter((l) => l.cents > 0) : [];
   }
 
   function addMethod(method: string) {
@@ -166,7 +176,13 @@ export function PosPayment({
               </button>
             ))}
             {online.map((o) => (
-              <button key={o.key} type="button" className="till-method glass" onClick={() => o.start(paid > 0 && paid < totalCents ? lines.filter((l) => l.cents > 0) : [])} style={{ lineHeight: 1.2 }}>
+              <button
+                key={o.key}
+                type="button"
+                className={`till-method glass${phoneFor?.key === o.key ? " active" : ""}`}
+                onClick={() => (o.askPhone ? setPhoneFor(o) : o.start(splitPart()))}
+                style={{ lineHeight: 1.2 }}
+              >
                 {o.label}
                 <span style={{ display: "block", fontSize: 13, fontWeight: 500, color: "var(--text-muted)" }}>
                   {o.hint}
@@ -174,6 +190,39 @@ export function PosPayment({
               </button>
             ))}
           </div>
+          {phoneFor ? (
+            <form
+              className="glass"
+              style={{ borderRadius: 20, padding: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (phone.trim()) phoneFor.start(splitPart(), phone.trim());
+              }}
+            >
+              <label htmlFor="till-phone" className="till-text" style={{ flexBasis: "100%" }}>
+                Customer's M-Pesa number
+              </label>
+              <input
+                id="till-phone"
+                type="tel"
+                inputMode="tel"
+                autoComplete="off"
+                autoFocus
+                placeholder="0712 345 678"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                // The till's keyboard shortcuts must not eat the digits.
+                onKeyDown={(e) => e.stopPropagation()}
+                style={{ flex: "1 1 160px", minWidth: 0, fontSize: 20, padding: "10px 12px", borderRadius: 12, border: "1px solid var(--border)" }}
+              />
+              <button type="submit" className="till-pay" style={{ margin: 0, flex: "0 0 auto" }} disabled={!phone.trim()}>
+                Send prompt
+              </button>
+              <button type="button" className="glass" style={{ borderRadius: 12, padding: "10px 14px" }} onClick={() => setPhoneFor(null)}>
+                Cancel
+              </button>
+            </form>
+          ) : null}
           <div className="glass" style={{ borderRadius: 20, padding: 12 }}>
             {lines.map((l, i) => (
               <div

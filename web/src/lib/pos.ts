@@ -31,7 +31,10 @@ export const startPesapalPosPayment = (sale: unknown) =>
  * apps/invoicing/app/paystack_pay.py). pollPosSaleStatus also asks
  * Paystack, so the till finds out even if the webhook is lost. */
 export const startPaystackPosPayment = (sale: unknown) =>
-  api.post<{ invoice_id: string; redirect_url: string }>("/api/invoicing/pos/sales/pay-with-paystack", sale);
+  api.post<{ invoice_id: string; redirect_url: string; prompt?: string }>(
+    "/api/invoicing/pos/sales/pay-with-paystack",
+    sale,
+  );
 
 /** A Paystack page for an invoice's balance, to send to the customer. */
 export const paystackInvoiceLink = (invoiceId: string) =>
