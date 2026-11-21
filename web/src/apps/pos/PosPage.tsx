@@ -5,14 +5,15 @@ import { useAuth } from "../../lib/auth";
 import { fetchProductCatalog, type Product } from "../../lib/inventory";
 import { formatMoney, useOrgSettings } from "../../lib/orgSettings";
 import type { PosRegister, PosShift } from "../../lib/posApi";
-import { pollPosSaleStatus, startPesapalPosPayment } from "../../lib/pos";
+import { listIntegrations } from "../../lib/integrations";
+import { offeredMethods, pollPosSaleStatus, startPaystackPosPayment, startPesapalPosPayment } from "../../lib/pos";
 import { useBarcodeScanner } from "../../lib/useBarcodeScanner";
 import { Avatar } from "../../ui/Avatar";
 import { Icon } from "../../ui/Icon";
 import { initials } from "../../ui/resource/fieldFormat";
 import { chooseSerialDrawer, drawerMode, openDrawer, serialSupported, setDrawerMode, type DrawerMode } from "./drawer";
 import { PosNumpad } from "./PosNumpad";
-import { PosPayment, type Tender } from "./PosPayment";
+import { PosPayment, type OnlineMethod, type Tender } from "./PosPayment";
 import { printReceipt, type Receipt } from "./receipt";
 import { BuyerPin, type Buyer } from "./BuyerPin";
 import { lineTotalCents, tillTotals } from "./tax";
@@ -109,7 +110,19 @@ export function PosPage({
   const [customName, setCustomName] = useState("");
   const [customPrice, setCustomPrice] = useState("");
   const [drawer, setDrawer] = useState<DrawerMode>(drawerMode());
-  const [pesapalFlow, setPesapalFlow] = useState<{ invoiceId: string; status: "starting" | "pending" | "paid" | "void" } | null>(null);
+  // A sale waiting on a gateway that confirms it (Paystack or Pesapal).
+  const [onlineFlow, setOnlineFlow] = useState<{
+    provider: "Paystack" | "Pesapal";
+    invoiceId: string;
+    status: "starting" | "pending" | "paid" | "void";
+  } | null>(null);
+  const [connected, setConnected] = useState<string[]>([]);
+
+  useEffect(() => {
+    listIntegrations()
+      .then((rows) => setConnected(rows.map((r) => r.provider)))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     init().then(() => {
@@ -428,41 +441,43 @@ export function PosPage({
     }
   }
 
-  async function payWithPesapal() {
+  async function payOnline(provider: "Paystack" | "Pesapal") {
     const cart = cartRef.current;
     if (!cart || lines.length === 0) return;
     setError(null);
     let sale: Sale;
     try {
-      sale = annotate({ ...JSON.parse(cart.checkout_json(settings.currency, "pesapal", Date.now())), shift_id: shift.id });
+      const method = provider.toLowerCase();
+      sale = annotate({ ...JSON.parse(cart.checkout_json(settings.currency, method, Date.now())), shift_id: shift.id });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not build the sale");
       return;
     }
     setPaying(false);
-    setPesapalFlow({ invoiceId: "", status: "starting" });
+    setOnlineFlow({ provider, invoiceId: "", status: "starting" });
     try {
-      const { invoice_id, redirect_url } = await startPesapalPosPayment(sale);
-      setPesapalFlow({ invoiceId: invoice_id, status: "pending" });
+      const start = provider === "Paystack" ? startPaystackPosPayment : startPesapalPosPayment;
+      const { invoice_id, redirect_url } = await start(sale);
+      setOnlineFlow({ provider, invoiceId: invoice_id, status: "pending" });
       window.open(redirect_url, "_blank", "noopener");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not start Pesapal checkout");
-      setPesapalFlow(null);
+      setError(err instanceof ApiError ? err.message : `Could not start ${provider} checkout`);
+      setOnlineFlow(null);
     }
   }
 
   useEffect(() => {
-    if (!pesapalFlow || pesapalFlow.status !== "pending") return;
+    if (!onlineFlow || onlineFlow.status !== "pending") return;
     const interval = setInterval(async () => {
       try {
-        const result = await pollPosSaleStatus(pesapalFlow.invoiceId);
+        const result = await pollPosSaleStatus(onlineFlow.invoiceId);
         if (result.status === "paid") {
           cartRef.current?.clear();
           setSelected(null);
           refreshCart();
-          setPesapalFlow((cur) => (cur ? { ...cur, status: "paid" } : cur));
+          setOnlineFlow((cur) => (cur ? { ...cur, status: "paid" } : cur));
         } else if (result.status === "void") {
-          setPesapalFlow((cur) => (cur ? { ...cur, status: "void" } : cur));
+          setOnlineFlow((cur) => (cur ? { ...cur, status: "void" } : cur));
         }
       } catch {
         // keep polling
@@ -470,7 +485,24 @@ export function PosPage({
     }, 3000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pesapalFlow?.invoiceId, pesapalFlow?.status]);
+  }, [onlineFlow?.invoiceId, onlineFlow?.status]);
+
+  const offered = offeredMethods(register?.payment_methods, settings.payment_methods);
+  const online: OnlineMethod[] = [];
+  if (offered.includes("paystack") && connected.includes("paystack"))
+    online.push({
+      key: "paystack",
+      label: "Paystack",
+      hint: "Card, M-Pesa or bank · confirms itself",
+      start: () => payOnline("Paystack"),
+    });
+  if (offered.includes("pesapal") && connected.includes("pesapal"))
+    online.push({
+      key: "pesapal",
+      label: "Pesapal",
+      hint: "M-Pesa / Airtel prompt, card, bank · confirms itself",
+      start: () => payOnline("Pesapal"),
+    });
 
   // Variants hang off their main product; the shelf shows one tile for
   // the main product and asks which. A variant takes its main product's
@@ -543,7 +575,8 @@ export function PosPage({
         totalCents={totals.total}
         taxCents={totals.tax}
         taxLabel={taxLabel}
-        pesapal={payWithPesapal}
+        manual={offered.filter((m) => m === "cash" || m === "mpesa" || m === "card")}
+        online={online}
         onCancel={() => setPaying(false)}
         onPaid={onPaid}
         buyer={<BuyerPin value={buyer} onChange={setBuyer} />}
@@ -733,15 +766,15 @@ export function PosPage({
               </div>
             </div>
             {error ? <div className="till-error">{error}</div> : null}
-            {pesapalFlow ? (
+            {onlineFlow ? (
               <div className="till-error" style={{ background: "rgba(224,122,53,.12)", color: "#9a4a12" }}>
-                {pesapalFlow.status === "starting" && "Starting Pesapal checkout…"}
-                {pesapalFlow.status === "pending" && "Waiting for the customer to pay on Pesapal…"}
-                {pesapalFlow.status === "paid" && "Pesapal payment received."}
-                {pesapalFlow.status === "void" && "Pesapal payment failed or was cancelled."}
-                {pesapalFlow.status === "paid" || pesapalFlow.status === "void" ? (
-                  <button type="button" onClick={() => setPesapalFlow(null)} style={{ marginLeft: 8 }}>
-                    OK
+                {onlineFlow.status === "starting" && `Starting ${onlineFlow.provider} checkout…`}
+                {onlineFlow.status === "pending" && `Waiting for the customer to pay on ${onlineFlow.provider}…`}
+                {onlineFlow.status === "paid" && `${onlineFlow.provider} payment received.`}
+                {onlineFlow.status === "void" && `${onlineFlow.provider} payment failed or was cancelled.`}
+                {onlineFlow.status !== "starting" ? (
+                  <button type="button" onClick={() => setOnlineFlow(null)} style={{ marginLeft: 8 }}>
+                    {onlineFlow.status === "pending" ? "Stop waiting" : "OK"}
                   </button>
                 ) : null}
               </div>

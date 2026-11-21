@@ -67,6 +67,10 @@ class PayWithPesapalOut(BaseModel):
     redirect_url: str
 
 
+# A Paystack checkout (POS sale or invoice pay link): the page to pay on.
+PaystackCheckoutOut = PayWithPesapalOut
+
+
 class PosSaleStatusOut(BaseModel):
     invoice_id: uuid.UUID
     status: str

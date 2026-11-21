@@ -1,5 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "../../lib/api";
+import { listIntegrations } from "../../lib/integrations";
+import { useOrgSettings } from "../../lib/orgSettings";
+import { offeredMethods, paystackInvoiceLink, pollPosSaleStatus } from "../../lib/pos";
 import { amountInputToCents } from "../../ui/resource/fieldFormat";
 import { Button } from "../../ui/Button";
 import { Input, Select } from "../../ui/Field";
@@ -37,6 +40,28 @@ export function DocumentActionsPanel({ kind, record, onChanged }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const settings = useOrgSettings();
+  const [paystackOn, setPaystackOn] = useState(false);
+  const [payLink, setPayLink] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (kind !== "invoice" || !offeredMethods(null, settings.payment_methods).includes("paystack")) return;
+    listIntegrations()
+      .then((rows) => setPaystackOn(rows.some((r) => r.provider === "paystack")))
+      .catch(() => {});
+  }, [kind, settings.payment_methods]);
+
+  async function checkPaystack() {
+    setError(null);
+    try {
+      const { status } = await pollPosSaleStatus(String(record.id));
+      const inv = await api.get<RecordRow>(`/api/invoicing/invoices/${record.id}`);
+      onChanged(inv);
+      setNotice(status === "paid" ? "Paid in full through Paystack." : "No completed Paystack payment yet.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not check with Paystack.");
+    }
+  }
 
   async function run(fn: () => Promise<RecordRow>, success: (r: RecordRow) => string) {
     setBusy(true);
@@ -148,6 +173,38 @@ export function DocumentActionsPanel({ kind, record, onChanged }: Props) {
           {busy ? "Saving..." : "Record payment"}
         </Button>
       </div>
+      {paystackOn ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 12 }}>
+          <Button
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              setError(null);
+              try {
+                setPayLink((await paystackInvoiceLink(String(record.id))).redirect_url);
+              } catch (err) {
+                setError(err instanceof ApiError ? err.message : "Could not make a Paystack link.");
+              }
+            }}
+          >
+            Paystack pay link
+          </Button>
+          {payLink ? (
+            <>
+              <Input readOnly aria-label="Paystack pay link" value={payLink} style={{ flex: "1 1 220px", minWidth: 0 }} />
+              <Button type="button" onClick={() => navigator.clipboard?.writeText(payLink)}>
+                Copy
+              </Button>
+              <Button type="button" onClick={checkPaystack}>
+                Check payment
+              </Button>
+            </>
+          ) : null}
+          <div className="field-label" style={{ flexBasis: "100%" }}>
+            Send the link to the customer (card, M-Pesa or bank). The invoice is marked paid once Paystack confirms it.
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

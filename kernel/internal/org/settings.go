@@ -23,6 +23,36 @@ type settingsView struct {
 	TaxRateBP        int        `json:"tax_rate_bp"`
 	PricesIncludeTax bool       `json:"prices_include_tax"`
 	Tax              TaxProfile `json:"tax"`
+	// What the business takes; tills offer these unless set otherwise.
+	PaymentMethods []string `json:"payment_methods"`
+}
+
+// PaymentMethods a business can offer; invoicing's registers.py keeps
+// the same list for a till's own choice.
+var PaymentMethods = []string{"cash", "mpesa", "card", "paystack", "pesapal"}
+
+// normalizePaymentMethods drops repeats and refuses unknown or no methods.
+func normalizePaymentMethods(in []string) ([]string, string) {
+	known := map[string]bool{}
+	for _, m := range PaymentMethods {
+		known[m] = true
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, m := range in {
+		m = strings.ToLower(strings.TrimSpace(m))
+		if !known[m] {
+			return nil, "payment methods are some of " + strings.Join(PaymentMethods, ", ")
+		}
+		if !seen[m] {
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	if len(out) == 0 {
+		return nil, "keep at least one payment method"
+	}
+	return out, ""
 }
 
 // TaxRate is one rate a business uses. Code follows KRA's eTIMS tax
@@ -155,10 +185,13 @@ func (s *Settings) load(r *http.Request, orgID string) (settingsView, error) {
 	var v settingsView
 	var raw []byte
 	err := s.Pool.QueryRow(r.Context(), `
-		SELECT name, currency, tax_rate_bp, prices_include_tax, tax_profile FROM core.orgs WHERE id = $1`, orgID,
-	).Scan(&v.Name, &v.Currency, &v.TaxRateBP, &v.PricesIncludeTax, &raw)
+		SELECT name, currency, tax_rate_bp, prices_include_tax, tax_profile, payment_methods FROM core.orgs WHERE id = $1`, orgID,
+	).Scan(&v.Name, &v.Currency, &v.TaxRateBP, &v.PricesIncludeTax, &raw, &v.PaymentMethods)
 	if err != nil {
 		return v, err
+	}
+	if v.PaymentMethods == nil {
+		v.PaymentMethods = PaymentMethods
 	}
 	v.Tax = DefaultTaxProfile()
 	if len(raw) > 0 {
@@ -196,6 +229,7 @@ func (s *Settings) Put(w http.ResponseWriter, r *http.Request) {
 		TaxRateBP        *int        `json:"tax_rate_bp"`
 		PricesIncludeTax *bool       `json:"prices_include_tax"`
 		Tax              *TaxProfile `json:"tax"`
+		PaymentMethods   []string    `json:"payment_methods"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		writeSettingsJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -212,6 +246,14 @@ func (s *Settings) Put(w http.ResponseWriter, r *http.Request) {
 	if req.TaxRateBP != nil && (*req.TaxRateBP < 0 || *req.TaxRateBP > 5000) {
 		writeSettingsJSON(w, http.StatusBadRequest, map[string]string{"error": "tax rate must be between 0% and 50%"})
 		return
+	}
+	if req.PaymentMethods != nil {
+		methods, msg := normalizePaymentMethods(req.PaymentMethods)
+		if msg != "" {
+			writeSettingsJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+			return
+		}
+		req.PaymentMethods = methods
 	}
 	var taxJSON []byte
 	if req.Tax != nil {
@@ -231,8 +273,9 @@ func (s *Settings) Put(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.Pool.Exec(r.Context(), `
 		UPDATE core.orgs SET currency = COALESCE($2, currency), tax_rate_bp = COALESCE($3, tax_rate_bp),
-		       prices_include_tax = COALESCE($4, prices_include_tax), tax_profile = COALESCE($5, tax_profile)
-		WHERE id = $1`, claims.OrgID, req.Currency, req.TaxRateBP, req.PricesIncludeTax, taxJSON); err != nil {
+		       prices_include_tax = COALESCE($4, prices_include_tax), tax_profile = COALESCE($5, tax_profile),
+		       payment_methods = COALESCE($6, payment_methods)
+		WHERE id = $1`, claims.OrgID, req.Currency, req.TaxRateBP, req.PricesIncludeTax, taxJSON, req.PaymentMethods); err != nil {
 		writeSettingsJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save the settings"})
 		return
 	}

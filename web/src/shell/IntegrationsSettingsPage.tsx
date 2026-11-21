@@ -141,7 +141,7 @@ const PROVIDERS: ProviderDescriptor[] = [
     label: "Paystack",
     icon: "credit-card",
     category: "Payments",
-    codeReady: false,
+    codeReady: true,
     docAnchor: "paystack",
     fields: [{ key: "secret_key", label: "Secret key", secret: true }],
   },

@@ -6,6 +6,7 @@ import { formatMoney, saveOrgSettings, useOrgSettings } from "../lib/orgSettings
 import { Button } from "../ui/Button";
 import { Checkbox, FieldWrap, Select } from "../ui/Field";
 import { EtimsSection } from "./business/EtimsSection";
+import { PaymentsSection } from "./business/PaymentsSection";
 import { SaveRow } from "./business/SaveRow";
 import { TaxSection } from "./business/TaxSection";
 import { TillsSection } from "./business/TillsSection";
@@ -29,11 +30,13 @@ const TABS = [
   ["tax", "Tax"],
   ["etims", "eTIMS"],
   ["tills", "Tills"],
+  ["payments", "Payments"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
 /** Settings > Business: currency and shelf prices (General), VAT and
- * receipts (Tax), KRA eTIMS, and the tills a POS can be (Tills). */
+ * receipts (Tax), KRA eTIMS, the tills a POS can be (Tills), and the
+ * payment methods the business and each till take (Payments). */
 export function BusinessSettingsPage() {
   const { session } = useAuth();
   const canEdit = session?.role === "owner" || session?.role === "admin";
@@ -64,6 +67,7 @@ export function BusinessSettingsPage() {
       {tab === "tax" ? <TaxSection canEdit={canEdit} /> : null}
       {tab === "etims" ? <EtimsSection canEdit={canEdit} /> : null}
       {tab === "tills" ? <TillsSection canEdit={canEdit} /> : null}
+      {tab === "payments" ? <PaymentsSection canEdit={canEdit} /> : null}
     </div>
   );
 }
