@@ -24,6 +24,8 @@ class Warehouse(Base):
     code: Mapped[str] = mapped_column(Text, nullable=False, default="")
     address: Mapped[str] = mapped_column(Text, nullable=False, default="")
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # The kernel location it belongs to (0015); None = not set.
+    location_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

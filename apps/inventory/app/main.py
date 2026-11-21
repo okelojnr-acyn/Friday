@@ -19,6 +19,7 @@ from friday_common import (
     resource,
     set_org_context,
 )
+from friday_common.access import Scope, require, require_place
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -227,6 +228,7 @@ async def purchase_unit_for(
 @products_router.get("", response_model=list[ProductOut])
 async def list_products(
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("stock.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(
@@ -258,6 +260,7 @@ def _product_fields(body: ProductCreate) -> dict:
 async def create_product(
     body: ProductCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("stock.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     await _check_variant_of(session, principal, body.variant_of)
@@ -317,6 +320,7 @@ async def _get_owned(session: AsyncSession, principal: Principal, product_id: uu
 async def get_product(
     product_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("stock.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     return await _get_owned(session, principal, product_id)
@@ -327,6 +331,7 @@ async def update_product(
     product_id: uuid.UUID,
     body: ProductUpdate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("stock.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     product = await _get_owned(session, principal, product_id)
@@ -360,6 +365,7 @@ async def put_product_image(
     product_id: uuid.UUID,
     request: Request,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("stock.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """The product's photo, as the raw image body. The web app resizes it
@@ -392,6 +398,7 @@ async def put_product_image(
 async def delete_product_image(
     product_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("stock.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     if principal.role == "viewer":
@@ -411,6 +418,7 @@ async def delete_product_image(
 async def get_product_image(
     product_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("stock.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """The photo. Fetched with ?v=<image_sha>, so it can be cached for good."""
@@ -429,6 +437,7 @@ async def get_product_image(
 async def bulk_create_products(
     body: ProductBulkCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("stock.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """The bulk-add screen's one call (see web/src/apps/inventory/
@@ -469,6 +478,7 @@ async def adjust_stock(
     product_id: uuid.UUID,
     body: StockAdjust,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("stock.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """The one way on_hand_qty ever changes by hand -- always alongside a
@@ -476,6 +486,10 @@ async def adjust_stock(
     if body.reason not in REASONS:
         raise HTTPException(422, f"reason must be one of {REASONS}")
     product = await _get_owned(session, principal, product_id)
+    warehouse_id = body.warehouse_id or product.default_warehouse_id
+    if warehouse_id is not None and not scope.everywhere:
+        warehouse = await session.get(Warehouse, warehouse_id)
+        require_place(scope, warehouse.location_id if warehouse else None, "that warehouse")
     now = datetime.now(UTC)
     product.on_hand_qty = Decimal(product.on_hand_qty) + body.delta
     product.updated_at = now
@@ -487,7 +501,7 @@ async def adjust_stock(
             qty_delta=body.delta,
             reason=body.reason,
             reference=body.reference,
-            warehouse_id=body.warehouse_id or product.default_warehouse_id,
+            warehouse_id=warehouse_id,
             created_at=now,
         )
     )
@@ -500,6 +514,7 @@ async def adjust_stock(
 async def list_stock_moves(
     reference: str | None = None,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("stock.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """All moves, newest first; `?reference=` narrows to one reference
@@ -508,6 +523,10 @@ async def list_stock_moves(
     query = select(StockMove).where(StockMove.org_id == _org(principal))
     if reference is not None:
         query = query.where(StockMove.reference == reference)
+    if not scope.everywhere:
+        # Moves at their locations' warehouses only.
+        locs = [uuid.UUID(x) for x in scope.locs if x != "*"]
+        query = query.join(Warehouse, StockMove.warehouse_id == Warehouse.id).where(Warehouse.location_id.in_(locs))
     rows = await session.execute(query.order_by(StockMove.created_at.desc()))
     return rows.scalars().all()
 
@@ -582,6 +601,7 @@ async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_sess
 @suppliers_router.get("", response_model=list[SupplierOut])
 async def list_suppliers(
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("purchasing.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(
@@ -594,6 +614,7 @@ async def list_suppliers(
 async def create_supplier(
     body: SupplierCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("purchasing.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     supplier = Supplier(org_id=_org(principal), created_at=datetime.now(UTC), **body.model_dump())
@@ -613,6 +634,7 @@ async def _get_owned_po(session: AsyncSession, principal: Principal, po_id: uuid
 @purchase_orders_router.get("", response_model=list[PurchaseOrderOut])
 async def list_purchase_orders(
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("purchasing.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(
@@ -625,6 +647,7 @@ async def list_purchase_orders(
 async def create_purchase_order(
     body: PurchaseOrderCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("purchasing.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     now = datetime.now(UTC)
@@ -665,6 +688,7 @@ async def create_purchase_order(
 async def get_purchase_order(
     po_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("purchasing.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     po = await _get_owned_po(session, principal, po_id)
@@ -676,6 +700,7 @@ async def set_purchase_order_status(
     po_id: uuid.UUID,
     body: PurchaseOrderStatusUpdate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("purchasing.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     if body.status not in PURCHASE_ORDER_STATUSES:
@@ -733,6 +758,7 @@ async def set_purchase_order_status(
 async def create_purchase_order_from_product(
     product_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("purchasing.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """The "Create purchase order" action on a low-stock product (see
@@ -777,6 +803,7 @@ async def create_purchase_order_from_product(
 @warehouses_router.get("", response_model=list[WarehouseOut])
 async def list_warehouses(
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("stock.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(select(Warehouse).where(Warehouse.org_id == _org(principal)).order_by(Warehouse.name))
@@ -787,8 +814,13 @@ async def list_warehouses(
 async def create_warehouse(
     body: WarehouseCreate,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("stock.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    if not scope.everywhere:
+        if body.location_id is None:
+            raise HTTPException(422, "choose which of your locations the warehouse belongs to")
+        require_place(scope, body.location_id, "that location")
     warehouse = Warehouse(org_id=_org(principal), created_at=datetime.now(UTC), **body.model_dump())
     session.add(warehouse)
     await session.commit()

@@ -11,7 +11,7 @@ async def test_create_warehouse(client):
 
 async def test_org_isolation_on_warehouses(client, as_principal, principal):
     await client.post("/warehouses", json={"name": "Main"})
-    as_principal(make_principal())
+    as_principal(make_principal(role="admin"))  # an admin of another business
     assert (await client.get("/warehouses")).json() == []
 
 

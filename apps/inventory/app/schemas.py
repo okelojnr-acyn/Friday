@@ -112,6 +112,7 @@ class WarehouseCreate(BaseModel):
     code: str = ""
     address: str = ""
     is_default: bool = False
+    location_id: uuid.UUID | None = None
 
 
 class WarehouseOut(BaseModel):
@@ -121,6 +122,7 @@ class WarehouseOut(BaseModel):
     code: str
     address: str
     is_default: bool
+    location_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

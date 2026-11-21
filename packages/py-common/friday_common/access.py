@@ -141,6 +141,14 @@ async def people_in(scope: Scope, org_id: str) -> set[str] | None:
     return scope.people()
 
 
+def require_place(scope: Scope, location_id, what: str = "that place") -> None:
+    """Refuses something at a location outside the caller's. Something
+    nobody has placed yet (no location) stays open to whoever the rule
+    allows."""
+    if location_id is not None and not scope.allows_location(str(location_id)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"{what} is at a location that isn't yours")
+
+
 def scope_for(principal: Principal, rule: str) -> Scope | None:
     kind = scope_of(principal.role, principal.perms, rule)
     if not kind:
