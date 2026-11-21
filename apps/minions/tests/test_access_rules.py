@@ -59,3 +59,13 @@ def test_refusals_name_who_can():
         check(make_principal(role="branch_manager"))
     assert e.value.status_code == 403 and "ask an admin" in e.value.detail
     assert check(make_principal(role="owner")).kind == "all"
+
+
+async def test_all_locations_never_widens_team_or_own():
+    from friday_common.access import people_in
+
+    lead = Scope(kind="team", user_id="lead", locs=("*",), team=("a",))
+    assert await people_in(lead, "org") == {"lead", "a"}
+    me = Scope(kind="own", user_id="me", locs=("*",), team=())
+    assert await people_in(me, "org") == {"me"}
+    assert await people_in(Scope(kind="loc", user_id="m", locs=("*",), team=()), "org") is None

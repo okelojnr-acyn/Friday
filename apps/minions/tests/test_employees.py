@@ -36,14 +36,15 @@ async def test_create_employee_rejects_unknown_pay_frequency(client, as_principa
     assert resp.status_code == 422
 
 
-async def test_any_member_can_list_employees(client, as_principal, principal):
+async def test_staff_cannot_list_employees(client, as_principal, principal):
+    """Plan 12.2: the staff list is for managers and leaders, not staff."""
     _as_admin(as_principal, principal)
     await client.post("/employees", json={"name": "Jane", "email": "jane@example.com"})
 
-    as_principal(principal)  # back to a plain member
+    as_principal(principal)  # back to plain staff
     resp = await client.get("/employees")
-    assert resp.status_code == 200
-    assert len(resp.json()) == 1
+    assert resp.status_code == 403
+    assert "ask a team leader" in resp.json()["detail"]
 
 
 async def test_member_cannot_update_employee(client, as_principal, principal):
@@ -75,6 +76,6 @@ async def test_org_isolation_on_employees(client, as_principal, principal):
     _as_admin(as_principal, principal)
     await client.post("/employees", json={"name": "Jane", "email": "jane@example.com"})
 
-    as_principal(make_principal())  # different org entirely
+    as_principal(make_principal(role="admin"))  # an admin of a different org entirely
     resp = await client.get("/employees")
     assert resp.json() == []

@@ -32,6 +32,12 @@ PERMS = ("cashier", "warehouse", "logistics", "purchasing", "sales", "accounting
 # Stands in for a team too big to list in a token (kernel access.TeamByLocation).
 TEAM_BY_LOCATION = "*loc"
 
+# Approval limits per item, in the currency's cents (plan 12.9: KES 2,000
+# for team leaders, KES 20,000 for branch managers; owners and admins have
+# none). shortcut: one limit for every business and currency; make them a
+# business setting when a business asks.
+APPROVAL_LIMIT_CENTS = {"team_leader": 200_000, "branch_manager": 2_000_000}
+
 ROLE_NAMES = {
     "owner": "an owner",
     "admin": "an admin",
@@ -110,9 +116,12 @@ async def people_in(scope: Scope, org_id: str) -> set[str] | None:
     at those locations (asked of the kernel, which knows who works where;
     someone with no locations listed works at all of them). Refuses when
     the kernel can't answer: closed, never open."""
-    if scope.kind == "all" or "*" in scope.locs:
+    if scope.kind == "all":
         return None
     if scope.kind == "loc" or TEAM_BY_LOCATION in scope.team:
+        # "All locations" widens location scopes only, never team or own.
+        if "*" in scope.locs:
+            return None
         import httpx
 
         from .settings import get_settings
