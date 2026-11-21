@@ -109,7 +109,7 @@ async def test_part_of_a_sale_can_come_back(client, events):
     events.clear()
     one = await client.post(f"/pos/sales/{made['number']}/return", json={"lines": [{"line_id": line_id, "quantity": 1}]})
     assert one.status_code == 201, one.text
-    assert one.json()["lines"][0]["quantity"] == -1
+    assert float(one.json()["lines"][0]["quantity"]) == -1
     paid = [p for t, p in events if t == "invoicing.invoice.paid"][0]
     assert paid["paid_amount_cents"] == -10000
     # The sale stands for the two kept.
@@ -118,6 +118,6 @@ async def test_part_of_a_sale_can_come_back(client, events):
     too_many = {"lines": [{"line_id": line_id, "quantity": 3}]}
     assert (await client.post(f"/pos/sales/{made['number']}/return", json=too_many)).status_code == 422
     rest = await client.post(f"/pos/sales/{made['number']}/return", json={})
-    assert rest.json()["lines"][0]["quantity"] == -2
+    assert float(rest.json()["lines"][0]["quantity"]) == -2
     assert (await client.get(f"/pos/sales/{made['number']}")).json()["status"] == "void"
     assert (await client.post(f"/pos/sales/{made['number']}/return", json={})).status_code == 400
