@@ -160,3 +160,23 @@ async def test_account_ledger_running_balance_in_date_order(client):
 async def test_account_ledger_unknown_account_404s(client):
     resp = await client.get(f"/accounts/{uuid.uuid4()}/ledger")
     assert resp.status_code == 404
+
+
+async def test_vat_report_is_the_months_movement_on_vat_output_and_input(client):
+    cash = await _account_id(client, "1010")
+    revenue = await _account_id(client, "4000")
+    vat_out = await _account_id(client, "2200")
+    vat_in = await _account_id(client, "1500")
+    stock = await _account_id(client, "1400")
+    payable = await _account_id(client, "2000")
+    # A sale of 1,160 with 160 VAT, a refund of 58 with 8 VAT, goods in at 500 + 80 VAT.
+    await _post_entry(client, "2026-03-05", [{"account_id": cash, "debit_cents": 116000}, {"account_id": revenue, "credit_cents": 100000}, {"account_id": vat_out, "credit_cents": 16000}])
+    await _post_entry(client, "2026-03-20", [{"account_id": revenue, "debit_cents": 5000}, {"account_id": vat_out, "debit_cents": 800}, {"account_id": cash, "credit_cents": 5800}])
+    await _post_entry(client, "2026-03-31", [{"account_id": stock, "debit_cents": 50000}, {"account_id": vat_in, "debit_cents": 8000}, {"account_id": payable, "credit_cents": 58000}])
+    # Another month, and a draft: neither counts.
+    await _post_entry(client, "2026-04-01", [{"account_id": cash, "debit_cents": 11600}, {"account_id": revenue, "credit_cents": 10000}, {"account_id": vat_out, "credit_cents": 1600}])
+    await _post_entry(client, "2026-03-10", [{"account_id": cash, "debit_cents": 1160}, {"account_id": revenue, "credit_cents": 1000}, {"account_id": vat_out, "credit_cents": 160}], post=False)
+
+    body = (await client.get("/reports/vat", params={"month": "2026-03"})).json()
+    assert body == {"month": "2026-03", "output_vat_cents": 15200, "input_vat_cents": 8000, "net_vat_cents": 7200}
+    assert (await client.get("/reports/vat", params={"month": "2026-13"})).status_code == 422

@@ -12,7 +12,7 @@ books are concerned.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from friday_common import Principal, get_current_principal, get_org_session
@@ -28,6 +28,7 @@ from .schemas import (
     LedgerLineOut,
     ProfitAndLossOut,
     ReportLineOut,
+    VatLedgerOut,
 )
 
 reports_router = APIRouter(prefix="/reports", tags=["reports"])
@@ -75,6 +76,30 @@ async def _account_amounts(
         .order_by(Account.code)
     )
     return rows.all()
+
+
+@reports_router.get("/vat", response_model=VatLedgerOut)
+async def vat_ledger(
+    month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The month's movement on VAT Output (2200) and VAT Input (1500),
+    posted entries only. Business settings > Tax puts it next to the VAT
+    return's files: the same sales and purchases, so the two must agree."""
+    year, mon = (int(x) for x in month.split("-"))
+    if not 1 <= mon <= 12:
+        raise HTTPException(422, "month is YYYY-MM")
+    start = date(year, mon, 1)
+    end = date(year + (mon == 12), mon % 12 + 1, 1) - timedelta(days=1)  # inclusive
+    org_id = _org(principal)
+    await ensure_default_accounts(session, org_id)
+    rows = await _account_amounts(session, org_id, ("asset", "liability"), start, end)
+    by_code = {code: (debit, credit) for _, code, _, _, debit, credit in rows}
+    out_d, out_c = by_code.get("2200", (0, 0))
+    in_d, in_c = by_code.get("1500", (0, 0))
+    output_vat, input_vat = out_c - out_d, in_d - in_c
+    return VatLedgerOut(month=month, output_vat_cents=output_vat, input_vat_cents=input_vat, net_vat_cents=output_vat - input_vat)
 
 
 @reports_router.get("/profit-and-loss", response_model=ProfitAndLossOut)

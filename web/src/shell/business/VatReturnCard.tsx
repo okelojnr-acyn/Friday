@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { api } from "../../lib/api";
 import { downloadTextFile, parseCsv } from "../../lib/csv";
 import { formatMoney } from "../../lib/orgSettings";
 import { KERNEL_URL } from "../../lib/runtimeConfig";
@@ -37,11 +38,15 @@ export function VatReturnCard() {
   const [sales, setSales] = useState<string | null>(null);
   const [purchases, setPurchases] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [books, setBooks] = useState<{ output_vat_cents: number; input_vat_cents: number } | null>(null);
 
   useEffect(() => {
     setSales(null);
     setPurchases(null);
+    setBooks(null);
     setError(null);
+    // Accounting's own figures for the month: the check that both sides agree.
+    api.get<{ output_vat_cents: number; input_vat_cents: number }>(`/api/accounting/reports/vat?month=${month}`).then(setBooks, () => setBooks(null));
     fetchCsv(`/api/invoicing/etims/vat-sales.csv?month=${month}`).then(setSales, (e) => setError(e.message));
     fetchCsv(`/api/inventory/purchase_orders/vat-purchases.csv?month=${month}`).then(setPurchases, (e) => setError(e.message));
   }, [month]);
@@ -52,6 +57,9 @@ export function VatReturnCard() {
   const outVat = s ? sum(s, 8) : 0;
   const inVat = p ? sum(p, 9) : 0;
   const missing = p ? p.slice(1).filter((r) => r[12]).length : 0;
+  const outOff = books && s ? books.output_vat_cents - outVat : 0;
+  const inOff = books && p ? books.input_vat_cents - inVat : 0;
+  const booksCell = (cents: number | undefined) => (books && cents !== undefined ? formatMoney(cents) : "…");
 
   return (
     <div className="card card-padded form-grid" style={{ marginTop: 16 }}>
@@ -64,23 +72,34 @@ export function VatReturnCard() {
         <Input type="month" value={month} onChange={(e) => setMonth(e.target.value || lastMonth())} style={{ width: 170 }} />
       </FieldWrap>
       {error ? <div className="error-banner">{error}</div> : null}
-      <table className="table" style={{ maxWidth: 520 }}>
+      <table className="table" style={{ maxWidth: 620 }}>
+        <thead>
+          <tr>
+            <th />
+            <th className="cell-currency">VAT return files</th>
+            <th className="cell-currency">Books (Accounting)</th>
+          </tr>
+        </thead>
         <tbody>
           <tr>
             <td>Sales before VAT</td>
             <td className="cell-currency">{s ? formatMoney(sum(s, 7)) : "…"}</td>
+            <td />
           </tr>
           <tr>
             <td>VAT on sales (output)</td>
             <td className="cell-currency">{s ? formatMoney(outVat) : "…"}</td>
+            <td className="cell-currency">{booksCell(books?.output_vat_cents)}</td>
           </tr>
           <tr>
             <td>Purchases before VAT</td>
             <td className="cell-currency">{p ? formatMoney(sum(p, 8)) : "…"}</td>
+            <td />
           </tr>
           <tr>
             <td>VAT on purchases (input)</td>
             <td className="cell-currency">{p ? formatMoney(inVat) : "…"}</td>
+            <td className="cell-currency">{booksCell(books?.input_vat_cents)}</td>
           </tr>
           <tr>
             <td>
@@ -89,9 +108,22 @@ export function VatReturnCard() {
             <td className="cell-currency">
               <strong>{s && p ? formatMoney(Math.abs(outVat - inVat)) : "…"}</strong>
             </td>
+            <td className="cell-currency">
+              {books ? formatMoney(Math.abs(books.output_vat_cents - books.input_vat_cents)) : "…"}
+            </td>
           </tr>
         </tbody>
       </table>
+      {outOff || inOff ? (
+        <div className="error-banner">
+          The books and the VAT files differ by {formatMoney(Math.abs(outOff))} on sales VAT and{" "}
+          {formatMoney(Math.abs(inOff))} on purchases VAT. Usual causes: an invoice issued this month but paid in
+          another (the books count VAT when paid), a manual journal entry on a VAT account, or a sale near midnight
+          at the month's edge. Check before filing.
+        </div>
+      ) : books && s && p ? (
+        <div className="field-label">The books agree with both files.</div>
+      ) : null}
       {missing ? (
         <div className="error-banner">
           {missing} purchase line{missing === 1 ? "" : "s"} lack the supplier's PIN or invoice number. KRA allows input VAT
