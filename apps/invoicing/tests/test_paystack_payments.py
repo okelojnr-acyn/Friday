@@ -301,7 +301,7 @@ async def test_a_debt_link_settles_the_oldest_sales_once(client, principal, pays
     assert (await client.get(check)).json()["status"] == "abandoned"
     _paid(paystack, link["reference"], 1500, channel="mobile_money")
     paid = (await client.get(check)).json()
-    assert (paid["status"], paid["paid_cents"], paid["method"]) == ("paid", 1500, "mpesa")
+    assert (paid["status"], paid["paid_cents"], paid["method"], paid["currency"]) == ("paid", 1500, "mpesa", "KES")
     # The webhook and further checks record nothing more.
     raw, headers = _signed({"event": "charge.success", "data": {"reference": link["reference"]}})
     assert (await client.post("/external/webhooks/paystack", content=raw, headers=headers)).status_code == 200

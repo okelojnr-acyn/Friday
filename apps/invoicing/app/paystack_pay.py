@@ -312,8 +312,9 @@ async def settle_debt(session: AsyncSession, org_id: str, customer_id: str, refe
             Payment.org_id == uuid.UUID(org_id), Payment.client_ref == client_ref
         )
     )
+    paid = {"status": "paid", "customer": customer.name, "method": method, "currency": result["currency"]}
     if recorded:
-        return {"status": "paid", "customer": customer.name, "paid_cents": int(recorded), "method": method}
+        return {**paid, "paid_cents": int(recorded)}
     invoices = [
         i for i in await _unpaid(session, SimpleNamespace(org_id=org_id), customer.id) if i.currency.upper() == result["currency"]
     ]
@@ -324,7 +325,7 @@ async def settle_debt(session: AsyncSession, org_id: str, customer_id: str, refe
         log.warning("paystack %s paid %s, %s owed only %s", reference, result["amount"], customer.name, owed)
     if amount > 0:
         await apply_debt_payment(session, org_id, invoices, amount, method, client_ref)
-    return {"status": "paid", "customer": customer.name, "paid_cents": amount, "method": method}
+    return {**paid, "paid_cents": amount}
 
 
 @router.get("/debts/paystack-link/{reference}")
