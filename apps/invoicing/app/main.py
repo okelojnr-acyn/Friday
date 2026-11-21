@@ -60,6 +60,8 @@ from friday_common.etims import normalize_pin
 from friday_common.etims.kernel import get_etims_config
 
 from .etims_routes import router as etims_router
+from .paystack_pay import manual_tenders, refund_share
+from .paystack_pay import router as paystack_router
 from .paystack_pay import settle as settle_paystack
 from .paystack_pay import start_checkout as start_paystack_checkout
 from .registers import router as registers_router
@@ -856,9 +858,11 @@ async def pay_with_paystack(
     session: AsyncSession = Depends(get_org_session),
 ):
     """A POS sale paid through the business's own Paystack (card, M-Pesa,
-    bank). Like pay_with_pesapal: the sale waits as "pending" with no
-    payment until Paystack's verify says it was paid (paystack_pay.settle,
-    reached from the webhook or the till's status poll). Online only."""
+    bank). Like pay_with_pesapal: the sale waits as "pending" until
+    Paystack's verify says it was paid (paystack_pay.settle, reached from
+    the webhook or the till's status poll). Online only. A split sale
+    sends the till's own part as "payments" (cash, M-Pesa, card): it is
+    recorded now and Paystack charges the rest."""
     now = datetime.now(UTC)
     lines_in = body.get("lines", [])
     if not lines_in:
@@ -883,9 +887,10 @@ async def pay_with_paystack(
     charged_cents = await _apply_pos_sale_lines(session, principal, invoice, lines_in, body)
     if charged_cents <= 0:
         raise HTTPException(422, "nothing to charge")
+    to_charge = await manual_tenders(session, principal, invoice, body.get("payments") or [], charged_cents)
     email = str(body.get("email") or principal.email or "")
     redirect_url = await start_paystack_checkout(
-        principal.org_id, invoice, charged_cents, email, f"POS sale {invoice.number}"
+        principal.org_id, invoice, to_charge, email, f"POS sale {invoice.number}"
     )
     await session.commit()
     return PaystackCheckoutOut(invoice_id=invoice.id, redirect_url=redirect_url)
@@ -1149,16 +1154,33 @@ async def return_pos_sale(
     refund.buyer_name = original.buyer_name
     refund.prices_include_tax = original.prices_include_tax
 
-    session.add(
-        Payment(
-            org_id=uuid.UUID(principal.org_id),
-            invoice_id=refund.id,
-            amount_cents=refund_total_cents,
-            method="refund",
-            received_at=now,
-            client_ref=client_return_id,
+    # A sale paid through Paystack is refunded through Paystack (and booked
+    # back out of M-Pesa/card); anything else comes out of the drawer.
+    await session.flush()
+    online = await refund_share(session, principal.org_id, original, -refund_total_cents)
+    online_cents = online[1] if online else 0
+    if online:
+        session.add(
+            Payment(
+                org_id=uuid.UUID(principal.org_id),
+                invoice_id=refund.id,
+                amount_cents=-online_cents,
+                method=online[0],
+                received_at=now,
+                client_ref=client_return_id,
+            )
         )
-    )
+    if refund_total_cents + online_cents != 0:
+        session.add(
+            Payment(
+                org_id=uuid.UUID(principal.org_id),
+                invoice_id=refund.id,
+                amount_cents=refund_total_cents + online_cents,
+                method="refund",
+                received_at=now,
+                client_ref=client_return_id,
+            )
+        )
     # A partial return leaves the sale standing for what the customer kept.
     if everything:
         original.status = "void"
@@ -1479,6 +1501,7 @@ app.include_router(quotes_router)
 app.include_router(reports_router)
 app.include_router(pos_router)
 app.include_router(credit_router)
+app.include_router(paystack_router)
 app.include_router(registers_router)
 app.include_router(etims_router)
 app.include_router(webhooks_router)

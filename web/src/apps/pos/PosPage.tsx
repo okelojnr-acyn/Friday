@@ -6,7 +6,13 @@ import { fetchProductCatalog, type Product } from "../../lib/inventory";
 import { formatMoney, useOrgSettings } from "../../lib/orgSettings";
 import type { PosRegister, PosShift } from "../../lib/posApi";
 import { listIntegrations } from "../../lib/integrations";
-import { offeredMethods, pollPosSaleStatus, startPaystackPosPayment, startPesapalPosPayment } from "../../lib/pos";
+import {
+  cancelPosSale,
+  offeredMethods,
+  pollPosSaleStatus,
+  startPaystackPosPayment,
+  startPesapalPosPayment,
+} from "../../lib/pos";
 import { useBarcodeScanner } from "../../lib/useBarcodeScanner";
 import { Avatar } from "../../ui/Avatar";
 import { Icon } from "../../ui/Icon";
@@ -115,7 +121,26 @@ export function PosPage({
     provider: "Paystack" | "Pesapal";
     invoiceId: string;
     status: "starting" | "pending" | "paid" | "void";
+    /** Cash etc. to hand back after a split sale is cancelled. */
+    returned?: number;
   } | null>(null);
+
+  async function cancelOnline() {
+    if (!onlineFlow) return;
+    try {
+      const r = await cancelPosSale(onlineFlow.invoiceId);
+      if (r.status === "paid") {
+        cartRef.current?.clear();
+        setSelected(null);
+        refreshCart();
+      }
+      setOnlineFlow((cur) =>
+        cur ? { ...cur, status: r.status === "paid" ? "paid" : "void", returned: r.returned_cents } : cur,
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not cancel the sale");
+    }
+  }
   const [connected, setConnected] = useState<string[]>([]);
 
   useEffect(() => {
@@ -441,7 +466,8 @@ export function PosPage({
     }
   }
 
-  async function payOnline(provider: "Paystack" | "Pesapal") {
+  // tenders: the till's own part of a split; Paystack charges the rest.
+  async function payOnline(provider: "Paystack" | "Pesapal", tenders: Tender[] = []) {
     const cart = cartRef.current;
     if (!cart || lines.length === 0) return;
     setError(null);
@@ -449,6 +475,8 @@ export function PosPage({
     try {
       const method = provider.toLowerCase();
       sale = annotate({ ...JSON.parse(cart.checkout_json(settings.currency, method, Date.now())), shift_id: shift.id });
+      if (provider === "Paystack" && tenders.length)
+        sale = { ...sale, payments: tenders.map((t) => ({ method: t.method, amount_cents: t.cents })) } as Sale;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not build the sale");
       return;
@@ -493,8 +521,8 @@ export function PosPage({
     online.push({
       key: "paystack",
       label: "Paystack",
-      hint: "Card, M-Pesa or bank · confirms itself",
-      start: () => payOnline("Paystack"),
+      hint: "Card, M-Pesa or bank · type a cash part first to split",
+      start: (tenders) => payOnline("Paystack", tenders),
     });
   if (offered.includes("pesapal") && connected.includes("pesapal"))
     online.push({
@@ -772,7 +800,13 @@ export function PosPage({
                 {onlineFlow.status === "pending" && `Waiting for the customer to pay on ${onlineFlow.provider}…`}
                 {onlineFlow.status === "paid" && `${onlineFlow.provider} payment received.`}
                 {onlineFlow.status === "void" && `${onlineFlow.provider} payment failed or was cancelled.`}
-                {onlineFlow.status !== "starting" ? (
+                {onlineFlow.returned ? ` Hand back ${formatMoney(onlineFlow.returned)}.` : ""}
+                {onlineFlow.status === "pending" && onlineFlow.provider === "Paystack" ? (
+                  <button type="button" onClick={cancelOnline} style={{ marginLeft: 8 }}>
+                    Cancel sale
+                  </button>
+                ) : null}
+                {onlineFlow.status !== "starting" && !(onlineFlow.status === "pending" && onlineFlow.provider === "Paystack") ? (
                   <button type="button" onClick={() => setOnlineFlow(null)} style={{ marginLeft: 8 }}>
                     {onlineFlow.status === "pending" ? "Stop waiting" : "OK"}
                   </button>

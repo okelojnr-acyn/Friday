@@ -28,7 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .events import invoice_lines_payload, publish_invoice_paid, publish_pos_sale_recorded
 from .models import Customer, Invoice, InvoiceLine, Payment
-from .paystack_pay import parse_reference, settle as settle_paystack
+from .paystack_pay import parse_debt_reference, parse_reference, settle_debt
+from .paystack_pay import settle as settle_paystack
 
 router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
 external_router = APIRouter(prefix="/external/webhooks", tags=["external-webhooks"])
@@ -244,9 +245,10 @@ async def paystack_webhook(request: Request, session: AsyncSession = Depends(get
         raise HTTPException(400, "invalid payload")
     reference = str((event.get("data") or {}).get("reference") or "")
     parsed = parse_reference(reference)
-    if parsed is None:
+    debt = parse_debt_reference(reference)
+    if parsed is None and debt is None:
         return {"ignored": "not a Friday reference"}
-    org_id, invoice_id = parsed
+    org_id = (parsed or debt)[0]
 
     config = await get_integration_config(org_id, "paystack")
     if not config.get("secret_key"):
@@ -257,5 +259,8 @@ async def paystack_webhook(request: Request, session: AsyncSession = Depends(get
         return {"ignored": event.get("event")}
 
     await set_org_context(session, org_id)
-    await settle_paystack(session, org_id, invoice_id, reference)
+    if parsed:
+        await settle_paystack(session, org_id, parsed[1], reference)
+    else:
+        await settle_debt(session, org_id, debt[1], reference)
     return {"ok": True}

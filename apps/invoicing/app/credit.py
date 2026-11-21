@@ -45,7 +45,8 @@ async def customer_by_name(session: AsyncSession, principal: Principal, name: st
     return found
 
 
-async def _unpaid(session: AsyncSession, principal: Principal, customer_id: uuid.UUID | None = None) -> list[Invoice]:
+async def _unpaid(session: AsyncSession, principal, customer_id: uuid.UUID | None = None) -> list[Invoice]:
+    """`principal` only needs .org_id (paystack_pay passes the org alone)."""
     q = (
         select(Invoice)
         .where(
@@ -113,6 +114,46 @@ async def list_debts(
     return sorted(out.values(), key=lambda r: -r["owed_cents"])
 
 
+async def apply_debt_payment(
+    session: AsyncSession, org_id: str, invoices: list[Invoice], amount: int, method: str, ref: str
+) -> list[Invoice]:
+    """Spreads `amount` over `invoices` (oldest first, as _unpaid returns
+    them), commits, and books each sale it settles. Every row carries
+    `ref`, so the caller's "seen it already" check stays one query. The
+    caller holds the customer's row lock and checks amount <= owed."""
+    now = datetime.now(UTC)
+    left = amount
+    settled: list[Invoice] = []
+    for inv in invoices:
+        if left == 0:
+            break
+        part = min(left, _owed(inv))
+        if part == 0:
+            continue
+        session.add(
+            Payment(
+                org_id=uuid.UUID(org_id),
+                invoice_id=inv.id,
+                amount_cents=part,
+                method=method,
+                received_at=now,
+                client_ref=ref,
+            )
+        )
+        left -= part
+        if part == _owed(inv):
+            inv.status = "paid"
+            inv.updated_at = now
+            settled.append(inv)
+    await session.commit()
+    for inv in settled:
+        await session.refresh(inv, attribute_names=["lines", "payments"])
+        await publish_invoice_paid(
+            org_id, inv, inv.paid_cents, invoice_lines_payload(inv), posting_ref=rebook_ref(inv, ref)
+        )
+    return settled
+
+
 @router.post("/payments", status_code=201)
 async def pay_debt(
     body: dict,
@@ -152,36 +193,7 @@ async def pay_debt(
     if amount > owed:
         raise HTTPException(422, f"{customer.name} owes only {owed} cents")
 
-    now = datetime.now(UTC)
-    left = amount
-    settled: list[Invoice] = []
-    for inv in invoices:
-        if left == 0:
-            break
-        part = min(left, _owed(inv))
-        if part == 0:
-            continue
-        session.add(
-            Payment(
-                org_id=uuid.UUID(principal.org_id),
-                invoice_id=inv.id,
-                amount_cents=part,
-                method=method,
-                received_at=now,
-                client_ref=ref,
-            )
-        )
-        left -= part
-        if part == _owed(inv):
-            inv.status = "paid"
-            inv.updated_at = now
-            settled.append(inv)
-    await session.commit()
-    for inv in settled:
-        await session.refresh(inv, attribute_names=["lines", "payments"])
-        await publish_invoice_paid(
-            principal.org_id, inv, inv.paid_cents, invoice_lines_payload(inv), posting_ref=rebook_ref(inv, ref)
-        )
+    settled = await apply_debt_payment(session, principal.org_id, invoices, amount, method, ref)
     return {
         "customer": customer.name,
         "paid_cents": amount,

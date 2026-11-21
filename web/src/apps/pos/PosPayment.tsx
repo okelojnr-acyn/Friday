@@ -8,7 +8,9 @@ export interface OnlineMethod {
   key: string;
   label: string;
   hint: string;
-  start: () => void;
+  /** Gets the till's own part of a split (typed before pressing it), or
+   * none when the whole sale goes online. */
+  start: (tenders: Tender[]) => void;
 }
 
 export interface Tender {
@@ -164,7 +166,7 @@ export function PosPayment({
               </button>
             ))}
             {online.map((o) => (
-              <button key={o.key} type="button" className="till-method glass" onClick={o.start} style={{ lineHeight: 1.2 }}>
+              <button key={o.key} type="button" className="till-method glass" onClick={() => o.start(paid > 0 && paid < totalCents ? lines.filter((l) => l.cents > 0) : [])} style={{ lineHeight: 1.2 }}>
                 {o.label}
                 <span style={{ display: "block", fontSize: 13, fontWeight: 500, color: "var(--text-muted)" }}>
                   {o.hint}
