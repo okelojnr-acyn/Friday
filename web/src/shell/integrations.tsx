@@ -239,8 +239,9 @@ export function ProviderEditor({
     if (!connected || !canManage) return;
     getIntegration(provider.key)
       .then((cred) => {
-        setRawConfig(cred.config);
-        setValues(Object.fromEntries(provider.fields.map((f) => [f.key, String(cred.config[f.key] ?? "")])));
+        const config = cred.config ?? {};
+        setRawConfig(config);
+        setValues(Object.fromEntries(provider.fields.map((f) => [f.key, String(config[f.key] ?? "")])));
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load the settings"))
       .finally(() => setLoading(false));
