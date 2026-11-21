@@ -3,10 +3,12 @@ package org
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/acyn-innovation/friday/kernel/internal/access"
 	"github.com/acyn-innovation/friday/kernel/internal/auth"
 )
 
@@ -18,14 +20,18 @@ type Members struct {
 	Pool *pgxpool.Pool
 }
 
-var settableRoles = map[string]bool{"owner": true, "admin": true, "member": true, "viewer": true}
-
 type memberView struct {
 	UserID    string    `json:"user_id"`
 	Email     string    `json:"email"`
 	FullName  string    `json:"full_name"`
 	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
+	// Plan section 12: staff ID, permissions, locations (none = all) and
+	// who they report to.
+	StaffID   *string  `json:"staff_id"`
+	Perms     []string `json:"perms"`
+	Locations []string `json:"locations"`
+	ReportsTo *string  `json:"reports_to"`
 }
 
 // List is readable by any authenticated member, not just admins --
@@ -39,7 +45,10 @@ func (m *Members) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := m.Pool.Query(r.Context(), `
-		SELECT u.id, u.email, u.full_name, mem.role, mem.created_at
+		SELECT u.id, u.email, u.full_name, mem.role, mem.created_at, mem.staff_id, mem.perms,
+		       COALESCE((SELECT array_agg(ml.location_id::text ORDER BY ml.location_id) FROM core.membership_locations ml
+		                 WHERE ml.org_id = mem.org_id AND ml.user_id = mem.user_id), '{}'),
+		       mem.reports_to::text
 		FROM core.memberships mem
 		JOIN core.users u ON u.id = mem.user_id
 		WHERE mem.org_id = $1
@@ -54,7 +63,8 @@ func (m *Members) List(w http.ResponseWriter, r *http.Request) {
 	members := []memberView{}
 	for rows.Next() {
 		var mv memberView
-		if err := rows.Scan(&mv.UserID, &mv.Email, &mv.FullName, &mv.Role, &mv.CreatedAt); err != nil {
+		if err := rows.Scan(&mv.UserID, &mv.Email, &mv.FullName, &mv.Role, &mv.CreatedAt,
+			&mv.StaffID, &mv.Perms, &mv.Locations, &mv.ReportsTo); err != nil {
 			http.Error(w, "db error", http.StatusInternalServerError)
 			return
 		}
@@ -107,8 +117,12 @@ func (m *Members) SetRole(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if !settableRoles[req.Role] {
-		http.Error(w, "role must be one of owner, admin, member, viewer", http.StatusBadRequest)
+	if !access.ValidRole(req.Role) {
+		http.Error(w, "role must be one of "+strings.Join(access.Roles, ", "), http.StatusBadRequest)
+		return
+	}
+	if req.Role == "owner" && claims.Role != "owner" {
+		http.Error(w, "only an owner makes someone an owner", http.StatusForbidden)
 		return
 	}
 
@@ -175,6 +189,10 @@ func (m *Members) Remove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Whoever reported to them reports to nobody now (no foreign key; see
+	// migration 0011).
+	m.Pool.Exec(ctx, `UPDATE core.memberships SET reports_to = NULL WHERE org_id = $1 AND reports_to::text = $2`,
+		claims.OrgID, targetUserID)
 	if _, err := m.Pool.Exec(ctx,
 		`DELETE FROM core.memberships WHERE org_id = $1 AND user_id = $2`, claims.OrgID, targetUserID,
 	); err != nil {

@@ -52,7 +52,7 @@ export interface AppCatalogEntry {
 export interface Session {
   token: string;
   orgId: string;
-  role: "owner" | "admin" | "member" | "viewer";
+  role: "owner" | "admin" | "branch_manager" | "team_leader" | "member" | "viewer";
   email: string;
 }
 

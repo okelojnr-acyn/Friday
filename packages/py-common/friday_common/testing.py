@@ -61,7 +61,14 @@ async def dispose_engine() -> None:
     make_engine.cache_clear()
 
 
-def make_principal(org_id: str | None = None, role: str = "member", email: str = "test@example.com") -> Principal:
+def make_principal(
+    org_id: str | None = None,
+    role: str = "member",
+    email: str = "test@example.com",
+    perms: tuple[str, ...] = (),
+    locs: tuple[str, ...] = ("*",),
+    team: tuple[str, ...] = (),
+) -> Principal:
     """A fake authenticated caller for `app.dependency_overrides`. Tests
     override `get_current_principal` with this instead of minting a real
     JWT -- the thing worth testing is each app's own business logic and
@@ -73,4 +80,7 @@ def make_principal(org_id: str | None = None, role: str = "member", email: str =
         org_id=org_id or str(uuid.uuid4()),
         role=role,
         email=email,
+        perms=perms,
+        locs=locs,
+        team=team,
     )

@@ -450,9 +450,9 @@ func (h *Handlers) PosPinLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not sign in")
 		return
 	}
-	// Never more than a member: owners' and admins' powers need their
-	// passkey.
-	if role == "owner" || role == "admin" {
+	// Never more than a member: owners', admins' and managers' powers need
+	// their passkey.
+	if role == "owner" || role == "admin" || role == "branch_manager" || role == "team_leader" {
 		role = "member"
 	}
 	token, err := h.Issuer.IssueVia(req.UserID, org, role, email, PosVia, posAccess, posPinTokenTTL)
