@@ -87,9 +87,11 @@ func GussRole(fridayRole string) string {
 	switch fridayRole {
 	case "owner":
 		return "owner"
-	case "admin":
+	case "admin", "branch_manager":
 		return "manager"
-	case "member":
+	// Team leaders act as staff in Guss until it scopes approvals to
+	// their team (plan 12.8 step 5).
+	case "team_leader", "member":
 		return "staff"
 	default:
 		return ""

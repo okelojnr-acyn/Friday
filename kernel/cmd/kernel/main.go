@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/acyn-innovation/friday/kernel/internal/access"
 	"github.com/acyn-innovation/friday/kernel/internal/auth"
 	"github.com/acyn-innovation/friday/kernel/internal/db"
 	"github.com/acyn-innovation/friday/kernel/internal/gateway"
@@ -87,6 +88,9 @@ func main() {
 	}
 
 	issuer := auth.NewIssuer(jwtSecret, 24*time.Hour)
+	issuer.Scope = func(ctx context.Context, userID, orgID, role string) ([]string, []string, []string, error) {
+		return access.Load(ctx, pool, orgID, userID, role)
+	}
 	webAuthn, err := auth.NewWebAuthn(webauthnRPID, webauthnRPName, []string{corsOrigin})
 	if err != nil {
 		log.Fatalf("configure webauthn: %v", err)
@@ -153,6 +157,13 @@ func main() {
 	mux.Handle("GET /orgs/members", requireAuth(http.HandlerFunc(members.List)))
 	mux.Handle("PATCH /orgs/members/{user_id}/role", requireAuth(http.HandlerFunc(members.SetRole)))
 	mux.Handle("DELETE /orgs/members/{user_id}", requireAuth(http.HandlerFunc(members.Remove)))
+	people := &org.People{Pool: pool, InternalToken: eventsToken}
+	mux.HandleFunc("GET /internal/people/{org_id}", people.AtLocations)
+	mux.Handle("PATCH /orgs/members/{user_id}", requireAuth(http.HandlerFunc(people.UpdatePerson)))
+	mux.Handle("GET /orgs/me/permissions", requireAuth(http.HandlerFunc(people.MyPermissions)))
+	mux.Handle("GET /orgs/locations", requireAuth(http.HandlerFunc(people.Locations)))
+	mux.Handle("POST /orgs/locations", requireAuth(http.HandlerFunc(people.SaveLocation)))
+	mux.Handle("PATCH /orgs/locations/{id}", requireAuth(http.HandlerFunc(people.SaveLocation)))
 
 	integrationHandlers := &integrations.Handlers{
 		Pool:          pool,

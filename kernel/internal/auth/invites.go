@@ -12,7 +12,7 @@ import (
 // an owner at signup time (completeSignup); promoting someone to owner
 // afterward isn't a feature yet, and inviting one in directly would be
 // a strange way to create one.
-var invitableRoles = map[string]bool{"admin": true, "member": true, "viewer": true}
+var invitableRoles = map[string]bool{"admin": true, "branch_manager": true, "team_leader": true, "member": true, "viewer": true}
 
 type inviteRequest struct {
 	Email string `json:"email"`
@@ -46,7 +46,7 @@ func (h *Handlers) InviteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !invitableRoles[req.Role] {
-		writeError(w, http.StatusBadRequest, "role must be one of admin, member, viewer")
+		writeError(w, http.StatusBadRequest, "role must be one of admin, branch_manager, team_leader, member, viewer")
 		return
 	}
 

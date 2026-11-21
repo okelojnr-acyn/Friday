@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"context"
+	"log"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -20,12 +22,40 @@ type Claims struct {
 	// don't know these fields ignore them; the kernel enforces them.
 	Via    string            `json:"via,omitempty"`
 	Access map[string]string `json:"access,omitempty"`
+	// Who sees what (plan section 12): the person's permissions, their
+	// locations ("*" = all) and the people who report to them. Apps
+	// enforce access_rules.json with these.
+	Perms []string `json:"perms,omitempty"`
+	Locs  []string `json:"locs,omitempty"`
+	Team  []string `json:"team,omitempty"`
 	jwt.RegisteredClaims
 }
+
+// ScopeFunc loads a person's perms, locations and team (access.Load).
+type ScopeFunc func(ctx context.Context, userID, orgID, role string) (perms, locs, team []string, err error)
 
 type Issuer struct {
 	secret []byte
 	ttl    time.Duration
+	// Scope fills Perms/Locs/Team on every token; nil leaves them empty
+	// (tests). Set once at start-up.
+	Scope ScopeFunc
+}
+
+// fill adds the person's scope to claims. If it can't be loaded the token
+// carries no permissions and no locations, so it opens less, never more.
+func (iss *Issuer) fill(c *Claims, userID string) {
+	if iss.Scope == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	perms, locs, team, err := iss.Scope(ctx, userID, c.OrgID, c.Role)
+	if err != nil {
+		log.Printf("token scope for %s in %s: %v", userID, c.OrgID, err)
+		return
+	}
+	c.Perms, c.Locs, c.Team = perms, locs, team
 }
 
 func NewIssuer(secret string, ttl time.Duration) *Issuer {
@@ -44,6 +74,7 @@ func (iss *Issuer) Issue(userID, orgID, role, email string) (string, error) {
 			ExpiresAt: jwt.NewNumericDate(now.Add(iss.ttl)),
 		},
 	}
+	iss.fill(&claims, userID)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(iss.secret)
 }
@@ -67,6 +98,7 @@ func (iss *Issuer) IssueVia(userID, orgID, role, email, via string, access map[s
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
 	}
+	iss.fill(&claims, userID)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(iss.secret)
 }

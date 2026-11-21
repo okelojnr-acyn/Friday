@@ -8,8 +8,17 @@ import { FieldWrap, Input, Select } from "../ui/Field";
 import { Avatar } from "../ui/Avatar";
 import { initials } from "../ui/resource/fieldFormat";
 
-const INVITABLE_ROLES = ["member", "admin", "viewer"];
-const SETTABLE_ROLES = ["owner", "admin", "member", "viewer"];
+// The role ladder (plan section 12.1); "member" is staff.
+const INVITABLE_ROLES = ["admin", "branch_manager", "team_leader", "member", "viewer"];
+const SETTABLE_ROLES = ["owner", ...INVITABLE_ROLES];
+const ROLE_LABEL: Record<string, string> = {
+  owner: "Owner",
+  admin: "Admin",
+  branch_manager: "Branch manager",
+  team_leader: "Team leader",
+  member: "Staff",
+  viewer: "Viewer (read only)",
+};
 
 /** Settings > Members: the org roster, plus inviting new people. Backed
  * entirely by the kernel (kernel/internal/org/members.go,
@@ -119,7 +128,7 @@ export function MembersSettingsPage() {
               <Select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} style={{ width: 140 }}>
                 {INVITABLE_ROLES.map((r) => (
                   <option key={r} value={r}>
-                    {r}
+                    {ROLE_LABEL[r] ?? r}
                   </option>
                 ))}
               </Select>
@@ -173,7 +182,7 @@ export function MembersSettingsPage() {
                       >
                         {SETTABLE_ROLES.map((r) => (
                           <option key={r} value={r}>
-                            {r}
+                            {ROLE_LABEL[r] ?? r}
                           </option>
                         ))}
                       </Select>

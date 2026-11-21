@@ -8,10 +8,9 @@ from .settings import get_settings
 
 _bearer = HTTPBearer(auto_error=False)
 
-# Four roles, not a group/ACL graph. Each is a strict superset of the one
-# before it. This is the whole permission model -- see ARCHITECTURE.md for
-# why that's a deliberate simplification, not a missing feature.
-ROLE_RANK = {"viewer": 0, "member": 1, "admin": 2, "owner": 3}
+# The role ladder (plan section 12.1). "member" is staff. What each role
+# may see and do beyond "at least this rank" is in access.py.
+ROLE_RANK = {"viewer": 0, "member": 1, "team_leader": 2, "branch_manager": 3, "admin": 4, "owner": 5}
 
 
 @dataclass(frozen=True)
@@ -23,6 +22,11 @@ class Principal:
     # Set when an assistant (Guss) acts for the person; see the kernel's
     # Claims.Via. Routes a person must run themselves check it.
     via: str = ""
+    # Plan section 12: permissions, locations ("*" = all) and the people
+    # who report to them, from the token (see access.py).
+    perms: tuple[str, ...] = ()
+    locs: tuple[str, ...] = ()
+    team: tuple[str, ...] = ()
 
     def at_least(self, role: str) -> bool:
         return ROLE_RANK.get(self.role, -1) >= ROLE_RANK.get(role, 99)
@@ -55,6 +59,9 @@ def get_current_principal(
             role=payload["role"],
             email=payload["email"],
             via=payload.get("via", ""),
+            perms=tuple(payload.get("perms") or ()),
+            locs=tuple(payload.get("locs") or ()),
+            team=tuple(payload.get("team") or ()),
         )
     except KeyError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"token missing claim: {exc}") from exc
