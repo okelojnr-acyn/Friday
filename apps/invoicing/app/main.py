@@ -957,6 +957,19 @@ async def return_pos_sale(
     makes Inventory's existing pos_sale_recorded webhook restock
     automatically -- zero Inventory code needed for returns."""
     original = await _get_pos_sale(session, principal, number)
+    # Sent again with the same client_return_id (a retry whose reply was
+    # lost): the refund it made, never a second one. The refund's Payment
+    # carries the id.
+    client_return_id = str((body or {}).get("client_return_id") or "").strip()[:120] or None
+    if client_return_id:
+        done = await session.scalar(
+            select(Invoice)
+            .join(Payment, Payment.invoice_id == Invoice.id)
+            .where(Invoice.org_id == uuid.UUID(principal.org_id), Payment.client_ref == client_return_id)
+            .options(selectinload(Invoice.lines), selectinload(Invoice.payments))
+        )
+        if done is not None:
+            return InvoiceOut.from_model(done)
     if original.status == "void":
         raise HTTPException(400, "sale is already void")
     await session.refresh(original, attribute_names=["lines", "payments"])
@@ -1059,6 +1072,7 @@ async def return_pos_sale(
             amount_cents=refund_total_cents,
             method="refund",
             received_at=now,
+            client_ref=client_return_id,
         )
     )
     # A partial return leaves the sale standing for what the customer kept.
