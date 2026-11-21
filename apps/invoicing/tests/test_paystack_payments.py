@@ -9,7 +9,7 @@ from dataclasses import replace
 
 import pytest
 
-from app.paystack_pay import method_for, parse_reference
+from app.paystack_pay import method_for, parse_debt_reference, parse_reference
 
 SECRET = "sk_test_abc"
 
@@ -21,7 +21,7 @@ async def _config(org_id, provider):
 @pytest.fixture
 def paystack(monkeypatch):
     """A fake Paystack: `verified` is what verify answers per reference."""
-    state = {"verified": {}, "started": []}
+    state = {"verified": {}, "started": [], "refunds": []}
 
     class FakePaystack:
         def __init__(self, config):
@@ -30,6 +30,10 @@ def paystack(monkeypatch):
         async def create_payment_intent(self, amount_cents, currency, metadata):
             state["started"].append((amount_cents, currency, metadata))
             return {"id": metadata["reference"], "redirect_url": f"https://checkout.paystack.com/{metadata['reference']}"}
+
+        async def refund(self, reference, amount_cents=None):
+            state["refunds"].append((reference, amount_cents))
+            return {"status": True}
 
         async def verify(self, reference):
             return state["verified"].get(reference, {"status": "abandoned", "amount": 0, "currency": "", "channel": ""})
@@ -178,3 +182,134 @@ async def test_a_till_chooses_its_payment_methods(client, as_principal, principa
     assert r.json()["payment_methods"] == ["cash", "paystack"]
     r = await client.patch(f"/pos/registers/{a_till}", json={"payment_methods": None})
     assert r.json()["payment_methods"] is None
+
+
+def _paid(paystack, reference, amount, channel="card", currency="KES"):
+    paystack["verified"][reference] = {"status": "success", "amount": amount, "currency": currency, "channel": channel}
+
+
+async def test_split_sale_cash_at_the_till_and_paystack_the_rest(client, paystack):
+    body = dict(_sale(1000), payments=[{"method": "cash", "amount_cents": 400}])
+    r = await client.post("/pos/sales/pay-with-paystack", json=body)
+    assert r.status_code == 201, r.text
+    invoice_id = r.json()["invoice_id"]
+    amount, _, meta = paystack["started"][-1]
+    assert amount == 600
+
+    _paid(paystack, meta["reference"], 1000)  # the whole sale again: wrong amount, not taken
+    assert (await client.get(f"/pos/sales/{invoice_id}/status")).json()["status"] == "pending"
+    _paid(paystack, meta["reference"], 600, channel="mobile_money")
+    assert (await client.get(f"/pos/sales/{invoice_id}/status")).json()["status"] == "paid"
+    inv = (await client.get(f"/invoices/{invoice_id}")).json()
+    assert sorted((p["method"], p["amount_cents"]) for p in inv["payments"]) == [("cash", 400), ("mpesa", 600)]
+
+
+async def test_split_parts_must_leave_something_for_paystack(client, paystack):
+    for payments in ([{"method": "cash", "amount_cents": 1000}], [{"method": "pesapal", "amount_cents": 100}]):
+        r = await client.post("/pos/sales/pay-with-paystack", json=dict(_sale(1000), payments=payments))
+        assert r.status_code == 422, r.text
+
+
+async def test_cancel_a_waiting_sale_hands_back_the_cash(client, paystack):
+    body = dict(_sale(1000), payments=[{"method": "cash", "amount_cents": 300}])
+    invoice_id = (await client.post("/pos/sales/pay-with-paystack", json=body)).json()["invoice_id"]
+    r = await client.post(f"/pos/sales/{invoice_id}/cancel")
+    assert r.json() == {"invoice_id": invoice_id, "status": "void", "returned_cents": 300}
+    inv = (await client.get(f"/invoices/{invoice_id}")).json()
+    assert inv["status"] == "void" and inv["payments"] == []
+
+    # The customer pays anyway: it goes straight back.
+    reference = paystack["started"][-1][2]["reference"]
+    _paid(paystack, reference, 700)
+    raw, headers = _signed({"event": "charge.success", "data": {"reference": reference}})
+    await client.post("/external/webhooks/paystack", content=raw, headers=headers)
+    assert paystack["refunds"] == [(reference, 700)]
+
+
+async def test_cancel_keeps_a_sale_that_was_paid(client, paystack):
+    invoice_id, reference = await _start_sale(client, paystack)
+    _paid(paystack, reference, 1000)
+    r = await client.post(f"/pos/sales/{invoice_id}/cancel")
+    assert r.json()["status"] == "paid"
+
+
+async def test_a_return_of_a_paystack_sale_is_refunded_through_paystack(client, paystack):
+    invoice_id, reference = await _start_sale(client, paystack, cents=1000)
+    _paid(paystack, reference, 1000, channel="mobile_money")
+    await client.get(f"/pos/sales/{invoice_id}/status")
+    number = (await client.get(f"/invoices/{invoice_id}")).json()["number"]
+
+    r = await client.post(f"/pos/sales/{number}/return", json={"client_return_id": "r1"})
+    assert r.status_code == 201, r.text
+    assert paystack["refunds"] == [(reference, 1000)]
+    assert [(p["method"], p["amount_cents"]) for p in r.json()["payments"]] == [("mpesa", -1000)]
+    # Sent again: the same return, no second refund.
+    await client.post(f"/pos/sales/{number}/return", json={"client_return_id": "r1"})
+    assert len(paystack["refunds"]) == 1
+
+
+async def test_a_return_of_a_split_sale_refunds_paystack_first_then_the_drawer(client, paystack):
+    body = dict(
+        _sale(1000),
+        lines=[{"description": "Rice", "quantity": 2, "unit_price_cents": 500}],
+        payments=[{"method": "cash", "amount_cents": 400}],
+    )
+    invoice_id = (await client.post("/pos/sales/pay-with-paystack", json=body)).json()["invoice_id"]
+    reference = paystack["started"][-1][2]["reference"]
+    _paid(paystack, reference, 600)
+    await client.get(f"/pos/sales/{invoice_id}/status")
+    sale = (await client.get(f"/invoices/{invoice_id}")).json()
+    line_id = next(x["id"] for x in sale["lines"] if x["description"] == "Rice")
+
+    one = {"lines": [{"line_id": line_id, "quantity": 1}]}
+    first = await client.post(f"/pos/sales/{sale['number']}/return", json=one)
+    assert [(p["method"], p["amount_cents"]) for p in first.json()["payments"]] == [("card", -500)]
+    second = await client.post(f"/pos/sales/{sale['number']}/return", json=one)
+    got = sorted((p["method"], p["amount_cents"]) for p in second.json()["payments"])
+    assert got == [("card", -100), ("refund", -400)]
+    assert paystack["refunds"] == [(reference, 500), (reference, 100)]
+
+
+def _credit(name, cents=100000):
+    return {
+        "client_sale_id": f"guss:{name}:{cents}",
+        "channel": "guss",
+        "currency": "KES",
+        "amount_cents": cents,
+        "lines": [{"description": "Rice", "quantity": 1, "unit_price_cents": cents}],
+        "on_credit": True,
+        "customer_name": name,
+    }
+
+
+async def test_a_debt_link_settles_the_oldest_sales_once(client, principal, paystack, monkeypatch):
+    async def no_vat(org_id):
+        return {"vat_registered": False}
+
+    monkeypatch.setattr("app.main.get_etims_config", no_vat)
+    await client.post("/pos/sales", json=_credit("Achieng", 1000))
+    await client.post("/pos/sales", json=_credit("Achieng", 500))
+    r = await client.post("/pos/debts/paystack-link", json={"customer_name": "achieng"})
+    assert r.status_code == 201, r.text
+    link = r.json()
+    assert (link["owed_cents"], link["currency"]) == (1500, "KES")
+    assert paystack["started"][-1][0] == 1500
+    org, _ = parse_debt_reference(link["reference"])
+    assert org == principal.org_id
+
+    check = f"/pos/debts/paystack-link/{link['reference']}"
+    assert (await client.get(check)).json()["status"] == "abandoned"
+    _paid(paystack, link["reference"], 1500, channel="mobile_money")
+    paid = (await client.get(check)).json()
+    assert (paid["status"], paid["paid_cents"], paid["method"]) == ("paid", 1500, "mpesa")
+    # The webhook and further checks record nothing more.
+    raw, headers = _signed({"event": "charge.success", "data": {"reference": link["reference"]}})
+    assert (await client.post("/external/webhooks/paystack", content=raw, headers=headers)).status_code == 200
+    assert (await client.get(check)).json()["paid_cents"] == 1500
+    assert (await client.get("/pos/debts", params={"customer": "Achieng"})).json() == []
+
+
+async def test_no_debt_link_for_someone_who_owes_nothing(client, paystack):
+    assert (await client.post("/pos/debts/paystack-link", json={"customer_name": "Nobody"})).status_code == 404
+    other = "11111111-1111-1111-1111-111111111111.debt-22222222-2222-2222-2222-222222222222.0a1b2c3d"
+    assert (await client.get(f"/pos/debts/paystack-link/{other}")).status_code == 404

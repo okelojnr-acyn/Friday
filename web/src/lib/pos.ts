@@ -54,5 +54,13 @@ export function offeredMethods(till?: string[] | null, business?: string[]): str
   return till ?? business ?? PAYMENT_METHODS;
 }
 
+/** Cancels a sale still waiting on Paystack (checked with Paystack
+ * first: a paid one stays paid). returned_cents is the till's own part
+ * of a split, to hand back. */
+export const cancelPosSale = (invoiceId: string) =>
+  api.post<{ invoice_id: string; status: string; returned_cents: number }>(
+    `/api/invoicing/pos/sales/${invoiceId}/cancel`,
+  );
+
 export const pollPosSaleStatus = (invoiceId: string) =>
   api.get<{ invoice_id: string; status: string }>(`/api/invoicing/pos/sales/${invoiceId}/status`);
