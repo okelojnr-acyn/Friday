@@ -20,6 +20,8 @@ import { initials } from "../../ui/resource/fieldFormat";
 import { chooseSerialDrawer, drawerMode, openDrawer, serialSupported, setDrawerMode, type DrawerMode } from "./drawer";
 import { PosNumpad } from "./PosNumpad";
 import { PosPayment, type OnlineMethod, type Tender } from "./PosPayment";
+import { OnlinePayment } from "./OnlinePayment";
+import { kePhoneDigits } from "./phone";
 import { printReceipt, type Receipt } from "./receipt";
 import { BuyerPin, type Buyer } from "./BuyerPin";
 import { lineTotalCents, tillTotals } from "./tax";
@@ -121,27 +123,74 @@ export function PosPage({
     provider: "Paystack" | "Pesapal";
     invoiceId: string;
     status: "starting" | "pending" | "paid" | "void";
-    /** The M-Pesa prompt went to the customer's phone. */
-    phone?: boolean;
+    /** The M-Pesa prompt went to this number (9 digits after +254). */
+    phone?: string;
+    /** The till's own part of a split, and what's left for the gateway. */
+    tenders: Tender[];
+    amountCents: number;
+    redirectUrl?: string;
     /** Cash etc. to hand back after a split sale is cancelled. */
     returned?: number;
+    error?: string;
+    /** The order as it was sent, for the receipt once it's paid. */
+    sold: { lines: typeof lines; totals: typeof totals; buyer: typeof buyer; number: string };
   } | null>(null);
 
   async function cancelOnline() {
     if (!onlineFlow) return;
     try {
       const r = await cancelPosSale(onlineFlow.invoiceId);
-      if (r.status === "paid") {
-        cartRef.current?.clear();
-        setSelected(null);
-        refreshCart();
-      }
-      setOnlineFlow((cur) =>
-        cur ? { ...cur, status: r.status === "paid" ? "paid" : "void", returned: r.returned_cents } : cur,
-      );
+      if (r.status === "paid") return finishOnline(onlineFlow);
+      setOnlineFlow((cur) => (cur ? { ...cur, status: "void", returned: r.returned_cents, error: undefined } : cur));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not cancel the sale");
+      setOnlineFlow((cur) =>
+        cur ? { ...cur, error: err instanceof ApiError ? err.message : "Could not cancel the sale" } : cur,
+      );
     }
+  }
+
+  // Resend = the old prompt is cancelled (checked with Paystack first, so
+  // a payment that did go through is kept) and a new one goes out.
+  async function resendOnline() {
+    if (!onlineFlow) return;
+    const { provider, tenders, phone, invoiceId, status } = onlineFlow;
+    if (status === "pending") {
+      try {
+        const r = await cancelPosSale(invoiceId);
+        if (r.status === "paid") return finishOnline(onlineFlow);
+      } catch (err) {
+        setOnlineFlow((cur) =>
+          cur ? { ...cur, error: err instanceof ApiError ? err.message : "Could not resend" } : cur,
+        );
+        return;
+      }
+    }
+    await payOnline(provider, tenders, phone);
+  }
+
+  // Paid online: the cart is done; same "Paid" screen and receipt as cash.
+  async function finishOnline(flow: NonNullable<typeof onlineFlow>) {
+    const tillPart = flow.tenders.reduce((s2, t) => s2 + t.cents, 0);
+    const payments: Tender[] = [
+      ...flow.tenders,
+      { method: flow.phone ? "mpesa" : flow.provider.toLowerCase(), cents: flow.amountCents },
+    ];
+    let drawerNote = "";
+    if (flow.tenders.some((t) => t.method === "cash")) {
+      try {
+        drawerNote = (await openDrawer()) ? "Drawer open" : drawer === "printer" ? "Drawer opens with the receipt" : "";
+      } catch (err) {
+        drawerNote = err instanceof Error ? err.message : "The drawer didn't open";
+      }
+    }
+    const receipt = buildReceipt(flow.sold.lines, flow.sold.totals, payments, 0, flow.sold.number, flow.sold.buyer);
+    cartRef.current?.clear();
+    setSelected(null);
+    setBuffer("");
+    refreshCart();
+    setBuyer(null);
+    setOnlineFlow(null);
+    setPaid({ change: 0, total: tillPart + flow.amountCents, drawer: drawerNote, receipt });
   }
   const [connected, setConnected] = useState<string[]>([]);
 
@@ -383,7 +432,6 @@ export function PosPage({
     const soldLines = lines;
     const soldTotals = totals;
     const total = totals.total;
-    const tax = totals.tax;
     cart.clear();
     setSelected(null);
     setBuffer("");
@@ -403,11 +451,36 @@ export function PosPage({
         drawerNote = err instanceof Error ? err.message : "The drawer didn't open";
       }
     }
-    const receipt: Receipt = {
+    const receipt = buildReceipt(soldLines, soldTotals, tenders, change, sale.client_sale_id, buyer);
+    setPaid({ change, total, drawer: drawerNote, receipt });
+    if (hasCash && drawer === "printer") printReceipt(receipt);
+
+    try {
+      await api.post("/api/invoicing/pos/sales", sale);
+      queue.mark_synced(sale.client_sale_id);
+      persistQueue();
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status !== 0
+          ? `Sale saved on this till; sending it failed: ${err.message}`
+          : "Sale saved on this till; it sends when back online.",
+      );
+    }
+  }
+
+  function buildReceipt(
+    soldLines: typeof lines,
+    soldTotals: typeof totals,
+    tenders: Tender[],
+    change: number,
+    clientSaleId: string,
+    soldBuyer: typeof buyer,
+  ): Receipt {
+    return {
         businessName: settings.name,
         registerName: register?.name ?? "Till",
         cashier: session?.email ?? "",
-        number: sale.client_sale_id.slice(0, 8).toUpperCase(),
+        number: clientSaleId.slice(0, 8).toUpperCase(),
         at: new Date(),
         lines: soldLines.map((l, i) => {
           const p = l.product_id ? byId.get(l.product_id) : undefined;
@@ -437,35 +510,21 @@ export function PosPage({
               };
             })
           : undefined,
-        totalCents: total,
-        taxCents: tax,
+        totalCents: soldTotals.total,
+        taxCents: soldTotals.tax,
         taxLabel,
         payments: tenders.map((t) => ({ method: t.method, cents: t.method === "cash" ? t.cents + change : t.cents })),
         changeCents: change,
         currency: settings.currency,
         taxPin: settings.tax?.receipt_show_pin ? settings.tax.tax_pin : "",
-        buyerPin: buyer?.pin,
-        buyerName: buyer?.name,
-        taxLines: totals.byCode
+        buyerPin: soldBuyer?.pin,
+        buyerName: soldBuyer?.name,
+        taxLines: soldTotals.byCode
           .filter((c) => c.rate_bp > 0 || totals.byCode.length > 1)
           .map((c) => ({ label: `${c.code} ${c.name} ${c.rate_bp / 100}%`, cents: c.vat_cents })),
         showTax: settings.tax ? settings.tax.vat_registered && settings.tax.receipt_show_breakdown : true,
         footer: settings.tax?.receipt_footer,
       };
-    setPaid({ change, total, drawer: drawerNote, receipt });
-    if (hasCash && drawer === "printer") printReceipt(receipt);
-
-    try {
-      await api.post("/api/invoicing/pos/sales", sale);
-      queue.mark_synced(sale.client_sale_id);
-      persistQueue();
-    } catch (err) {
-      setError(
-        err instanceof ApiError && err.status !== 0
-          ? `Sale saved on this till; sending it failed: ${err.message}`
-          : "Sale saved on this till; it sends when back online.",
-      );
-    }
   }
 
   // tenders: the till's own part of a split; Paystack charges the rest.
@@ -485,16 +544,28 @@ export function PosPage({
       return;
     }
     setPaying(false);
-    setOnlineFlow({ provider, invoiceId: "", status: "starting" });
+    const tillPart = provider === "Paystack" ? tenders.reduce((s2, t) => s2 + t.cents, 0) : 0;
+    const base = {
+      provider,
+      invoiceId: "",
+      phone: phone ? (kePhoneDigits(phone) ?? undefined) : undefined,
+      tenders: provider === "Paystack" ? tenders : [],
+      amountCents: totals.total - tillPart,
+      sold: { lines, totals, buyer, number: sale.client_sale_id },
+    };
+    setOnlineFlow({ ...base, status: "starting" });
     try {
       const start = provider === "Paystack" ? startPaystackPosPayment : startPesapalPosPayment;
       const { invoice_id, redirect_url } = await start(sale);
-      setOnlineFlow({ provider, invoiceId: invoice_id, status: "pending", phone: !!phone });
+      setOnlineFlow({ ...base, invoiceId: invoice_id, status: "pending", redirectUrl: redirect_url || undefined });
       // An M-Pesa prompt goes to the customer's phone: no page to open.
       if (redirect_url) window.open(redirect_url, "_blank", "noopener");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : `Could not start ${provider} checkout`);
-      setOnlineFlow(null);
+      setOnlineFlow({
+        ...base,
+        status: "void",
+        error: err instanceof ApiError ? err.message : `Could not start ${provider} checkout`,
+      });
     }
   }
 
@@ -504,17 +575,14 @@ export function PosPage({
       try {
         const result = await pollPosSaleStatus(onlineFlow.invoiceId);
         if (result.status === "paid") {
-          cartRef.current?.clear();
-          setSelected(null);
-          refreshCart();
-          setOnlineFlow((cur) => (cur ? { ...cur, status: "paid" } : cur));
+          void finishOnline(onlineFlow);
         } else if (result.status === "void") {
           setOnlineFlow((cur) => (cur ? { ...cur, status: "void" } : cur));
         }
       } catch {
         // keep polling
       }
-    }, 3000);
+    }, 2000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onlineFlow?.invoiceId, onlineFlow?.status]);
@@ -607,6 +675,26 @@ export function PosPage({
         <div className="till-stage-center till-text">Starting the register…</div>
         <div />
       </div>
+    );
+  }
+
+  if (onlineFlow && onlineFlow.status !== "paid") {
+    const f = onlineFlow;
+    return (
+      <OnlinePayment
+        key={f.invoiceId || "starting"}
+        provider={f.provider}
+        status={f.status}
+        amountCents={f.amountCents}
+        phoneDigits={f.phone}
+        returnedCents={f.returned}
+        error={f.error}
+        onResend={f.provider === "Paystack" && f.phone ? resendOnline : undefined}
+        onCancel={f.provider === "Paystack" ? cancelOnline : undefined}
+        onReopenPage={f.redirectUrl ? () => window.open(f.redirectUrl, "_blank", "noopener") : undefined}
+        onOtherMethod={() => (setOnlineFlow(null), setPaying(true))}
+        onDone={() => setOnlineFlow(null)}
+      />
     );
   }
 
@@ -807,28 +895,6 @@ export function PosPage({
               </div>
             </div>
             {error ? <div className="till-error">{error}</div> : null}
-            {onlineFlow ? (
-              <div className="till-error" style={{ background: "rgba(224,122,53,.12)", color: "#9a4a12" }}>
-                {onlineFlow.status === "starting" && `Starting ${onlineFlow.provider} checkout…`}
-                {onlineFlow.status === "pending" &&
-                  (onlineFlow.phone
-                    ? "M-Pesa prompt sent: the customer enters their PIN on their phone…"
-                    : `Waiting for the customer to pay on ${onlineFlow.provider}…`)}
-                {onlineFlow.status === "paid" && `${onlineFlow.provider} payment received.`}
-                {onlineFlow.status === "void" && `${onlineFlow.provider} payment failed or was cancelled.`}
-                {onlineFlow.returned ? ` Hand back ${formatMoney(onlineFlow.returned)}.` : ""}
-                {onlineFlow.status === "pending" && onlineFlow.provider === "Paystack" ? (
-                  <button type="button" onClick={cancelOnline} style={{ marginLeft: 8 }}>
-                    Cancel sale
-                  </button>
-                ) : null}
-                {onlineFlow.status !== "starting" && !(onlineFlow.status === "pending" && onlineFlow.provider === "Paystack") ? (
-                  <button type="button" onClick={() => setOnlineFlow(null)} style={{ marginLeft: 8 }}>
-                    {onlineFlow.status === "pending" ? "Stop waiting" : "OK"}
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
             <div className="till-hint">
               {sel
                 ? mode === "qty"

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { formatMoney } from "../../lib/orgSettings";
 import { PosNumpad } from "./PosNumpad";
+import { formatKePhone, kePhoneDigits } from "./phone";
 import { methodLabel } from "./receipt";
 
 /** A gateway that confirms the payment itself (Paystack, Pesapal). */
@@ -65,6 +66,8 @@ export function PosPayment({
   // The online method waiting for the customer's phone number.
   const [phoneFor, setPhoneFor] = useState<OnlineMethod | null>(null);
   const [phone, setPhone] = useState("");
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  const phoneOk = kePhoneDigits(phone) !== null;
 
   const paid = lines.reduce((s, l) => s + l.cents, 0);
   const remaining = Math.max(0, totalCents - paid);
@@ -192,35 +195,50 @@ export function PosPayment({
           </div>
           {phoneFor ? (
             <form
-              className="glass"
-              style={{ borderRadius: 20, padding: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
+              className="glass till-phone-form"
+              noValidate
               onSubmit={(e) => {
                 e.preventDefault();
-                if (phone.trim()) phoneFor.start(splitPart(), phone.trim());
+                setPhoneTouched(true);
+                if (phoneOk) phoneFor.start(splitPart(), phone);
               }}
             >
-              <label htmlFor="till-phone" className="till-text" style={{ flexBasis: "100%" }}>
+              <label htmlFor="till-phone" className="till-text">
                 Customer's M-Pesa number
               </label>
-              <input
-                id="till-phone"
-                type="tel"
-                inputMode="tel"
-                autoComplete="off"
-                autoFocus
-                placeholder="0712 345 678"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                // The till's keyboard shortcuts must not eat the digits.
-                onKeyDown={(e) => e.stopPropagation()}
-                style={{ flex: "1 1 160px", minWidth: 0, fontSize: 20, padding: "10px 12px", borderRadius: 12, border: "1px solid var(--border)" }}
-              />
-              <button type="submit" className="till-pay" style={{ margin: 0, flex: "0 0 auto" }} disabled={!phone.trim()}>
-                Send prompt
-              </button>
-              <button type="button" className="glass" style={{ borderRadius: 12, padding: "10px 14px" }} onClick={() => setPhoneFor(null)}>
-                Cancel
-              </button>
+              <div className={`till-phone-field${phoneTouched && !phoneOk ? " invalid" : ""}`}>
+                <span className="till-phone-prefix" aria-hidden="true">
+                  +254
+                </span>
+                <input
+                  id="till-phone"
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  autoFocus
+                  placeholder="712 345 678"
+                  aria-describedby="till-phone-help"
+                  aria-invalid={phoneTouched && !phoneOk}
+                  value={formatKePhone(phone)}
+                  onChange={(e) => setPhone(e.target.value)}
+                  onBlur={() => setPhoneTouched(true)}
+                  // The till's keyboard shortcuts must not eat the digits.
+                  onKeyDown={(e) => e.stopPropagation()}
+                />
+              </div>
+              <p id="till-phone-help" className={phoneTouched && !phoneOk ? "till-phone-error" : "till-phone-help"}>
+                {phoneTouched && !phoneOk
+                  ? "That isn't a Safaricom/Airtel mobile number. Type it like 0712 345 678."
+                  : `They get an M-Pesa prompt for ${formatMoney(Math.max(0, totalCents - (paid < totalCents ? paid : 0)))} and enter their PIN.`}
+              </p>
+              <div className="till-panel-actions">
+                <button type="button" className="till-btn" onClick={() => (setPhoneFor(null), setPhoneTouched(false))}>
+                  Back
+                </button>
+                <button type="submit" className="till-btn primary" disabled={phoneTouched && !phoneOk}>
+                  Send prompt
+                </button>
+              </div>
             </form>
           ) : null}
           <div className="glass" style={{ borderRadius: 20, padding: 12 }}>
