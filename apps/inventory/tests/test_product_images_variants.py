@@ -33,7 +33,7 @@ async def test_photos_are_checked(client):
 async def test_another_orgs_photo_is_not_reachable(client, as_principal, principal):
     p = (await client.post("/products", json={"name": "Desk"})).json()
     await client.put(f"/products/{p['id']}/image", content=WEBP, headers={"Content-Type": "image/webp"})
-    as_principal(make_principal())
+    as_principal(make_principal(role="admin"))  # an admin of another business
     assert (await client.get(f"/products/{p['id']}/image")).status_code == 404
     as_principal(principal)
 
@@ -49,7 +49,7 @@ async def test_variants_belong_to_one_main_product(client, as_principal, princip
     assert (await client.patch(f"/products/{sugar['id']}", json={"variant_of": other["id"]})).status_code == 422
     assert (await client.patch(f"/products/{kg1['id']}", json={"variant_of": kg1["id"]})).status_code == 422
     # Another org's product can't be the main one.
-    as_principal(make_principal())
+    as_principal(make_principal(role="admin"))  # an admin of another business
     theirs = await client.post("/products", json={"name": "y", "variant_of": sugar["id"]})
     assert theirs.status_code == 422
     as_principal(principal)

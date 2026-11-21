@@ -28,7 +28,10 @@ def _migrated_schema():
 
 @pytest.fixture
 def principal():
-    return make_principal()
+    # Staff with the jobs the 0013 backfill gives existing staff, plus
+    # purchasing: these tests check business logic; who may do what is
+    # tested in tests/test_roles.py.
+    return make_principal(perms=("cashier", "warehouse", "purchasing", "sales", "logistics"))
 
 
 @pytest.fixture

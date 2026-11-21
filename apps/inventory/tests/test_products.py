@@ -118,7 +118,7 @@ async def test_bulk_create_products_rejects_empty_list(client):
 async def test_org_isolation_on_products(client, as_principal, principal):
     product = (await client.post("/products", json={"name": "Widget", "price_cents": 999})).json()
 
-    as_principal(make_principal())
+    as_principal(make_principal(role="admin"))  # an admin of another business
     assert (await client.get("/products")).json() == []
     assert (await client.get(f"/products/{product['id']}")).status_code == 404
 
