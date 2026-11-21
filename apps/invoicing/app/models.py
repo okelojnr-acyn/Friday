@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -66,6 +66,9 @@ class Invoice(Base):
     # pay_with_card below) -- lets the Stripe webhook find its way back to
     # the right invoice without trusting the webhook body alone.
     stripe_payment_intent_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The latest Paystack checkout's reference (0016), so a till's poll can
+    # verify it even when the webhook never arrives (see paystack_pay.py).
+    paystack_reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # "" means this invoice isn't a recurring template. A non-empty value
     # makes generate_recurring_invoices (see main.py) clone this invoice's
     # lines into a fresh draft invoice once `next_recurrence_at` passes.
@@ -224,6 +227,9 @@ class PosRegister(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     location_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # The payment methods this till offers (0016); None follows the
+    # business's own list (Business settings > Payment methods).
+    payment_methods: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

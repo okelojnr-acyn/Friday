@@ -28,6 +28,10 @@ from .schemas import PosShiftOut
 
 router = APIRouter(prefix="/pos", tags=["pos-registers"])
 
+# What a business or a till can offer (plan 15.3). The kernel's org
+# settings check the same list for the business's own choice.
+TILL_METHODS = ("cash", "mpesa", "card", "paystack", "pesapal")
+
 NO_TILLS = "no tills set up yet: an owner or admin adds them in Friday under Business settings > Tills"
 
 
@@ -40,6 +44,8 @@ class RegisterPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=60)
     location_name: str | None = Field(default=None, max_length=80)
     active: bool | None = None
+    # null puts the till back on the business's list.
+    payment_methods: list[str] | None = None
 
 
 class RegisterOut(BaseModel):
@@ -47,6 +53,7 @@ class RegisterOut(BaseModel):
     name: str
     location_name: str
     active: bool
+    payment_methods: list[str] | None = None
     open_shift: PosShiftOut | None = None
 
 
@@ -123,6 +130,7 @@ async def list_registers(
             name=r.name,
             location_name=r.location_name,
             active=r.active,
+            payment_methods=r.payment_methods,
             open_shift=PosShiftOut.model_validate(open_shifts[r.id]) if r.id in open_shifts else None,
         )
         for r in regs
@@ -165,11 +173,25 @@ async def update_register(
         if not body.active and await _open_shift(session, _org(principal), reg.id):
             raise HTTPException(400, "close this register's shift before switching it off")
         reg.active = body.active
+    if "payment_methods" in body.model_fields_set:
+        methods = body.payment_methods
+        if methods is not None:
+            bad = [m for m in methods if m not in TILL_METHODS]
+            if bad or not methods:
+                raise HTTPException(422, f"payment methods are some of {', '.join(TILL_METHODS)}")
+            methods = list(dict.fromkeys(methods))
+        reg.payment_methods = methods
     try:
         await session.commit()
     except IntegrityError:
         raise HTTPException(409, "there's already a register with that name") from None
-    return RegisterOut(id=reg.id, name=reg.name, location_name=reg.location_name, active=reg.active)
+    return RegisterOut(
+        id=reg.id,
+        name=reg.name,
+        location_name=reg.location_name,
+        active=reg.active,
+        payment_methods=reg.payment_methods,
+    )
 
 
 @router.get("/shifts", response_model=list[PosShiftOut])

@@ -60,14 +60,29 @@ Every provider below is one of two things:
   own doc comment for the signature-verification trust model this uses
   instead of a bearer token.
 
-### Paystack -- stub
+### Paystack -- code-ready
 
 - Adapter: `friday_common/integrations/paystack.py` (`PaystackProvider`).
-- Config: `secret_key`.
-- Paystack's REST API is close enough to Stripe's shape that `stripe.py`
-  is a near-literal template -- see the stub's own docstring for the
-  three concrete differences (auth header style, endpoint paths, webhook
-  signature scheme).
+- Config: `secret_key` (the business's own `sk_live_...`/`sk_test_...`;
+  never Friday Cloud Labs' keys).
+- Call sites (`apps/invoicing/app/paystack_pay.py`):
+  - POS: `POST /pos/sales/pay-with-paystack` (the till's "Paystack"
+    button) makes a `pending` sale and returns Paystack's checkout page;
+  - invoices: `POST /invoices/{id}/paystack-link` returns a page for the
+    balance, to send to the customer.
+- Paid only when `GET /transaction/verify/:reference` says `success` in
+  the invoice's currency (and the exact amount for a POS sale). The
+  till's status poll (`GET /pos/sales/{id}/status`) verifies by itself,
+  so no webhook is needed for it to work.
+- The method is booked from Paystack's channel: `mobile_money` as
+  M-Pesa (1020), card as card and the rest as bank transfer (1030).
+- Webhook (optional, faster): `POST /external/webhooks/paystack`, set in
+  the business's Paystack dashboard. Signed with `x-paystack-signature`
+  (HMAC-SHA512 of the body with the secret key), then verified anyway.
+  Route it straight to the invoicing service like Stripe's and Pesapal's.
+- Which methods a business and each till offer: Business settings >
+  Payments (kernel `payment_methods`, invoicing
+  `pos_registers.payment_methods`).
 
 ### Pesapal -- code-ready
 

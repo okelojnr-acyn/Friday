@@ -3,6 +3,14 @@ import { formatMoney } from "../../lib/orgSettings";
 import { PosNumpad } from "./PosNumpad";
 import { methodLabel } from "./receipt";
 
+/** A gateway that confirms the payment itself (Paystack, Pesapal). */
+export interface OnlineMethod {
+  key: string;
+  label: string;
+  hint: string;
+  start: () => void;
+}
+
 export interface Tender {
   method: string;
   cents: number;
@@ -30,7 +38,8 @@ export function PosPayment({
   totalCents,
   taxLabel,
   taxCents,
-  pesapal,
+  manual = ["cash", "mpesa", "card"],
+  online = [],
   onCancel,
   onPaid,
   buyer,
@@ -38,13 +47,15 @@ export function PosPayment({
   totalCents: number;
   taxLabel: string;
   taxCents: number;
-  pesapal?: () => void;
+  /** Methods the cashier confirms by hand, as this till offers them. */
+  manual?: string[];
+  online?: OnlineMethod[];
   onCancel: () => void;
   onPaid: (tenders: Tender[], changeCents: number) => void;
   /** The buyer's KRA PIN, for a business buying (BuyerPin). */
   buyer?: React.ReactNode;
 }) {
-  const [lines, setLines] = useState<Tender[]>([{ method: "cash", cents: totalCents }]);
+  const [lines, setLines] = useState<Tender[]>(manual.length ? [{ method: manual[0], cents: totalCents }] : []);
   const [selected, setSelected] = useState(0);
   const [entry, setEntry] = useState<string | null>(null);
 
@@ -142,7 +153,7 @@ export function PosPayment({
           </div>
           {buyer}
           <div className="till-methods">
-            {["cash", "mpesa", "card"].map((m) => (
+            {manual.map((m) => (
               <button
                 key={m}
                 type="button"
@@ -152,14 +163,14 @@ export function PosPayment({
                 {methodLabel(m)}
               </button>
             ))}
-            {pesapal ? (
-              <button type="button" className="till-method glass" onClick={pesapal} style={{ lineHeight: 1.2 }}>
-                Pesapal
+            {online.map((o) => (
+              <button key={o.key} type="button" className="till-method glass" onClick={o.start} style={{ lineHeight: 1.2 }}>
+                {o.label}
                 <span style={{ display: "block", fontSize: 13, fontWeight: 500, color: "var(--text-muted)" }}>
-                  M-Pesa / Airtel prompt, card, bank · confirms itself
+                  {o.hint}
                 </span>
               </button>
-            ) : null}
+            ))}
           </div>
           <div className="glass" style={{ borderRadius: 20, padding: 12 }}>
             {lines.map((l, i) => (
@@ -193,8 +204,8 @@ export function PosPayment({
           ) : null}
           {lines[selected]?.method === "mpesa" ? (
             <p className="till-text">
-              Paid to your till or paybill number: check the M-Pesa message for this amount before you validate. With
-              Pesapal the payment confirms itself.
+              Paid to your till or paybill number: check the M-Pesa message for this amount before you validate. Through
+              Paystack or Pesapal the payment confirms itself.
             </p>
           ) : null}
         </div>

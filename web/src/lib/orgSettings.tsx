@@ -31,6 +31,9 @@ export interface OrgSettings {
   prices_include_tax: boolean;
   /** Missing on a kernel older than the Tax section. */
   tax?: TaxProfile;
+  /** What the business takes (Business settings > Payment methods).
+   * Missing on an older kernel: everything is on. */
+  payment_methods?: string[];
 }
 
 // Until the org's own settings arrive, money shows in the default the

@@ -68,6 +68,22 @@ func TestSettingsDefaultsAndWhoMayChangeThem(t *testing.T) {
 	if code != 200 || v["currency"] != "UGX" || v["tax_rate_bp"] != float64(1800) || v["prices_include_tax"] != false {
 		t.Fatalf("update: %d %v", code, v)
 	}
+	// Payment methods: all by default; a business narrows them; unknown or none is refused.
+	if got := v["payment_methods"].([]any); len(got) != len(PaymentMethods) {
+		t.Fatalf("default methods: %v", got)
+	}
+	code, v = call(http.MethodPut, "admin", "", `{"payment_methods":["cash","Paystack","cash"]}`)
+	if got, _ := json.Marshal(v["payment_methods"]); code != 200 || string(got) != `["cash","paystack"]` {
+		t.Fatalf("methods: %d %s", code, got)
+	}
+	for _, bad := range []string{`{"payment_methods":["bitcoin"]}`, `{"payment_methods":[]}`} {
+		if code, _ := call(http.MethodPut, "admin", "", bad); code != http.StatusBadRequest {
+			t.Fatalf("%s: %d", bad, code)
+		}
+	}
+	if code, v = call(http.MethodPut, "admin", "", `{"currency":"KES"}`); len(v["payment_methods"].([]any)) != 2 {
+		t.Fatalf("methods kept: %d %v", code, v)
+	}
 }
 
 func TestTaxProfileDrivesTheTillRateAndEtimsHidesTheKey(t *testing.T) {

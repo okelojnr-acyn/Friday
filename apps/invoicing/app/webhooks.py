@@ -22,12 +22,13 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from friday_common import first_delivery, get_integration_config, require_kernel_token, set_org_context
 from friday_common.db import get_session
-from friday_common.integrations import PesapalProvider, StripeProvider
+from friday_common.integrations import PaystackProvider, PesapalProvider, StripeProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .events import invoice_lines_payload, publish_invoice_paid, publish_pos_sale_recorded
 from .models import Customer, Invoice, InvoiceLine, Payment
+from .paystack_pay import parse_reference, settle as settle_paystack
 
 router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
 external_router = APIRouter(prefix="/external/webhooks", tags=["external-webhooks"])
@@ -226,4 +227,35 @@ async def pesapal_webhook(
     # else ("PENDING", "REVERSED", or anything unrecognized): leave as
     # "pending" -- Pesapal may call the IPN again as the status changes.
 
+    return {"ok": True}
+
+
+@external_router.post("/paystack")
+async def paystack_webhook(request: Request, session: AsyncSession = Depends(get_session)):
+    """The business's Paystack calls this (the URL is set in their Paystack
+    dashboard). The reference ("<org>.<invoice>.<random>", from
+    paystack_pay.new_reference) only says which org's key checks the
+    `x-paystack-signature` and which invoice to settle; settle then asks
+    Paystack itself. The body's own status and amount are never used."""
+    raw_body = await request.body()
+    try:
+        event = json.loads(raw_body)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "invalid payload")
+    reference = str((event.get("data") or {}).get("reference") or "")
+    parsed = parse_reference(reference)
+    if parsed is None:
+        return {"ignored": "not a Friday reference"}
+    org_id, invoice_id = parsed
+
+    config = await get_integration_config(org_id, "paystack")
+    if not config.get("secret_key"):
+        raise HTTPException(400, "paystack not configured for this org")
+    if not PaystackProvider(config).verify_webhook_signature(raw_body, request.headers.get("x-paystack-signature", "")):
+        raise HTTPException(400, "invalid signature")
+    if event.get("event") != "charge.success":
+        return {"ignored": event.get("event")}
+
+    await set_org_context(session, org_id)
+    await settle_paystack(session, org_id, invoice_id, reference)
     return {"ok": True}

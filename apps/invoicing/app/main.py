@@ -51,6 +51,7 @@ from .schemas import (
     PaymentCreate,
     PayWithCardOut,
     PayWithPesapalOut,
+    PaystackCheckoutOut,
     PosSaleStatusOut,
     QuoteCreate,
     QuoteStatusUpdate,
@@ -59,6 +60,8 @@ from friday_common.etims import normalize_pin
 from friday_common.etims.kernel import get_etims_config
 
 from .etims_routes import router as etims_router
+from .paystack_pay import settle as settle_paystack
+from .paystack_pay import start_checkout as start_paystack_checkout
 from .registers import router as registers_router
 from .registers import shift_for_sale
 from .webhooks import external_router
@@ -432,6 +435,35 @@ async def pay_with_card(
     inv.stripe_payment_intent_id = intent["id"]
     await session.commit()
     return PayWithCardOut(client_secret=intent.get("client_secret"), publishable_key=config.get("publishable_key", ""))
+
+
+@invoices_router.post("/{invoice_id}/paystack-link", response_model=PaystackCheckoutOut, status_code=201)
+async def paystack_pay_link(
+    invoice_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """A Paystack page for the invoice's outstanding balance, to send to
+    the customer (card, M-Pesa or bank). Paid only once Paystack's verify
+    says so (paystack_pay.settle); a new link replaces the last one, and
+    a payment on either still counts once."""
+    inv = await _get_invoice(session, principal, invoice_id)
+    if inv.kind != "invoice":
+        raise HTTPException(400, "a quote can't be paid -- convert it to an invoice first")
+    if inv.status in ("void", "pending"):
+        raise HTTPException(400, f"a {inv.status} invoice can't take a payment link")
+    balance = inv.balance_cents
+    if balance <= 0:
+        raise HTTPException(400, "invoice has no outstanding balance")
+    email = ""
+    if inv.customer_id:
+        customer = await session.get(Customer, inv.customer_id)
+        email = customer.email if customer else ""
+    redirect_url = await start_paystack_checkout(
+        principal.org_id, inv, balance, email or principal.email or "", f"Invoice {inv.number}"
+    )
+    await session.commit()
+    return PaystackCheckoutOut(invoice_id=inv.id, redirect_url=redirect_url)
 
 
 @invoices_router.post("/generate-recurring")
@@ -817,6 +849,48 @@ async def pay_with_pesapal(
     return PayWithPesapalOut(invoice_id=invoice.id, redirect_url=intent["redirect_url"])
 
 
+@pos_router.post("/sales/pay-with-paystack", response_model=PaystackCheckoutOut, status_code=201)
+async def pay_with_paystack(
+    body: dict,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """A POS sale paid through the business's own Paystack (card, M-Pesa,
+    bank). Like pay_with_pesapal: the sale waits as "pending" with no
+    payment until Paystack's verify says it was paid (paystack_pay.settle,
+    reached from the webhook or the till's status poll). Online only."""
+    now = datetime.now(UTC)
+    lines_in = body.get("lines", [])
+    if not lines_in:
+        raise HTTPException(422, "sale must have at least one line")
+    shift_id = await shift_for_sale(session, principal, body.get("shift_id"))
+    invoice = Invoice(
+        org_id=uuid.UUID(principal.org_id),
+        number=f"POS-{now:%Y%m%d}-{uuid.uuid4().hex[:6].upper()}",
+        status="pending",
+        currency=body.get("currency", "USD"),
+        source="pos",
+        source_ref=body.get("client_sale_id"),
+        cashier_user_id=principal.user_id,
+        cashier_email=principal.email,
+        pos_shift_id=shift_id,
+        issued_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(invoice)
+    await session.flush()
+    charged_cents = await _apply_pos_sale_lines(session, principal, invoice, lines_in, body)
+    if charged_cents <= 0:
+        raise HTTPException(422, "nothing to charge")
+    email = str(body.get("email") or principal.email or "")
+    redirect_url = await start_paystack_checkout(
+        principal.org_id, invoice, charged_cents, email, f"POS sale {invoice.number}"
+    )
+    await session.commit()
+    return PaystackCheckoutOut(invoice_id=invoice.id, redirect_url=redirect_url)
+
+
 @pos_router.get("/sales/{invoice_id}/status", response_model=PosSaleStatusOut)
 async def get_pos_sale_status(
     invoice_id: uuid.UUID,
@@ -829,6 +903,14 @@ async def get_pos_sale_status(
     invoice = await session.get(Invoice, invoice_id)
     if invoice is None or str(invoice.org_id) != principal.org_id:
         raise HTTPException(404, "sale not found")
+    if invoice.status != "paid" and invoice.paystack_reference:
+        # Ask Paystack directly, so a sale settles even if its webhook is lost.
+        reference = invoice.paystack_reference
+        try:
+            await settle_paystack(session, principal.org_id, str(invoice.id), reference)
+        except httpx.HTTPError as exc:
+            logger.warning("paystack verify %s failed: %s", reference, exc)
+        invoice = await session.get(Invoice, invoice_id, populate_existing=True)
     return PosSaleStatusOut(invoice_id=invoice.id, status=invoice.status)
 
 

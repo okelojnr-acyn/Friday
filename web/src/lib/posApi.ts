@@ -27,6 +27,8 @@ export interface PosRegister {
   name: string;
   location_name: string;
   active: boolean;
+  /** This till's own payment methods; null follows the business's. */
+  payment_methods?: string[] | null;
   open_shift: PosShift | null;
 }
 
@@ -35,7 +37,10 @@ export const listRegisters = () => api.get<PosRegister[]>("/api/invoicing/pos/re
 export const createRegister = (name: string, locationName: string) =>
   api.post<PosRegister>("/api/invoicing/pos/registers", { name, location_name: locationName });
 
-export const updateRegister = (id: string, patch: { name?: string; location_name?: string; active?: boolean }) =>
+export const updateRegister = (
+  id: string,
+  patch: { name?: string; location_name?: string; active?: boolean; payment_methods?: string[] | null },
+) =>
   api.patch<PosRegister>(`/api/invoicing/pos/registers/${id}`, patch);
 
 // registerId null: the org's only till (set up in Business settings).
