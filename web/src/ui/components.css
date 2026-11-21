@@ -806,10 +806,15 @@
   z-index: -1;
   pointer-events: none;
 }
+/* At most four cards a row, and the last row stretches: seven cards read
+   as 4 + 3 instead of six and a lonely seventh. */
 .dashboard-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-3);
+}
+.dashboard-grid > * {
+  flex: 1 1 max(150px, calc((100% - 3 * var(--space-3)) / 4));
 }
 .dashboard-section-title {
   font-family: var(--font-display);

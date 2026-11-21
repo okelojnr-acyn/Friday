@@ -40,11 +40,14 @@ function MinionsLayout() {
         </div>
         <div className="topbar-right">
           {NAV.map((item) => (
-            <Link key={item.to} to={item.to} title={item.label}>
-              <Button variant="secondary" size="sm" className="btn-pill">
-                <Icon name={item.icon} size={16} />
-                {item.label}
-              </Button>
+            <Link
+              key={item.to}
+              to={item.to}
+              title={item.label}
+              className="btn btn-secondary btn-sm btn-pill"
+            >
+              <Icon name={item.icon} size={16} />
+              {item.label}
             </Link>
           ))}
           <span className="topbar-user" title={session.role}>

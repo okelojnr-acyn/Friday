@@ -37,11 +37,65 @@ function loadLines(): Line[] {
   }
 }
 
-const REPORTS = [
-  { window: "day", label: "Today" },
-  { window: "week", label: "This week" },
-  { window: "month", label: "This month" },
-] as const;
+const REPORTS = ["day", "week", "month"] as const;
+
+// The widget's own words in English or Indonesian, by the browser's
+// language (Guss answers in the shop's language either way).
+const TEXT = {
+  en: {
+    reports: { day: "Today", week: "This week", month: "This month" },
+    reportAsk: "Report",
+    role: "Guss, shop assistant",
+    sub: "Records sales, stock and expenses",
+    close: "Close Guss",
+    open: "Open Guss, shop assistant",
+    intro: "Tell Guss what happened, the way you'd text it:",
+    examples: ["sold 3 bags of rice at 120", "paid 500 for transport", "restocked 20 sodas"],
+    undo: "Say “undo” right after to take the last entry back.",
+    answering: "Guss is answering",
+    reportsGroup: "Sales reports",
+    clear: "Clear",
+    listening: "Listening…",
+    message: "Message Guss",
+    stop: "Stop listening",
+    speak: "Speak instead of typing",
+    speakTitle: "Speak",
+    stopTitle: "Listening… tap to stop",
+    send: "Send",
+    viewer: "Viewers can see reports. Ask an admin to record entries.",
+    micBlocked: "Microphone blocked. Allow it in the browser's address bar to speak to Guss.",
+    noAnswer: "Guss didn't answer. Try again in a moment.",
+  },
+  id: {
+    reports: { day: "Hari ini", week: "Minggu ini", month: "Bulan ini" },
+    reportAsk: "Laporan",
+    role: "Guss, asisten toko",
+    sub: "Mencatat penjualan, stok, dan pengeluaran",
+    close: "Tutup Guss",
+    open: "Buka Guss, asisten toko",
+    intro: "Ceritakan ke Guss apa yang terjadi, seperti mengirim pesan:",
+    examples: ["terjual 3 karung beras @120", "bayar 500 untuk transport", "restok 20 soda"],
+    undo: "Ketik “batal” sesudahnya untuk membatalkan catatan terakhir.",
+    answering: "Guss sedang menjawab",
+    reportsGroup: "Laporan penjualan",
+    clear: "Hapus",
+    listening: "Mendengarkan…",
+    message: "Pesan untuk Guss",
+    stop: "Berhenti mendengarkan",
+    speak: "Bicara, bukan mengetik",
+    speakTitle: "Bicara",
+    stopTitle: "Mendengarkan… ketuk untuk berhenti",
+    send: "Kirim",
+    viewer: "Viewer bisa melihat laporan. Minta admin untuk mencatat.",
+    micBlocked: "Mikrofon diblokir. Izinkan di bilah alamat browser untuk bicara ke Guss.",
+    noAnswer: "Guss tidak menjawab. Coba lagi sebentar.",
+  },
+};
+
+function widgetText() {
+  const lang = typeof navigator === "undefined" ? "" : navigator.language.toLowerCase();
+  return lang.startsWith("id") ? TEXT.id : TEXT.en;
+}
 
 /**
  * Guss, the shop assistant, as a floating chat on every Friday page:
@@ -51,6 +105,7 @@ const REPORTS = [
  */
 export function GussWidget() {
   const { session } = useAuth();
+  const [t] = useState(widgetText);
   const [connected, setConnected] = useState(false);
   const [open, setOpen] = useState(false);
   const [lines, setLines] = useState<Line[]>(loadLines);
@@ -83,7 +138,7 @@ export function GussWidget() {
     };
     rec.onerror = (e) => {
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        setLines((l) => [...l, { from: "error", text: "Microphone blocked. Allow it in the browser's address bar to speak to Guss." }]);
+        setLines((l) => [...l, { from: "error", text: t.micBlocked }]);
       }
     };
     rec.onend = () => {
@@ -132,7 +187,7 @@ export function GussWidget() {
       const { reply } = await run();
       setLines((l) => [...l, { from: "guss", text: reply }]);
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : "Guss didn't answer. Try again in a moment.";
+      const msg = err instanceof ApiError ? err.message : t.noAnswer;
       setLines((l) => [...l, { from: "error", text: msg }]);
     } finally {
       setBusy(false);
@@ -149,16 +204,16 @@ export function GussWidget() {
   return (
     <>
       {open && (
-        <section className="guss-panel" role="dialog" aria-label="Guss, shop assistant">
+        <section className="guss-panel" role="dialog" aria-label={t.role}>
           <header className="guss-head">
             <span className="guss-avatar" aria-hidden>
               <Icon name="sparkle" size={16} />
             </span>
             <span className="guss-title">
               Guss
-              <span className="guss-sub">Records sales, stock and expenses</span>
+              <span className="guss-sub">{t.sub}</span>
             </span>
-            <button type="button" className="guss-icon-btn" onClick={() => setOpen(false)} aria-label="Close Guss">
+            <button type="button" className="guss-icon-btn" onClick={() => setOpen(false)} aria-label={t.close}>
               <Icon name="close" size={16} />
             </button>
           </header>
@@ -166,13 +221,13 @@ export function GussWidget() {
           <div className="guss-lines" ref={listRef} aria-live="polite">
             {lines.length === 0 && (
               <div className="guss-empty">
-                <p>Tell Guss what happened, the way you&apos;d text it:</p>
+                <p>{t.intro}</p>
                 <ul>
-                  <li>sold 3 bags of rice at 120</li>
-                  <li>paid 500 for transport</li>
-                  <li>restocked 20 sodas</li>
+                  {t.examples.map((x) => (
+                    <li key={x}>{x}</li>
+                  ))}
                 </ul>
-                <p>Say &ldquo;undo&rdquo; right after to take the last entry back.</p>
+                <p>{t.undo}</p>
               </div>
             )}
             {lines.map((l, i) => (
@@ -181,7 +236,7 @@ export function GussWidget() {
               </div>
             ))}
             {busy && (
-              <div className="guss-line guss-line-guss guss-typing" aria-label="Guss is answering">
+              <div className="guss-line guss-line-guss guss-typing" aria-label={t.answering}>
                 <span />
                 <span />
                 <span />
@@ -189,21 +244,21 @@ export function GussWidget() {
             )}
           </div>
 
-          <div className="guss-reports" role="group" aria-label="Sales reports">
-            {REPORTS.map((r) => (
+          <div className="guss-reports" role="group" aria-label={t.reportsGroup}>
+            {REPORTS.map((w) => (
               <button
-                key={r.window}
+                key={w}
                 type="button"
                 className="guss-chip"
                 disabled={busy}
-                onClick={() => void ask(() => gussReport(r.window), `Report: ${r.label.toLowerCase()}`)}
+                onClick={() => void ask(() => gussReport(w), `${t.reportAsk}: ${t.reports[w].toLowerCase()}`)}
               >
-                {r.label}
+                {t.reports[w]}
               </button>
             ))}
             {lines.length > 0 && (
               <button type="button" className="guss-chip guss-chip-quiet" onClick={() => setLines([])}>
-                Clear
+                {t.clear}
               </button>
             )}
           </div>
@@ -222,8 +277,8 @@ export function GussWidget() {
                 rows={1}
                 value={text}
                 maxLength={2000}
-                placeholder={listening ? "Listening…" : "sold 3 bags of rice at 120"}
-                aria-label="Message Guss"
+                placeholder={listening ? t.listening : t.examples[0]}
+                aria-label={t.message}
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -239,18 +294,18 @@ export function GussWidget() {
                   onClick={toggleMic}
                   disabled={busy}
                   aria-pressed={listening}
-                  aria-label={listening ? "Stop listening" : "Speak instead of typing"}
-                  title={listening ? "Listening… tap to stop" : "Speak"}
+                  aria-label={listening ? t.stop : t.speak}
+                  title={listening ? t.stopTitle : t.speakTitle}
                 >
                   <Icon name="mic" size={16} />
                 </button>
               )}
-              <button type="submit" className="guss-send" disabled={busy || !text.trim()} aria-label="Send">
+              <button type="submit" className="guss-send" disabled={busy || !text.trim()} aria-label={t.send}>
                 <Icon name="send" size={16} />
               </button>
             </form>
           ) : (
-            <p className="guss-readonly">Viewers can see reports. Ask an admin to record entries.</p>
+            <p className="guss-readonly">{t.viewer}</p>
           )}
         </section>
       )}
@@ -260,7 +315,7 @@ export function GussWidget() {
         className={`guss-fab${open ? " guss-fab-open" : ""}`}
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        aria-label={open ? "Close Guss" : "Open Guss, shop assistant"}
+        aria-label={open ? t.close : t.open}
       >
         <Icon name={open ? "close" : "sparkle"} size={20} />
         {!open && <span className="guss-fab-label">Guss</span>}
