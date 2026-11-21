@@ -27,9 +27,9 @@ export function TopBar({ email, role, onLogout }: TopBarProps) {
             <Icon name="apps" size={16} />
             <span className="topbar-label">Apps & integrations</span>
         </Link>
-        <Link to="/settings/members" title="Admins and managers" aria-label="Admins" className="btn btn-secondary btn-sm btn-pill">
+        <Link to="/settings/people" title="People: roles, jobs, locations, invites" aria-label="People" className="btn btn-secondary btn-sm btn-pill">
             <Icon name="users" size={16} />
-            <span className="topbar-label">Admins</span>
+            <span className="topbar-label">People</span>
         </Link>
         <Link to="/settings/business" title="Business settings" aria-label="Business settings" className="btn btn-secondary btn-sm btn-pill">
             <Icon name="calculator" size={16} />
