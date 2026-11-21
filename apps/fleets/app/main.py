@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from friday_common import FieldSpec, Principal, ResourceSpec, create_app, get_current_principal, get_org_session, resource
+from friday_common.access import Scope, require
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -116,6 +117,7 @@ fuel_router = APIRouter(prefix="/fuel_logs", tags=["fuel-logs"])
 @vehicles_router.get("", response_model=list[VehicleOut])
 async def list_vehicles(
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("deliveries.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(select(Vehicle).where(Vehicle.org_id == _org(principal)).order_by(Vehicle.name))
@@ -126,8 +128,12 @@ async def list_vehicles(
 async def create_vehicle(
     body: VehicleCreate,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("deliveries.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    # The fleet itself (vehicles, drivers) is a manager's to change.
+    if scope.kind not in ("all", "loc"):
+        raise HTTPException(403, "only a branch manager, admin or owner changes vehicles and drivers")
     if body.fuel_type not in FUEL_TYPES:
         raise HTTPException(422, f"fuel_type must be one of {FUEL_TYPES}")
     if body.status not in VEHICLE_STATUSES:
@@ -151,6 +157,7 @@ async def _get_owned_vehicle(session: AsyncSession, principal: Principal, vehicl
 async def get_vehicle(
     vehicle_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("deliveries.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     return await _get_owned_vehicle(session, principal, vehicle_id)
@@ -161,8 +168,12 @@ async def update_vehicle(
     vehicle_id: uuid.UUID,
     body: VehicleUpdate,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("deliveries.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    # The fleet itself (vehicles, drivers) is a manager's to change.
+    if scope.kind not in ("all", "loc"):
+        raise HTTPException(403, "only a branch manager, admin or owner changes vehicles and drivers")
     vehicle = await _get_owned_vehicle(session, principal, vehicle_id)
     changes = body.model_dump(exclude_unset=True)
     if "fuel_type" in changes and changes["fuel_type"] not in FUEL_TYPES:
@@ -180,6 +191,7 @@ async def update_vehicle(
 @drivers_router.get("", response_model=list[DriverOut])
 async def list_drivers(
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("deliveries.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(select(Driver).where(Driver.org_id == _org(principal)).order_by(Driver.name))
@@ -190,8 +202,12 @@ async def list_drivers(
 async def create_driver(
     body: DriverCreate,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("deliveries.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    # The fleet itself (vehicles, drivers) is a manager's to change.
+    if scope.kind not in ("all", "loc"):
+        raise HTTPException(403, "only a branch manager, admin or owner changes vehicles and drivers")
     if body.status not in DRIVER_STATUSES:
         raise HTTPException(422, f"status must be one of {DRIVER_STATUSES}")
     driver = Driver(org_id=_org(principal), created_at=datetime.now(UTC), **body.model_dump())
@@ -204,6 +220,7 @@ async def create_driver(
 @maintenance_router.get("", response_model=list[MaintenanceLogOut])
 async def list_maintenance_logs(
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("deliveries.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(
@@ -218,6 +235,7 @@ async def list_maintenance_logs(
 async def create_maintenance_log(
     body: MaintenanceLogCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("deliveries.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Also bumps the vehicle's cached odometer when this log's reading
@@ -237,6 +255,7 @@ async def create_maintenance_log(
 @fuel_router.get("", response_model=list[FuelLogOut])
 async def list_fuel_logs(
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("deliveries.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(
@@ -249,6 +268,7 @@ async def list_fuel_logs(
 async def create_fuel_log(
     body: FuelLogCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("deliveries.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     vehicle = await _get_owned_vehicle(session, principal, body.vehicle_id)

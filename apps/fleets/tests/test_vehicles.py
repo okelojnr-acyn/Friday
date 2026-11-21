@@ -49,5 +49,5 @@ async def test_get_unknown_vehicle_404s(client):
 
 async def test_org_isolation_on_vehicles(client, as_principal, principal):
     await client.post("/vehicles", json={"name": "Truck 1"})
-    as_principal(make_principal())
+    as_principal(make_principal(role="admin"))
     assert (await client.get("/vehicles")).json() == []

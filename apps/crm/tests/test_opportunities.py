@@ -146,7 +146,7 @@ async def test_moving_between_non_won_stages_does_not_publish(client, monkeypatc
 async def test_org_isolation_hides_records_from_other_orgs(client, as_principal, principal):
     created = (await client.post("/opportunities", json={"contact_name": "Ada"})).json()
 
-    as_principal(make_principal())  # a different org entirely
+    as_principal(make_principal(role="admin"))  # a different org entirely
 
     assert (await client.get(f"/opportunities/{created['id']}")).status_code == 404
     assert (await client.get("/opportunities")).json() == []
