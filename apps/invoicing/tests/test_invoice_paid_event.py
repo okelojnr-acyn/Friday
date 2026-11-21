@@ -7,7 +7,7 @@ already-paid), and a POS return (negative amount)."""
 async def _capture(monkeypatch, target: str) -> dict:
     captured = {}
 
-    async def fake(org_id, inv, paid_amount_cents, lines_payload):
+    async def fake(org_id, inv, paid_amount_cents, lines_payload, **_):
         captured["org_id"] = org_id
         captured["paid_amount_cents"] = paid_amount_cents
         captured["lines_payload"] = lines_payload

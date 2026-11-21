@@ -413,3 +413,41 @@ async def test_paying_a_supplier_clears_what_is_owed_from_the_right_account(clie
 async def test_purchase_paid_requires_kernel_token(client, principal):
     resp = await client.post("/internal/webhooks/purchase-paid", json={"org_id": principal.org_id, "payload": {}})
     assert resp.status_code == 401
+
+
+async def test_a_reversed_payment_and_a_repayment_are_separate_postings(client, kernel_auth_header, principal):
+    """A credit sale paid, the payment reversed, then paid again: three
+    postings for one invoice, each once, netting to one sale."""
+    invoice_id = str(uuid.uuid4())
+
+    async def paid(amount, posting_ref=None):
+        payload = {
+            "invoice_id": invoice_id,
+            "invoice_number": "POS-CREDIT",
+            "subtotal_cents": amount,
+            "tax_cents": 0,
+            "paid_amount_cents": amount,
+            "payments": [{"method": "mpesa", "amount_cents": amount}],
+            "lines": [],
+        }
+        if posting_ref:
+            payload["posting_ref"] = posting_ref
+        r = await client.post(
+            "/internal/webhooks/invoice-paid",
+            headers=kernel_auth_header,
+            json={"org_id": principal.org_id, "payload": payload},
+        )
+        assert r.status_code == 204
+
+    await paid(5000)
+    await paid(-5000, f"{invoice_id}:reversed:p1")
+    await paid(-5000, f"{invoice_id}:reversed:p1")  # delivered again: once
+    await paid(5000)  # the invoice itself again: still once
+    await paid(5000, f"{invoice_id}:p2")
+    refs = sorted(e["source_ref"] for e in await _journal_entries(client) if e["source_ref"].startswith(invoice_id))
+    assert refs == sorted([invoice_id, f"{invoice_id}:reversed:p1", f"{invoice_id}:p2"])
+    mpesa = await _account_id(client, "1020")
+    revenue = await _account_id(client, "4000")
+    lines = [l for e in await _journal_entries(client) if e["source_ref"].startswith(invoice_id) for l in e["lines"]]
+    net = lambda acct: sum(l["debit_cents"] - l["credit_cents"] for l in lines if l["account_id"] == acct)  # noqa: E731
+    assert net(mpesa) == 5000 and net(revenue) == -5000

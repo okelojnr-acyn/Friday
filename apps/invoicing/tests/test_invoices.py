@@ -66,7 +66,7 @@ async def test_create_credit_note_negates_original_lines(client):
 async def test_credit_note_publishes_invoice_paid_with_negative_amount(client, monkeypatch):
     captured = {}
 
-    async def fake(org_id, inv, paid_amount_cents, lines_payload):
+    async def fake(org_id, inv, paid_amount_cents, lines_payload, **_):
         captured["paid_amount_cents"] = paid_amount_cents
 
     monkeypatch.setattr("app.main.publish_invoice_paid", fake)

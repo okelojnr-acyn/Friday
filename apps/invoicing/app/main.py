@@ -24,7 +24,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .credit import customer_by_name
+from .credit import customer_by_name, rebook_ref
 from .credit import router as credit_router
 from .events import invoice_lines_payload, publish_invoice_paid, publish_pos_sale_recorded
 from .models import (
@@ -395,7 +395,9 @@ async def record_payment(
     await session.commit()
     await session.refresh(inv, attribute_names=["lines", "payments"])
     if newly_paid:
-        await publish_invoice_paid(principal.org_id, inv, paid, invoice_lines_payload(inv))
+        await publish_invoice_paid(
+            principal.org_id, inv, paid, invoice_lines_payload(inv), posting_ref=rebook_ref(inv, uuid.uuid4().hex)
+        )
     return InvoiceOut.from_model(inv)
 
 
