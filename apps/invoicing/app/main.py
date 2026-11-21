@@ -1,5 +1,6 @@
 import logging
 import uuid
+from types import SimpleNamespace
 from decimal import ROUND_HALF_UP, Decimal
 from datetime import UTC, date, datetime, timedelta
 
@@ -19,9 +20,12 @@ from friday_common import (
 )
 from friday_common.integrations import PesapalProvider, ResendProvider, StripeProvider
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .credit import customer_by_name
+from .credit import router as credit_router
 from .events import invoice_lines_payload, publish_invoice_paid, publish_pos_sale_recorded
 from .models import (
     INVOICE_STATUSES,
@@ -641,6 +645,17 @@ async def record_pos_sale(
     # A sale made through Guss never joins a till's shift (its cash isn't
     # in that drawer), and its VAT is worked out here from shelf prices.
     channel = "guss" if body.get("channel") == "guss" else "till"
+    # Sold on credit ("sold to John on credit"): the customer owes it, no
+    # money moves now. The sale stays unpaid against them until they pay
+    # (pos/debts/payments); stock still leaves now.
+    on_credit = bool(body.get("on_credit"))
+    customer = None
+    if on_credit:
+        if body.get("payments"):
+            raise HTTPException(422, "a credit sale has no payments; record them when the customer pays")
+        customer = await customer_by_name(session, principal, str(body.get("customer_name") or ""), create=True)
+        if customer is None:
+            raise HTTPException(422, "a credit sale needs the customer's name")
     shift_id = None if channel == "guss" else await shift_for_sale(session, principal, body.get("shift_id"))
     vat_cfg = None
     if channel == "guss" and any("vat_cents" not in line for line in lines_in):
@@ -651,7 +666,9 @@ async def record_pos_sale(
         channel=channel,
         prices_include_tax=True if channel == "guss" else None,
         number=f"POS-{now:%Y%m%d}-{uuid.uuid4().hex[:6].upper()}",
-        status="paid",
+        status="sent" if on_credit else "paid",
+        customer_id=customer.id if customer else None,
+        due_at=now + timedelta(days=customer.payment_terms_days) if customer else None,
         currency=body.get("currency", "USD"),
         source="pos",
         source_ref=client_sale_id,
@@ -673,7 +690,9 @@ async def record_pos_sale(
     # array at all -- every sale from an older pos-engine build, or any
     # single-tender sale, takes this branch exactly as before.
     payments_in = body.get("payments") or []
-    if payments_in:
+    if on_credit:
+        pass  # nothing paid yet
+    elif payments_in:
         payments_total = sum(int(p.get("amount_cents", 0)) for p in payments_in)
         if payments_total != charged_cents:
             raise HTTPException(
@@ -716,7 +735,9 @@ async def record_pos_sale(
     await publish_pos_sale_recorded(principal.org_id, invoice, charged_cents)
     # A POS sale is created already-paid, so this is always a "newly
     # paid" transition -- no status check needed, unlike record_payment.
-    await publish_invoice_paid(principal.org_id, invoice, charged_cents, invoice_lines_payload(invoice))
+    # A credit sale reaches the books when it's paid, like an invoice.
+    if not on_credit:
+        await publish_invoice_paid(principal.org_id, invoice, charged_cents, invoice_lines_payload(invoice))
 
     return InvoiceOut.from_model(invoice)
 
@@ -809,6 +830,37 @@ async def get_pos_sale_status(
     return PosSaleStatusOut(invoice_id=invoice.id, status=invoice.status)
 
 
+async def _returnable(session: AsyncSession, principal: Principal, original: Invoice) -> dict[str, Decimal]:
+    """How much of each line of a sale can still come back: its quantity
+    minus what earlier returns (RET- documents naming this sale) took.
+    A return line is matched to the sale line it mirrors."""
+    rows = await session.execute(
+        select(Invoice)
+        .where(
+            Invoice.org_id == uuid.UUID(principal.org_id),
+            Invoice.source == "pos",
+            Invoice.source_ref == original.number,
+            Invoice.number.like("RET-%"),
+        )
+        .options(selectinload(Invoice.lines))
+    )
+    left = {str(l.id): Decimal(str(l.quantity)) for l in original.lines}
+    for ret in rows.scalars().all():
+        for r in ret.lines:
+            for l in original.lines:
+                key = str(l.id)
+                same = (
+                    r.description == f"Return: {l.description}"
+                    and r.product_id == l.product_id
+                    and r.unit_price_cents == l.unit_price_cents
+                )
+                if same and left[key] > 0:
+                    took = min(left[key], -Decimal(str(r.quantity)))
+                    left[key] -= took
+                    break
+    return left
+
+
 async def _get_pos_sale(session: AsyncSession, principal: Principal, number: str) -> Invoice:
     rows = await session.execute(
         select(Invoice).where(
@@ -892,6 +944,7 @@ async def get_pos_sale(
 async def return_pos_sale(
     number: str,
     shift_id: uuid.UUID | None = None,
+    body: dict | None = None,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_org_session),
 ):
@@ -907,6 +960,41 @@ async def return_pos_sale(
     if original.status == "void":
         raise HTTPException(400, "sale is already void")
     await session.refresh(original, attribute_names=["lines", "payments"])
+
+    # What's still returnable per line (earlier partial returns are RET-
+    # documents pointing at this sale), and what this return takes:
+    # {"lines": [{"line_id": ..., "quantity": 1}]}, or everything left.
+    left = await _returnable(session, principal, original)
+    wanted = {str(x.get("line_id")): Decimal(str(x.get("quantity", 0))) for x in (body or {}).get("lines") or []}
+    if wanted:
+        for line_id, qty in wanted.items():
+            if line_id not in left or qty <= 0 or qty > left[line_id]:
+                raise HTTPException(422, "return between 0 and what's left of that line")
+    take = wanted or {k: v for k, v in left.items() if v > 0}
+    if not take:
+        raise HTTPException(400, "everything on this sale was already returned")
+    everything = all(take.get(k, 0) == v for k, v in left.items())
+
+    if original.status == "sent":
+        # A credit sale nobody has paid: no money came in, so none goes
+        # out. Taking it all back cancels it and restocks.
+        if original.payments or not everything:
+            raise HTTPException(409, "this sale is on credit: take it all back, or record the payment first")
+        original.status = "void"
+        original.updated_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(original, attribute_names=["lines", "payments"])
+        back = SimpleNamespace(
+            number=original.number,
+            cashier_user_id=original.cashier_user_id,
+            cashier_email=original.cashier_email,
+            lines=[
+                SimpleNamespace(product_id=l.product_id, quantity=-l.quantity, unit_cost_cents=l.unit_cost_cents, uom_factor=l.uom_factor)
+                for l in original.lines
+            ],
+        )
+        await publish_pos_sale_recorded(principal.org_id, back, 0)
+        return InvoiceOut.from_model(original)
 
     now = datetime.now(UTC)
     refund = Invoice(
@@ -928,19 +1016,27 @@ async def return_pos_sale(
 
     refund_total_cents = 0
     for line in original.lines:
-        refund_total_cents += -line.total_cents
+        qty = take.get(str(line.id))
+        if not qty:
+            continue
+        # The share of the line's own total and VAT, so a partial return
+        # of a discounted line gives back what was actually paid.
+        share = qty / Decimal(str(line.quantity))
+        line_total = int((Decimal(line.total_cents) * share).quantize(Decimal(1), ROUND_HALF_UP))
+        line_vat = int((Decimal(line.vat_cents or 0) * share).quantize(Decimal(1), ROUND_HALF_UP))
+        refund_total_cents += -line_total
         session.add(
             InvoiceLine(
                 org_id=uuid.UUID(principal.org_id),
                 invoice_id=refund.id,
                 description=f"Return: {line.description}",
-                quantity=-line.quantity,
+                quantity=-qty,
                 unit_price_cents=line.unit_price_cents,
                 discount_bp=line.discount_bp,
                 unit_cost_cents=line.unit_cost_cents,
                 product_id=line.product_id,
                 tax_code=line.tax_code,
-                vat_cents=-line.vat_cents,
+                vat_cents=-line_vat,
                 is_adjustment=line.is_adjustment,
                 item_code=line.item_code,
                 item_class=line.item_class,
@@ -965,7 +1061,9 @@ async def return_pos_sale(
             received_at=now,
         )
     )
-    original.status = "void"
+    # A partial return leaves the sale standing for what the customer kept.
+    if everything:
+        original.status = "void"
     original.updated_at = now
 
     await session.commit()
@@ -1282,6 +1380,7 @@ app.include_router(invoices_router)
 app.include_router(quotes_router)
 app.include_router(reports_router)
 app.include_router(pos_router)
+app.include_router(credit_router)
 app.include_router(registers_router)
 app.include_router(etims_router)
 app.include_router(webhooks_router)

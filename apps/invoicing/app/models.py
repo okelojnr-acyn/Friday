@@ -208,6 +208,8 @@ class Payment(Base):
     amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
     method: Mapped[str] = mapped_column(String(16), nullable=False, default="other")
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # The sender's id for a debt payment (0015), so a retry isn't paid twice.
+    client_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="payments")
 
