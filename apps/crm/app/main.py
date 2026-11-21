@@ -15,6 +15,7 @@ from friday_common import (
     resource,
 )
 from friday_common.integrations import SlackProvider
+from friday_common.access import Scope, people_in, require
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -86,10 +87,13 @@ async def _notify_slack(org_id: str, text: str) -> None:
 @router.get("", response_model=list[OpportunityOut])
 async def list_opportunities(
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("crm.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(
-        select(Opportunity).where(Opportunity.org_id == uuid.UUID(principal.org_id)).order_by(Opportunity.created_at.desc())
+        _scoped(select(Opportunity).where(Opportunity.org_id == uuid.UUID(principal.org_id)), await _people(scope, principal)).order_by(
+            Opportunity.created_at.desc()
+        )
     )
     return rows.scalars().all()
 
@@ -98,6 +102,7 @@ async def list_opportunities(
 async def create_opportunity(
     body: OpportunityCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("crm.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     if body.stage not in STAGES:
@@ -118,6 +123,38 @@ async def create_opportunity(
     return opp
 
 
+def _activities_in(q, who):
+    """Activities on the deals `who` may see."""
+    if who is None:
+        return q
+    return q.where(Activity.opportunity_id.in_(select(Opportunity.id).where(Opportunity.created_by.in_(who))))
+
+
+def _scoped(q, who):
+    return q if who is None else q.where(Opportunity.created_by.in_(who))
+
+
+async def _people(scope: Scope, principal: Principal):
+    """Whose deals `scope` covers (None = everyone's); a deal is its
+    creator's."""
+    who = await people_in(scope, principal.org_id)
+    return None if who is None else [uuid.UUID(x) for x in who if _is_uuid(x)]
+
+
+def _is_uuid(x: str) -> bool:
+    try:
+        uuid.UUID(x)
+        return True
+    except ValueError:
+        return False
+
+
+async def _check_deal(scope: Scope, principal: Principal, opp: Opportunity) -> None:
+    who = await _people(scope, principal)
+    if who is not None and opp.created_by not in who:
+        raise HTTPException(404, "opportunity not found")
+
+
 async def _get_owned(session: AsyncSession, principal: Principal, opp_id: uuid.UUID) -> Opportunity:
     opp = await session.get(Opportunity, opp_id)
     if opp is None or str(opp.org_id) != principal.org_id:
@@ -129,9 +166,12 @@ async def _get_owned(session: AsyncSession, principal: Principal, opp_id: uuid.U
 async def get_opportunity(
     opp_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("crm.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
-    return await _get_owned(session, principal, opp_id)
+    opp = await _get_owned(session, principal, opp_id)
+    await _check_deal(scope, principal, opp)
+    return opp
 
 
 @router.patch("/{opp_id}", response_model=OpportunityOut)
@@ -139,9 +179,11 @@ async def update_opportunity(
     opp_id: uuid.UUID,
     body: OpportunityUpdate,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("crm.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     opp = await _get_owned(session, principal, opp_id)
+    await _check_deal(scope, principal, opp)
     changes = body.model_dump(exclude_unset=True)
     if "stage" in changes and changes["stage"] not in STAGES:
         raise HTTPException(422, f"stage must be one of {STAGES}")
@@ -187,9 +229,11 @@ async def update_opportunity(
 async def delete_opportunity(
     opp_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("crm.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     opp = await _get_owned(session, principal, opp_id)
+    await _check_deal(scope, principal, opp)
     await session.delete(opp)
     await session.commit()
 
@@ -197,10 +241,13 @@ async def delete_opportunity(
 @activities_router.get("", response_model=list[ActivityOut])
 async def list_activities(
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("crm.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     rows = await session.execute(
-        select(Activity).where(Activity.org_id == uuid.UUID(principal.org_id)).order_by(Activity.created_at.desc())
+        _activities_in(
+            select(Activity).where(Activity.org_id == uuid.UUID(principal.org_id)), await _people(scope, principal)
+        ).order_by(Activity.created_at.desc())
     )
     return rows.scalars().all()
 
@@ -209,9 +256,12 @@ async def list_activities(
 async def create_activity(
     body: ActivityCreate,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("crm.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     opp = await session.get(Opportunity, body.opportunity_id)
+    if opp is not None:
+        await _check_deal(scope, principal, opp)
     if opp is None or str(opp.org_id) != principal.org_id:
         raise HTTPException(404, "opportunity not found")
     activity = Activity(

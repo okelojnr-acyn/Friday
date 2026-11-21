@@ -26,7 +26,7 @@ async def test_activities_are_org_isolated(client, as_principal, principal):
     opp = (await client.post("/opportunities", json={"contact_name": "Ada"})).json()
     await client.post("/activities", json={"opportunity_id": opp["id"], "body": "note"})
 
-    as_principal(make_principal())  # a different org entirely
+    as_principal(make_principal(role="admin"))  # a different org entirely
     assert (await client.get("/activities")).json() == []
 
     as_principal(principal)
