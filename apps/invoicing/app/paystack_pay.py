@@ -77,8 +77,28 @@ async def paystack_config(org_id: str) -> dict:
     return config
 
 
+def receipt_email(config: dict, customer_email: str, fallback: str) -> str:
+    """Who Paystack emails the receipt to (it insists on an email): the
+    customer's when known, else the business's receipt address (set on
+    the Paystack integration, owner 2026-11-21), else `fallback` (the
+    person at the till)."""
+    return (customer_email or str(config.get("receipt_email") or "").strip() or fallback or "").strip()
+
+
+_KE_PHONE = re.compile(r"^(?:\+?254|0)?([17]\d{8})$")
+
+
+def kenyan_phone(raw: str) -> str:
+    """07xx / 01xx / 2547xx / +2547xx -> +2547xxxxxxxx, as Paystack wants."""
+    m = _KE_PHONE.match(re.sub(r"[\s-]", "", raw or ""))
+    if not m:
+        raise HTTPException(422, "type the customer's M-Pesa number, like 0712 345 678")
+    return "+254" + m.group(1)
+
+
 async def _initialize(org_id: str, reference: str, amount_cents: int, currency: str, email: str, description: str) -> str:
     config = await paystack_config(org_id)
+    email = receipt_email(config, "", email) if not email else email
     try:
         intent = await PaystackProvider(config).create_payment_intent(
             amount_cents,
@@ -90,14 +110,42 @@ async def _initialize(org_id: str, reference: str, amount_cents: int, currency: 
     return intent["redirect_url"]
 
 
-async def start_checkout(org_id: str, invoice: Invoice, amount_cents: int, email: str, description: str) -> str:
+async def start_checkout(
+    org_id: str, invoice: Invoice, amount_cents: int, customer_email: str, fallback_email: str, description: str
+) -> str:
     """Opens a Paystack checkout for `amount_cents` of `invoice` and
     stores its reference on the invoice (the caller commits). Returns the
     page the customer pays on."""
+    config = await paystack_config(org_id)
+    email = receipt_email(config, customer_email, fallback_email)
     reference = new_reference(org_id, invoice.id)
     url = await _initialize(org_id, reference, amount_cents, invoice.currency, email, description)
     invoice.paystack_reference = reference
     return url
+
+
+async def start_mpesa_prompt(
+    org_id: str, invoice: Invoice, amount_cents: int, phone: str, customer_email: str, fallback_email: str
+) -> str:
+    """Sends the M-Pesa prompt straight to the customer's phone (no
+    Paystack page; owner 2026-11-21: a busy till can't wait for the
+    page). Stores the reference (the caller commits); returns the text to
+    show the cashier."""
+    config = await paystack_config(org_id)
+    reference = new_reference(org_id, invoice.id)
+    try:
+        out = await PaystackProvider(config).charge_mobile_money(
+            amount_cents,
+            invoice.currency,
+            receipt_email(config, customer_email, fallback_email),
+            kenyan_phone(phone),
+            "mpesa",
+            reference,
+        )
+    except (httpx.HTTPError, RuntimeError) as exc:
+        raise HTTPException(502, f"Could not send the M-Pesa prompt: {exc}") from exc
+    invoice.paystack_reference = reference
+    return out["display_text"] or "Ask the customer to enter their M-Pesa PIN on their phone."
 
 
 async def settle(session: AsyncSession, org_id: str, invoice_id: str, reference: str) -> None:
@@ -285,9 +333,9 @@ async def debt_link(
         raise HTTPException(409, f"{customer.name} owes in several currencies; send a link per invoice")
     currency = currencies.pop()
     reference = new_debt_reference(principal.org_id, customer.id)
-    url = await _initialize(
-        principal.org_id, reference, owed, currency, customer.email or principal.email or "", f"Balance for {customer.name}"
-    )
+    config = await paystack_config(principal.org_id)
+    email = receipt_email(config, customer.email, principal.email or "")
+    url = await _initialize(principal.org_id, reference, owed, currency, email, f"Balance for {customer.name}")
     return {"customer": customer.name, "owed_cents": owed, "currency": currency, "reference": reference, "redirect_url": url}
 
 

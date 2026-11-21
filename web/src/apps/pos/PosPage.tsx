@@ -121,6 +121,8 @@ export function PosPage({
     provider: "Paystack" | "Pesapal";
     invoiceId: string;
     status: "starting" | "pending" | "paid" | "void";
+    /** The M-Pesa prompt went to the customer's phone. */
+    phone?: boolean;
     /** Cash etc. to hand back after a split sale is cancelled. */
     returned?: number;
   } | null>(null);
@@ -467,7 +469,7 @@ export function PosPage({
   }
 
   // tenders: the till's own part of a split; Paystack charges the rest.
-  async function payOnline(provider: "Paystack" | "Pesapal", tenders: Tender[] = []) {
+  async function payOnline(provider: "Paystack" | "Pesapal", tenders: Tender[] = [], phone?: string) {
     const cart = cartRef.current;
     if (!cart || lines.length === 0) return;
     setError(null);
@@ -477,6 +479,7 @@ export function PosPage({
       sale = annotate({ ...JSON.parse(cart.checkout_json(settings.currency, method, Date.now())), shift_id: shift.id });
       if (provider === "Paystack" && tenders.length)
         sale = { ...sale, payments: tenders.map((t) => ({ method: t.method, amount_cents: t.cents })) } as Sale;
+      if (phone) sale = { ...sale, phone } as Sale;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not build the sale");
       return;
@@ -486,8 +489,9 @@ export function PosPage({
     try {
       const start = provider === "Paystack" ? startPaystackPosPayment : startPesapalPosPayment;
       const { invoice_id, redirect_url } = await start(sale);
-      setOnlineFlow({ provider, invoiceId: invoice_id, status: "pending" });
-      window.open(redirect_url, "_blank", "noopener");
+      setOnlineFlow({ provider, invoiceId: invoice_id, status: "pending", phone: !!phone });
+      // An M-Pesa prompt goes to the customer's phone: no page to open.
+      if (redirect_url) window.open(redirect_url, "_blank", "noopener");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : `Could not start ${provider} checkout`);
       setOnlineFlow(null);
@@ -518,12 +522,21 @@ export function PosPage({
   const offered = offeredMethods(register?.payment_methods, settings.payment_methods);
   const online: OnlineMethod[] = [];
   if (offered.includes("paystack") && connected.includes("paystack"))
-    online.push({
-      key: "paystack",
-      label: "Paystack",
-      hint: "Card, M-Pesa or bank · type a cash part first to split",
-      start: (tenders) => payOnline("Paystack", tenders),
-    });
+    online.push(
+      {
+        key: "paystack-mpesa",
+        label: "M-Pesa prompt",
+        hint: "Type their number; they approve on their phone",
+        askPhone: true,
+        start: (tenders, phone) => payOnline("Paystack", tenders, phone),
+      },
+      {
+        key: "paystack",
+        label: "Card or bank",
+        hint: "Paystack page · type a cash part first to split",
+        start: (tenders) => payOnline("Paystack", tenders),
+      },
+    );
   if (offered.includes("pesapal") && connected.includes("pesapal"))
     online.push({
       key: "pesapal",
@@ -797,7 +810,10 @@ export function PosPage({
             {onlineFlow ? (
               <div className="till-error" style={{ background: "rgba(224,122,53,.12)", color: "#9a4a12" }}>
                 {onlineFlow.status === "starting" && `Starting ${onlineFlow.provider} checkout…`}
-                {onlineFlow.status === "pending" && `Waiting for the customer to pay on ${onlineFlow.provider}…`}
+                {onlineFlow.status === "pending" &&
+                  (onlineFlow.phone
+                    ? "M-Pesa prompt sent: the customer enters their PIN on their phone…"
+                    : `Waiting for the customer to pay on ${onlineFlow.provider}…`)}
                 {onlineFlow.status === "paid" && `${onlineFlow.provider} payment received.`}
                 {onlineFlow.status === "void" && `${onlineFlow.provider} payment failed or was cancelled.`}
                 {onlineFlow.returned ? ` Hand back ${formatMoney(onlineFlow.returned)}.` : ""}

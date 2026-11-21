@@ -53,6 +53,31 @@ class PaystackProvider(PaymentProvider):
             raise RuntimeError(f"Paystack initialize failed: {data.get('message') or resp.status_code}")
         return {"id": reference, "redirect_url": data["data"]["authorization_url"]}
 
+    async def charge_mobile_money(
+        self, amount_cents: int, currency: str, email: str, phone: str, provider: str, reference: str
+    ) -> dict:
+        """POST /charge with mobile_money: Paystack pushes the payment prompt
+        (M-Pesa STK) straight to `phone`, no checkout page. Returns
+        `{"status", "display_text"}`; the payment still counts only once
+        `verify(reference)` says success."""
+        body = {
+            "email": email,
+            "amount": int(amount_cents),
+            "currency": currency.upper(),
+            "reference": reference,
+            "mobile_money": {"phone": phone, "provider": provider},
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(f"{PAYSTACK_API_BASE}/charge", json=body, headers=self._headers())
+        data = resp.json() if resp.content else {}
+        if resp.status_code >= 400 or not data.get("status"):
+            raise RuntimeError(f"Paystack charge failed: {data.get('message') or resp.status_code}")
+        d = data.get("data") or {}
+        status = str(d.get("status", "")).lower()
+        if status == "failed":
+            raise RuntimeError(f"Paystack charge failed: {d.get('gateway_response') or d.get('message') or 'declined'}")
+        return {"status": status, "display_text": str(d.get("display_text") or "")}
+
     async def verify(self, reference: str) -> dict:
         """GET /transaction/verify/:reference -- the only answer Friday
         trusts. Returns `{"status", "amount", "currency", "channel"}`;

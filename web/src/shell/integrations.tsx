@@ -39,10 +39,13 @@ export const PROVIDERS: ProviderDescriptor[] = [
     icon: "credit-card",
     group: "Get paid",
     blurb:
-      "Card, M-Pesa and bank payments at the till and as invoice pay links, in your own Paystack account. Paystack signs its webhooks with this same secret key, so there's no separate webhook secret. Webhook URL (optional): your Friday address + /external/webhooks/paystack.",
+      "Card, M-Pesa and bank payments at the till and as invoice pay links, in your own Paystack account. Paystack signs its webhooks with this same secret key, so there's no separate webhook secret. Webhook URL (optional): your Friday address + /external/webhooks/paystack. Paystack emails a receipt for every payment: to the customer when their email is known, else to the receipt email below, else to whoever is at the till.",
     codeReady: true,
     docAnchor: "paystack",
-    fields: [{ key: "secret_key", label: "Secret key", secret: true, placeholder: "sk_live_..." }],
+    fields: [
+      { key: "secret_key", label: "Secret key", secret: true, placeholder: "sk_live_..." },
+      { key: "receipt_email", label: "Receipt email (optional)", placeholder: "sales@yourshop.co.ke" },
+    ],
   },
   {
     key: "pesapal",

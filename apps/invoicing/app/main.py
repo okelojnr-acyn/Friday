@@ -64,6 +64,7 @@ from .paystack_pay import manual_tenders, refund_share
 from .paystack_pay import router as paystack_router
 from .paystack_pay import settle as settle_paystack
 from .paystack_pay import start_checkout as start_paystack_checkout
+from .paystack_pay import start_mpesa_prompt
 from .registers import router as registers_router
 from .registers import shift_for_sale
 from .webhooks import external_router
@@ -462,7 +463,7 @@ async def paystack_pay_link(
         customer = await session.get(Customer, inv.customer_id)
         email = customer.email if customer else ""
     redirect_url = await start_paystack_checkout(
-        principal.org_id, inv, balance, email or principal.email or "", f"Invoice {inv.number}"
+        principal.org_id, inv, balance, email, principal.email or "", f"Invoice {inv.number}"
     )
     await session.commit()
     return PaystackCheckoutOut(invoice_id=inv.id, redirect_url=redirect_url)
@@ -888,9 +889,16 @@ async def pay_with_paystack(
     if charged_cents <= 0:
         raise HTTPException(422, "nothing to charge")
     to_charge = await manual_tenders(session, principal, invoice, body.get("payments") or [], charged_cents)
-    email = str(body.get("email") or principal.email or "")
+    customer_email = str(body.get("email") or "")
+    if body.get("phone"):
+        # M-Pesa prompt straight to the customer's phone: no Paystack page.
+        prompt = await start_mpesa_prompt(
+            principal.org_id, invoice, to_charge, str(body["phone"]), customer_email, principal.email or ""
+        )
+        await session.commit()
+        return PaystackCheckoutOut(invoice_id=invoice.id, prompt=prompt)
     redirect_url = await start_paystack_checkout(
-        principal.org_id, invoice, to_charge, email, f"POS sale {invoice.number}"
+        principal.org_id, invoice, to_charge, customer_email, principal.email or "", f"POS sale {invoice.number}"
     )
     await session.commit()
     return PaystackCheckoutOut(invoice_id=invoice.id, redirect_url=redirect_url)

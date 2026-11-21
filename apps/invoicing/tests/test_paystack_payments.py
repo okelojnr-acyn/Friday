@@ -21,7 +21,7 @@ async def _config(org_id, provider):
 @pytest.fixture
 def paystack(monkeypatch):
     """A fake Paystack: `verified` is what verify answers per reference."""
-    state = {"verified": {}, "started": [], "refunds": []}
+    state = {"verified": {}, "started": [], "refunds": [], "prompts": []}
 
     class FakePaystack:
         def __init__(self, config):
@@ -30,6 +30,10 @@ def paystack(monkeypatch):
         async def create_payment_intent(self, amount_cents, currency, metadata):
             state["started"].append((amount_cents, currency, metadata))
             return {"id": metadata["reference"], "redirect_url": f"https://checkout.paystack.com/{metadata['reference']}"}
+
+        async def charge_mobile_money(self, amount_cents, currency, email, phone, provider, reference):
+            state["prompts"].append((amount_cents, currency, email, phone, provider, reference))
+            return {"status": "pay_offline", "display_text": "Please complete authorization on your phone"}
 
         async def refund(self, reference, amount_cents=None):
             state["refunds"].append((reference, amount_cents))
@@ -313,3 +317,36 @@ async def test_no_debt_link_for_someone_who_owes_nothing(client, paystack):
     assert (await client.post("/pos/debts/paystack-link", json={"customer_name": "Nobody"})).status_code == 404
     other = "11111111-1111-1111-1111-111111111111.debt-22222222-2222-2222-2222-222222222222.0a1b2c3d"
     assert (await client.get(f"/pos/debts/paystack-link/{other}")).status_code == 404
+
+
+async def test_mpesa_prompt_goes_to_the_customers_phone_without_a_page(client, principal, paystack):
+    r = await client.post("/pos/sales/pay-with-paystack", json=dict(_sale(1000), phone="0712 345 678"))
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert out["redirect_url"] == "" and "phone" in out["prompt"]
+    amount, currency, email, phone, provider, reference = paystack["prompts"][-1]
+    assert (amount, currency, phone, provider) == (1000, "KES", "+254712345678", "mpesa")
+    assert email == principal.email  # no receipt address set: the person at the till
+    assert paystack["started"] == []  # no checkout page
+
+    _paid(paystack, reference, 1000, channel="mobile_money")
+    assert (await client.get(f"/pos/sales/{out['invoice_id']}/status")).json()["status"] == "paid"
+
+
+async def test_a_bad_phone_number_is_refused(client, paystack):
+    r = await client.post("/pos/sales/pay-with-paystack", json=dict(_sale(1000), phone="12345"))
+    assert r.status_code == 422
+
+
+async def test_receipts_go_to_the_business_address_when_set(client, paystack, monkeypatch):
+    async def config(org_id, provider):
+        return {"secret_key": SECRET, "receipt_email": "sales@duka.test"}
+
+    monkeypatch.setattr("app.paystack_pay.get_integration_config", config)
+    await client.post("/pos/sales/pay-with-paystack", json=dict(_sale(1000), phone="0712345678"))
+    assert paystack["prompts"][-1][2] == "sales@duka.test"
+    await client.post("/pos/sales/pay-with-paystack", json=_sale(1000))
+    assert paystack["started"][-1][2]["email"] == "sales@duka.test"
+    # A customer's own email still wins.
+    await client.post("/pos/sales/pay-with-paystack", json=dict(_sale(1000), email="amina@example.test"))
+    assert paystack["started"][-1][2]["email"] == "amina@example.test"

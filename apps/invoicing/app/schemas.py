@@ -67,8 +67,14 @@ class PayWithPesapalOut(BaseModel):
     redirect_url: str
 
 
-# A Paystack checkout (POS sale or invoice pay link): the page to pay on.
-PaystackCheckoutOut = PayWithPesapalOut
+class PaystackCheckoutOut(BaseModel):
+    """A Paystack checkout (POS sale or invoice pay link): the page to pay
+    on, or, for an M-Pesa prompt sent to the customer's phone, no page and
+    the text to show the cashier."""
+
+    invoice_id: uuid.UUID
+    redirect_url: str = ""
+    prompt: str = ""
 
 
 class PosSaleStatusOut(BaseModel):
