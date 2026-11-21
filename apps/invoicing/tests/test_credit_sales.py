@@ -131,3 +131,33 @@ async def test_a_return_sent_twice_refunds_once(client, events):
     assert first.status_code == again.status_code == 201
     assert again.json()["id"] == first.json()["id"]
     assert len([t for t, _ in events if t == "invoicing.invoice.paid"]) == 2  # the sale, one refund
+
+
+async def test_a_debt_payment_made_in_error_can_be_taken_back(client, events):
+    made = (await client.post("/pos/sales", json=credit("Ann"))).json()
+    pay = {"customer_name": "Ann", "amount_cents": 100000, "method": "mpesa", "client_payment_id": "guss:a1"}
+    await client.post("/pos/debts/payments", json=pay)
+    events.clear()
+
+    back = await client.post("/pos/debts/payments/guss:a1/reverse")
+    assert back.status_code == 201, back.text
+    assert back.json()["reopened"] == [made["number"]]
+    owes = (await client.get("/pos/debts", params={"customer": "Ann"})).json()
+    assert owes[0]["owed_cents"] == 100000
+    # Its booking is mirrored exactly, under its own posting.
+    undone = [p for t, p in events if t == "invoicing.invoice.paid"]
+    assert len(undone) == 1
+    assert undone[0]["posting_ref"] == f"{made['id']}:reversed:guss:a1"
+    assert undone[0]["paid_amount_cents"] == -100000 and undone[0]["subtotal_cents"] == -100000
+    assert undone[0]["payments"] == [{"method": "mpesa", "amount_cents": -100000}]
+
+    again = (await client.post("/pos/debts/payments/guss:a1/reverse")).json()
+    assert again["already_reversed"]
+    assert (await client.post("/pos/debts/payments/guss:none/reverse")).status_code == 404
+
+    # Paid again for real: booked again, under a new posting.
+    events.clear()
+    await client.post("/pos/debts/payments", json={**pay, "client_payment_id": "guss:a2", "method": "cash"})
+    rebooked = [p for t, p in events if t == "invoicing.invoice.paid"]
+    assert rebooked[0]["posting_ref"] == f"{made['id']}:guss:a2"
+    assert (await client.get("/pos/debts", params={"customer": "Ann"})).json() == []

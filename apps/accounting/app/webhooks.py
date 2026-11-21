@@ -74,7 +74,11 @@ async def invoice_paid(body: dict, session: AsyncSession = Depends(get_session))
         return
 
     invoice_id = payload.get("invoice_id") or ""
-    if invoice_id and await _already_posted(session, org_id, "invoicing", invoice_id):
+    # One booking per posting: normally the invoice itself; a reversed
+    # payment and a later re-payment each come with their own ref, so an
+    # invoice that becomes unpaid and is paid again is booked again.
+    posting_ref = payload.get("posting_ref") or invoice_id
+    if posting_ref and await _already_posted(session, org_id, "invoicing", posting_ref):
         return
 
     subtotal_cents = payload.get("subtotal_cents", 0) or 0
@@ -110,7 +114,7 @@ async def invoice_paid(body: dict, session: AsyncSession = Depends(get_session))
         entry_date=now.date(),
         memo=f"Invoice {payload.get('invoice_number', '')} paid",
         source="invoicing",
-        source_ref=invoice_id,
+        source_ref=posting_ref,
         status="posted",
         created_at=now,
         updated_at=now,

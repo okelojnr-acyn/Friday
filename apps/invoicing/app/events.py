@@ -83,10 +83,25 @@ def vat_of(inv: Invoice) -> tuple[int, dict[str, int]]:
     return sum(by_code.values()), by_code
 
 
-async def publish_invoice_paid(org_id: str, inv: Invoice, paid_amount_cents: int, lines_payload: list[dict]) -> None:
-    subtotal_cents = sum(line.total_cents for line in inv.lines)
-    tax_cents = sum(line.tax_cents for line in inv.lines)
+async def publish_invoice_paid(
+    org_id: str,
+    inv: Invoice,
+    paid_amount_cents: int,
+    lines_payload: list[dict],
+    *,
+    posting_ref: str | None = None,
+    sign: int = 1,
+    payments: list | None = None,
+) -> None:
+    """sign=-1 publishes the exact mirror of an earlier booking (a reversed
+    payment), with `payments` as they were when it was booked. posting_ref
+    tells Accounting this is a separate posting from the invoice's first."""
+    subtotal_cents = sign * sum(line.total_cents for line in inv.lines)
+    tax_cents = sign * sum(line.tax_cents for line in inv.lines)
     vat_cents, vat_by_code = vat_of(inv)
+    vat_cents *= sign
+    vat_by_code = {k: sign * v for k, v in vat_by_code.items()}
+    paid = inv.payments if payments is None else payments
     await publish_event(
         "invoicing.invoice.paid",
         org_id,
@@ -104,7 +119,8 @@ async def publish_invoice_paid(org_id: str, inv: Invoice, paid_amount_cents: int
             "vat_cents": vat_cents,
             "vat_by_code": vat_by_code,
             # How it was paid, so M-Pesa and card don't land in the drawer.
-            "payments": [{"method": p.method, "amount_cents": p.amount_cents} for p in inv.payments],
+            "payments": [{"method": p.method, "amount_cents": sign * p.amount_cents} for p in paid],
             "lines": lines_payload,
+            **({"posting_ref": posting_ref} if posting_ref else {}),
         },
     )

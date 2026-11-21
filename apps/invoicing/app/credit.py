@@ -66,6 +66,18 @@ def _owed(inv: Invoice) -> int:
     return max(0, inv.grand_total_cents - inv.paid_cents)
 
 
+REVERSED = ":reversed"
+
+
+def rebook_ref(inv: Invoice, key: str) -> str | None:
+    """Accounting books an invoice once by its id. After one of its
+    payments was reversed (its booking undone), paying it again needs its
+    own posting ref, or the new booking would be skipped."""
+    if any((p.client_ref or "").endswith(REVERSED) for p in inv.payments):
+        return f"{inv.id}:{key}"
+    return None
+
+
 @router.get("")
 async def list_debts(
     customer: str | None = None,
@@ -167,11 +179,84 @@ async def pay_debt(
     await session.commit()
     for inv in settled:
         await session.refresh(inv, attribute_names=["lines", "payments"])
-        await publish_invoice_paid(principal.org_id, inv, inv.paid_cents, invoice_lines_payload(inv))
+        await publish_invoice_paid(
+            principal.org_id, inv, inv.paid_cents, invoice_lines_payload(inv), posting_ref=rebook_ref(inv, ref)
+        )
     return {
         "customer": customer.name,
         "paid_cents": amount,
         "settled": [i.number for i in settled],
         "owed_cents": owed - amount,
         "already_recorded": False,
+    }
+
+
+@router.post("/payments/{client_payment_id}/reverse", status_code=201)
+async def reverse_debt_payment(
+    client_payment_id: str,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Takes back a debt payment recorded in error (Guss: /void of "John
+    paid 500"). Each sale it paid toward owes that much again; a sale it
+    had settled is unpaid again and its booking is reversed exactly. Sent
+    twice, it reverses once. Never recorded: 404."""
+    ref = client_payment_id.strip()[:120]
+    org = uuid.UUID(principal.org_id)
+    rows = (
+        await session.execute(
+            select(Payment).where(Payment.org_id == org, Payment.client_ref.in_([ref, ref + REVERSED]))
+        )
+    ).scalars().all()
+    paid = [p for p in rows if p.client_ref == ref]
+    if not paid:
+        raise HTTPException(404, "no payment with that id")
+    if any(p.client_ref == ref + REVERSED for p in rows):
+        return {"reversed_cents": 0, "reopened": [], "already_reversed": True}
+
+    invoices = {
+        inv.id: inv
+        for inv in (
+            await session.execute(
+                select(Invoice)
+                .where(Invoice.id.in_({p.invoice_id for p in paid}))
+                .options(selectinload(Invoice.lines), selectinload(Invoice.payments))
+                .with_for_update()
+            )
+        ).scalars()
+    }
+    if any(inv.status == "void" for inv in invoices.values()):
+        raise HTTPException(409, "a sale this payment went to was cancelled; correct it in Invoicing")
+
+    now = datetime.now(UTC)
+    to_unbook: list[tuple[Invoice, list[Payment]]] = []
+    for inv in invoices.values():
+        if inv.status == "paid":
+            # Its booking listed the payments as they were; mirror exactly that.
+            to_unbook.append((inv, list(inv.payments)))
+            inv.status = "sent"
+            inv.updated_at = now
+    for p in paid:
+        session.add(
+            Payment(
+                org_id=org,
+                invoice_id=p.invoice_id,
+                amount_cents=-p.amount_cents,
+                method=p.method,
+                received_at=now,
+                client_ref=ref + REVERSED,
+            )
+        )
+    await session.commit()
+    for inv, booked in to_unbook:
+        await session.refresh(inv, attribute_names=["lines", "payments"])
+        total = sum(b.amount_cents for b in booked)
+        lines = [{**line, "quantity": -line["quantity"]} for line in invoice_lines_payload(inv)]
+        await publish_invoice_paid(
+            principal.org_id, inv, -total, lines, posting_ref=f"{inv.id}{REVERSED}:{ref}", sign=-1, payments=booked
+        )
+    return {
+        "reversed_cents": sum(p.amount_cents for p in paid),
+        "reopened": [inv.number for inv, _ in to_unbook],
+        "already_reversed": False,
     }
