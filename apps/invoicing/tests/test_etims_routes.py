@@ -118,7 +118,10 @@ async def test_a_return_is_a_credit_note_naming_the_sale(client, a_till, admin):
     assert credit and credit[0][7:9] == ["-1000.00", "-160.00"]
 
 
-async def test_only_admins_see_the_filing_list(client):
+async def test_only_admins_see_the_filing_list(client, as_principal, principal):
+    from dataclasses import replace
+
+    as_principal(replace(principal, role="member"))
     assert (await client.get("/etims/invoices")).status_code == 403
 
 

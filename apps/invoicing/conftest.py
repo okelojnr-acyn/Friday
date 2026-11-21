@@ -28,7 +28,9 @@ def _migrated_schema():
 
 @pytest.fixture
 def principal():
-    return make_principal()
+    # An admin by default: these tests check business logic. Who may do
+    # what (plan section 12) is tested in tests/test_roles.py.
+    return make_principal(role="admin")
 
 
 @pytest.fixture

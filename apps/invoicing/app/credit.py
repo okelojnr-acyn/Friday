@@ -16,6 +16,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from friday_common.access import Scope, require
+
 from .events import invoice_lines_payload, publish_invoice_paid
 from .models import Customer, Invoice, Payment
 
@@ -83,6 +85,7 @@ def rebook_ref(inv: Invoice, key: str) -> str | None:
 async def list_debts(
     customer: str | None = None,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("customers.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Who owes what: every customer with unpaid sales or invoices, or one
@@ -158,6 +161,7 @@ async def apply_debt_payment(
 async def pay_debt(
     body: dict,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("customers.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """A customer pays what they owe: {"customer_name", "amount_cents",
@@ -207,6 +211,7 @@ async def pay_debt(
 async def reverse_debt_payment(
     client_payment_id: str,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("customers.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Takes back a debt payment recorded in error (Guss: /void of "John

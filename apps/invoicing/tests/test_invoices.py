@@ -151,7 +151,7 @@ async def test_org_isolation_on_invoices(client, as_principal, principal):
         await client.post("/invoices", json={"lines": [{"description": "x", "unit_price_cents": 100}]})
     ).json()
 
-    as_principal(make_principal())
+    as_principal(make_principal(role="admin"))  # an admin of another business
     assert (await client.get(f"/invoices/{invoice['id']}")).status_code == 404
     assert (await client.get("/invoices")).json() == []
 

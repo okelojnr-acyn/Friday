@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "../../lib/api";
+import { listLocations, type Location } from "../../lib/people";
 import { createRegister, listRegisters, updateRegister, type PosRegister } from "../../lib/posApi";
 import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
-import { FieldWrap, Input } from "../../ui/Field";
+import { FieldWrap, Input, Select } from "../../ui/Field";
 
 /** Business settings > Tills: the only tills a POS device can be. The
  * POS picks from this list and never makes one up. */
 export function TillsSection({ canEdit }: { canEdit: boolean }) {
   const [regs, setRegs] = useState<PosRegister[] | null>(null);
+  // The business's locations (People > Locations); a till stands in one.
+  const [locations, setLocations] = useState<Location[]>([]);
+  useEffect(() => {
+    listLocations().then(setLocations).catch(() => {});
+  }, []);
+  const locName = (id: string) => locations.find((l) => l.id === id)?.name ?? "";
   const [name, setName] = useState("");
   const [store, setStore] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
@@ -40,14 +47,15 @@ export function TillsSection({ canEdit }: { canEdit: boolean }) {
   }
 
   async function add() {
-    if (await run(() => createRegister(name.trim(), store.trim()))) {
+    if (await run(() => createRegister(name.trim(), locName(store), store || null))) {
       setName("");
       setStore("");
     }
   }
 
   async function saveEdit(id: string) {
-    if (await run(() => updateRegister(id, { name: editName.trim(), location_name: editStore.trim() }))) setEditing(null);
+    if (await run(() => updateRegister(id, { name: editName.trim(), location_name: locName(editStore), location_id: editStore || null })))
+      setEditing(null);
   }
 
   return (
@@ -67,7 +75,14 @@ export function TillsSection({ canEdit }: { canEdit: boolean }) {
             editing === r.id ? (
               <div key={r.id} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 <Input aria-label="Till name" autoComplete="off" value={editName} maxLength={60} onChange={(e) => setEditName(e.target.value)} style={{ flex: "1 1 140px", minWidth: 0 }} />
-                <Input aria-label="Store" autoComplete="off" value={editStore} maxLength={80} onChange={(e) => setEditStore(e.target.value)} style={{ flex: "1 1 140px", minWidth: 0 }} />
+                <Select aria-label="Location" value={editStore} onChange={(e) => setEditStore(e.target.value)} style={{ flex: "1 1 140px", minWidth: 0 }}>
+                  <option value="">No location</option>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </Select>
                 <Button size="sm" variant="primary" disabled={busy || !editName.trim()} onClick={() => saveEdit(r.id)}>
                   Save
                 </Button>
@@ -93,7 +108,7 @@ export function TillsSection({ canEdit }: { canEdit: boolean }) {
                       onClick={() => {
                         setEditing(r.id);
                         setEditName(r.name);
-                        setEditStore(r.location_name);
+                        setEditStore(r.location_id ?? "");
                       }}
                     >
                       Rename
@@ -115,8 +130,15 @@ export function TillsSection({ canEdit }: { canEdit: boolean }) {
             <FieldWrap label="Name" required>
               <Input name="till-name" autoComplete="off" placeholder="Till 2" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
             </FieldWrap>
-            <FieldWrap label="Store">
-              <Input name="till-store" autoComplete="off" placeholder="Westlands" value={store} maxLength={80} onChange={(e) => setStore(e.target.value)} />
+            <FieldWrap label="Location">
+              <Select name="till-location" value={store} onChange={(e) => setStore(e.target.value)}>
+                <option value="">No location</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </Select>
             </FieldWrap>
             <Button variant="primary" disabled={busy || !name.trim()} onClick={add}>
               Add till

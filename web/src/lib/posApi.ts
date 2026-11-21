@@ -27,6 +27,8 @@ export interface PosRegister {
   name: string;
   location_name: string;
   active: boolean;
+  /** The kernel location it stands in (plan section 12); null = not set. */
+  location_id?: string | null;
   /** This till's own payment methods; null follows the business's. */
   payment_methods?: string[] | null;
   open_shift: PosShift | null;
@@ -34,12 +36,18 @@ export interface PosRegister {
 
 export const listRegisters = () => api.get<PosRegister[]>("/api/invoicing/pos/registers");
 
-export const createRegister = (name: string, locationName: string) =>
-  api.post<PosRegister>("/api/invoicing/pos/registers", { name, location_name: locationName });
+export const createRegister = (name: string, locationName: string, locationId: string | null = null) =>
+  api.post<PosRegister>("/api/invoicing/pos/registers", { name, location_name: locationName, location_id: locationId });
 
 export const updateRegister = (
   id: string,
-  patch: { name?: string; location_name?: string; active?: boolean; payment_methods?: string[] | null },
+  patch: {
+    name?: string;
+    location_name?: string;
+    location_id?: string | null;
+    active?: boolean;
+    payment_methods?: string[] | null;
+  },
 ) =>
   api.patch<PosRegister>(`/api/invoicing/pos/registers/${id}`, patch);
 

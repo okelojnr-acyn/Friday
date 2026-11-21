@@ -20,6 +20,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from friday_common import Principal, get_current_principal, get_integration_config, get_org_session
 from friday_common.integrations import PaystackProvider
+from friday_common.access import Scope, require
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -243,6 +244,7 @@ async def manual_tenders(session: AsyncSession, principal: Principal, invoice: I
 async def cancel_pending_sale(
     invoice_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("pos.sell")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """The customer won't pay on Paystack after all: the waiting sale is
@@ -315,6 +317,7 @@ class DebtLinkIn(BaseModel):
 async def debt_link(
     body: DebtLinkIn,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("customers.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """A Paystack page for everything a customer owes (Guss: "send John a
@@ -379,6 +382,7 @@ async def settle_debt(session: AsyncSession, org_id: str, customer_id: str, refe
 async def check_debt_link(
     reference: str,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("customers.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Has the customer paid this link? Records it the first time it's

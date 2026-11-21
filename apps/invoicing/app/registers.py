@@ -17,11 +17,12 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from friday_common import Principal, get_current_principal, get_org_session
-from friday_common.auth import require_role
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from friday_common.access import Scope, require
 
 from .models import Invoice, Payment, PosRegister, PosShift
 from .schemas import PosShiftOut
@@ -38,12 +39,14 @@ NO_TILLS = "no tills set up yet: an owner or admin adds them in Friday under Bus
 class RegisterIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     location_name: str = Field(default="", max_length=80)
+    location_id: uuid.UUID | None = None
 
 
 class RegisterPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=60)
     location_name: str | None = Field(default=None, max_length=80)
     active: bool | None = None
+    location_id: uuid.UUID | None = None
     # null puts the till back on the business's list.
     payment_methods: list[str] | None = None
 
@@ -53,6 +56,7 @@ class RegisterOut(BaseModel):
     name: str
     location_name: str
     active: bool
+    location_id: uuid.UUID | None = None
     payment_methods: list[str] | None = None
     open_shift: PosShiftOut | None = None
 
@@ -130,6 +134,7 @@ async def list_registers(
             name=r.name,
             location_name=r.location_name,
             active=r.active,
+            location_id=r.location_id,
             payment_methods=r.payment_methods,
             open_shift=PosShiftOut.model_validate(open_shifts[r.id]) if r.id in open_shifts else None,
         )
@@ -140,13 +145,19 @@ async def list_registers(
 @router.post("/registers", response_model=RegisterOut, status_code=201)
 async def create_register(
     body: RegisterIn,
-    principal: Principal = Depends(require_role("admin")),
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("tills.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    if not scope.everywhere:
+        if body.location_id is None:
+            raise HTTPException(422, "choose which of your locations the till stands in")
+        at_place(scope, body.location_id)
     reg = PosRegister(
         org_id=_org(principal),
         name=body.name.strip(),
         location_name=body.location_name.strip(),
+        location_id=body.location_id,
         created_at=datetime.now(UTC),
     )
     session.add(reg)
@@ -154,17 +165,30 @@ async def create_register(
         await session.commit()
     except IntegrityError:
         raise HTTPException(409, f"there's already a register called {body.name.strip()!r}") from None
-    return RegisterOut(id=reg.id, name=reg.name, location_name=reg.location_name, active=reg.active)
+    return RegisterOut(
+        id=reg.id, name=reg.name, location_name=reg.location_name, active=reg.active, location_id=reg.location_id
+    )
 
 
 @router.patch("/registers/{register_id}", response_model=RegisterOut)
 async def update_register(
     register_id: uuid.UUID,
     body: RegisterPatch,
-    principal: Principal = Depends(require_role("admin")),
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("tills.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     reg = await _register(session, principal, register_id)
+    if not scope.everywhere:
+        if reg.location_id is None:
+            raise HTTPException(403, "only an owner or admin changes a till that isn't placed at a location")
+        at_place(scope, reg.location_id)
+    if "location_id" in body.model_fields_set:
+        if body.location_id is None and not scope.everywhere:
+            raise HTTPException(422, "a till of yours stays at one of your locations")
+        if body.location_id is not None:
+            at_place(scope, body.location_id)
+        reg.location_id = body.location_id
     if body.name is not None:
         reg.name = body.name.strip()
     if body.location_name is not None:
@@ -190,6 +214,7 @@ async def update_register(
         name=reg.name,
         location_name=reg.location_name,
         active=reg.active,
+        location_id=reg.location_id,
         payment_methods=reg.payment_methods,
     )
 
@@ -198,6 +223,7 @@ async def update_register(
 async def list_shifts(
     register_id: uuid.UUID | None = None,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("sales.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     q = select(PosShift).where(PosShift.org_id == _org(principal))
@@ -224,6 +250,7 @@ async def current_shift(
 async def open_shift(
     body: ShiftOpenIn,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("pos.sell")),
     session: AsyncSession = Depends(get_org_session),
 ):
     reg = (
@@ -233,6 +260,7 @@ async def open_shift(
     )
     if not reg.active:
         raise HTTPException(400, "this register is switched off")
+    at_place(scope, reg.location_id)
     if await _open_shift(session, _org(principal), reg.id):
         raise HTTPException(409, f"{reg.name} is already open; close it before opening it again")
     shift = PosShift(
@@ -285,6 +313,7 @@ async def shift_summary(session: AsyncSession, shift: PosShift) -> dict:
 async def get_shift(
     shift_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("sales.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     shift = await session.get(PosShift, shift_id)
@@ -298,6 +327,7 @@ async def close_shift(
     shift_id: uuid.UUID,
     body: ShiftCloseIn,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("pos.sell")),
     session: AsyncSession = Depends(get_org_session),
 ):
     # Locked, so two closes (or a close racing a late sale's lookup) can't
@@ -321,6 +351,24 @@ async def close_shift(
     await session.commit()
     await session.refresh(shift)
     return shift
+
+
+def at_place(scope: Scope, location_id, what: str = "that till") -> None:
+    """Refuses a till or sale outside the caller's locations. A till nobody
+    has placed yet (no location) stays open to everyone allowed to sell."""
+    if location_id is not None and not scope.allows_location(str(location_id)):
+        raise HTTPException(403, f"{what} is at a location that isn't yours")
+
+
+async def till_location(session: AsyncSession, shift_id: uuid.UUID | None):
+    """The location of the till a shift runs on (None if not set)."""
+    if shift_id is None:
+        return None
+    shift = await session.get(PosShift, shift_id)
+    if shift is None or shift.register_id is None:
+        return None
+    reg = await session.get(PosRegister, shift.register_id)
+    return reg.location_id if reg else None
 
 
 async def shift_for_sale(session: AsyncSession, principal: Principal, raw: object) -> uuid.UUID | None:
