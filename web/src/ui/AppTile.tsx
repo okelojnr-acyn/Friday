@@ -18,7 +18,7 @@ interface AppTileProps {
 // than the kernel catalog's icon field, so the grid never shows two apps
 // with the same glyph (it used to: anything outside four names fell back
 // to a generic window, and Point of Sale reused Invoicing's receipt).
-const APP_ICONS: Record<string, { icon: IconName; color: string }> = {
+export const APP_ICONS: Record<string, { icon: IconName; color: string }> = {
   crm: { icon: "funnel", color: "#d6483f" },
   invoicing: { icon: "invoice", color: "#2f9e63" },
   projects: { icon: "kanban", color: "#3f6fd6" },
