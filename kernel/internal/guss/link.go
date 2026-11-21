@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"net/http"
 	"strconv"
@@ -31,7 +32,9 @@ import (
 var accessLevels = map[string]bool{"none": true, "read": true, "write": true}
 
 const (
-	linkCodeTTL = 10 * time.Minute
+	// 30 minutes: people get the code on their phone and then have to find
+	// Friday on a computer (owner, 2026-11-22: 10 minutes ran out).
+	linkCodeTTL = 30 * time.Minute
 	// Guss asks for a fresh token per conversation turn; short on purpose.
 	assistantTokenTTL = 10 * time.Minute
 	serviceKeyPrefix  = "fgs_"
@@ -265,17 +268,33 @@ func (h *Handlers) Link(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, `send {"code": "123456"}`)
 		return
 	}
-	code := strings.TrimSpace(body.Code)
+	// "123 456", "123-456": only the digits count.
+	code := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, body.Code)
 	var tgID int64
 	var tgName string
 	err := h.Pool.QueryRow(r.Context(),
 		`DELETE FROM core.guss_link_codes WHERE code_hash = $1 AND org_id = $2 AND expires_at > now()
 		 RETURNING telegram_id, telegram_name`, sha(c.OrgID+":"+code), c.OrgID).Scan(&tgID, &tgName)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "that code is wrong or expired; send /link to Guss for a new one")
+		// Say which: a typo, or a code that ran out (codes are kept).
+		var expired bool
+		h.Pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM core.guss_link_codes WHERE code_hash = $1 AND org_id = $2)`,
+			sha(c.OrgID+":"+code), c.OrgID).Scan(&expired)
+		log.Printf("guss link: no open code for org %s (expired: %v, digits: %d)", c.OrgID, expired, len(code))
+		if expired {
+			writeError(w, http.StatusGone, "that code has expired; send /link to Guss for a new one (codes last 30 minutes)")
+			return
+		}
+		writeError(w, http.StatusNotFound, "that code doesn't match; check the 6 digits Guss sent, or send /link for a new one")
 		return
 	}
 	if err != nil {
+		log.Printf("guss link: checking the code for org %s: %v", c.OrgID, err)
 		writeError(w, http.StatusInternalServerError, "couldn't check the code")
 		return
 	}
@@ -284,9 +303,11 @@ func (h *Handlers) Link(w http.ResponseWriter, r *http.Request) {
 		 ON CONFLICT (org_id, telegram_id) DO UPDATE SET user_id = EXCLUDED.user_id, telegram_name = EXCLUDED.telegram_name`,
 		c.OrgID, tgID, tgName, c.Subject)
 	if err != nil {
+		log.Printf("guss link: saving the link for org %s, user %s: %v", c.OrgID, c.Subject, err)
 		writeError(w, http.StatusInternalServerError, "couldn't save the link")
 		return
 	}
+	log.Printf("guss linked: org %s, telegram %d, user %s", c.OrgID, tgID, c.Subject)
 	writeJSON(w, http.StatusOK, map[string]any{"telegram_id": tgID, "telegram_name": tgName})
 }
 
@@ -377,9 +398,11 @@ func (h *Handlers) LinkCode(w http.ResponseWriter, r *http.Request) {
 		   telegram_name = EXCLUDED.telegram_name, expires_at = EXCLUDED.expires_at`,
 		sha(org+":"+code), org, body.TelegramID, body.Name, fmt.Sprintf("%d seconds", int(linkCodeTTL.Seconds())))
 	if err != nil {
+		log.Printf("guss link code for org %s, telegram %d: save failed: %v", org, body.TelegramID, err)
 		writeError(w, http.StatusInternalServerError, "couldn't save the code")
 		return
 	}
+	log.Printf("guss link code issued: org %s, telegram %d", org, body.TelegramID)
 	writeJSON(w, http.StatusOK, map[string]any{"code": code, "expires_in": int(linkCodeTTL.Seconds())})
 }
 

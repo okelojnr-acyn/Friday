@@ -283,17 +283,20 @@ export function GussAccessCard({ canManage }: { canManage: boolean }) {
           Link your Telegram
         </div>
         <p className="field-label" style={{ marginBottom: 8 }}>
-          Send /link to your Guss bot and enter the 6-digit code here within 10
-          minutes.
+          Send /link to your Guss bot and enter the 6-digit code here within 30
+          minutes. Pasting the whole message works too.
         </p>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
           <FieldWrap label="Code">
             <Input
               inputMode="numeric"
-              maxLength={6}
+              autoComplete="one-time-code"
+              aria-label="Link code"
               value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-              style={{ width: 120 }}
+              // Digits only, the last 6: "Your code: 123 456" pastes fine.
+              // (maxLength used to cut a pasted code before the spaces went.)
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(-6))}
+              style={{ width: 120, letterSpacing: "0.15em" }}
             />
           </FieldWrap>
           <Button
