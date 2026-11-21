@@ -116,9 +116,12 @@ async def people_in(scope: Scope, org_id: str) -> set[str] | None:
     at those locations (asked of the kernel, which knows who works where;
     someone with no locations listed works at all of them). Refuses when
     the kernel can't answer: closed, never open."""
-    if scope.kind == "all" or "*" in scope.locs:
+    if scope.kind == "all":
         return None
     if scope.kind == "loc" or TEAM_BY_LOCATION in scope.team:
+        # "All locations" widens location scopes only, never team or own.
+        if "*" in scope.locs:
+            return None
         import httpx
 
         from .settings import get_settings
