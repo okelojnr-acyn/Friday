@@ -47,6 +47,41 @@ export interface Receipt {
   /** VAT by tax type, when the sale has more than one. */
   taxLines?: { label: string; cents: number }[];
   vat?: ReceiptVat[];
+  /** Once the sale is filed with KRA eTIMS: what KRA requires on the receipt. */
+  etims?: ReceiptEtims | null;
+  /** A copy printed later, not at the sale. */
+  reprint?: boolean;
+}
+
+export interface ReceiptEtims {
+  invoice_no: string;
+  internal_data: string;
+  receipt_sign: string;
+  /** yyyyMMddHHmmss, as eTIMS returns it. */
+  sdc_time: string;
+  check_url: string;
+  /** The check link as a QR code, drawn by the server (an inline SVG). */
+  qr_svg: string;
+}
+
+function sdcTime(t: string): string {
+  const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(t);
+  return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}:${m[6]}` : t;
+}
+
+/** The KRA eTIMS block: invoice number, date and time, internal data,
+ * receipt signature and the QR code customers scan to check the receipt
+ * with KRA. A sale filed by hand on the eTIMS portal has only its number. */
+function etimsHtml(e: ReceiptEtims): string {
+  const row = (k: string, v: string) => (v ? `<div>${k}: ${esc(v)}</div>` : "");
+  // The SVG comes from our own server (segno), never from user input.
+  const qr = e.qr_svg.startsWith("<svg") ? `<div class="c">${e.qr_svg}</div>` : "";
+  return `<hr><div class="c"><b>KRA eTIMS</b></div>
+${row("CU invoice no", e.invoice_no)}
+${row("Date", sdcTime(e.sdc_time))}
+${row("Internal data", e.internal_data)}
+${row("Receipt signature", e.receipt_sign)}
+${qr}`;
 }
 
 const METHOD_LABEL: Record<string, string> = {
@@ -146,6 +181,7 @@ ${vatTable}
 <hr><table>
 ${pays}
 ${r.changeCents > 0 ? `<tr><td>Change</td><td class="r">${m(r.changeCents)}</td></tr>` : ""}
-</table><hr><div class="c">${esc(r.footer || "Thank you")}</div>
+</table>${r.etims ? etimsHtml(r.etims) : ""}<hr><div class="c">${esc(r.footer || "Thank you")}</div>
+${r.reprint ? `<div class="c"><small>Copy, printed ${esc(new Date().toLocaleString())}</small></div>` : ""}
 </body></html>`;
 }

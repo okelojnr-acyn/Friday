@@ -5,7 +5,25 @@ import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Field";
 import { Icon } from "../../ui/Icon";
 import { Modal } from "../../ui/Modal";
-import { formatMoney } from "../../lib/orgSettings";
+import { api } from "../../lib/api";
+import { formatMoney, useOrgSettings } from "../../lib/orgSettings";
+import { printReceipt, type ReceiptEtims } from "./receipt";
+
+interface StoredReceipt {
+  number: string;
+  issued_at: string;
+  cashier: string;
+  currency: string;
+  buyer_pin: string;
+  buyer_name: string;
+  prices_include_vat: boolean;
+  lines: { description: string; quantity: number; unit: string; unit_price_cents: number; discount_bp: number; total_cents: number; tax_code: string }[];
+  vat: { code: string; rate_pct: number; taxable_cents: number; vat_cents: number }[];
+  vat_cents: number;
+  total_cents: number;
+  payments: { method: string; cents: number }[];
+  etims: ReceiptEtims | null;
+}
 
 interface ReturnsPanelProps {
   onClose: () => void;
@@ -24,6 +42,55 @@ export function ReturnsPanel({ onClose, shiftId }: ReturnsPanelProps) {
   const [refunded, setRefunded] = useState<PosSale | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const settings = useOrgSettings();
+
+  /** A copy of a past sale's receipt, with KRA's eTIMS details once filed. */
+  async function reprint() {
+    if (!sale) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await api.get<StoredReceipt>(`/api/invoicing/etims/receipt/${encodeURIComponent(sale.number)}`);
+      const tax = settings.tax;
+      printReceipt({
+        businessName: settings.name,
+        registerName: "Till",
+        cashier: r.cashier,
+        number: r.number,
+        at: new Date(r.issued_at),
+        lines: r.lines.map((l) => ({
+          description: l.description,
+          quantity: l.quantity,
+          totalCents: l.total_cents,
+          unitPriceCents: l.unit_price_cents,
+          unit: l.unit || undefined,
+          taxCode: l.tax_code || undefined,
+          discountBp: l.discount_bp || undefined,
+        })),
+        totalCents: r.total_cents,
+        taxCents: r.vat_cents,
+        taxLabel: "VAT",
+        vat: tax?.vat_registered === false ? undefined : r.vat.map((v) => ({ code: v.code, ratePct: v.rate_pct, taxableCents: v.taxable_cents, vatCents: v.vat_cents })),
+        payments: r.payments,
+        changeCents: 0,
+        currency: r.currency,
+        address: tax?.receipt_address,
+        phone: tax?.receipt_phone,
+        taxPin: tax?.receipt_show_pin ? tax.tax_pin : "",
+        showTax: tax ? tax.vat_registered && tax.receipt_show_breakdown : true,
+        footer: tax?.receipt_footer,
+        pricesIncludeVat: r.prices_include_vat,
+        buyerPin: r.buyer_pin || undefined,
+        buyerName: r.buyer_name || undefined,
+        etims: r.etims,
+        reprint: true,
+      });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load that receipt");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function lookup() {
     if (!number.trim()) return;
@@ -54,7 +121,7 @@ export function ReturnsPanel({ onClose, shiftId }: ReturnsPanelProps) {
   }
 
   return (
-    <Modal title="Returns" onClose={onClose}>
+    <Modal title="Find a sale: reprint or return" onClose={onClose}>
       {error ? <div className="error-banner">{error}</div> : null}
       <div style={{ display: "flex", gap: 8 }}>
         <Input
@@ -78,6 +145,9 @@ export function ReturnsPanel({ onClose, shiftId }: ReturnsPanelProps) {
             </span>
           </div>
           <div className="field-label">Status: {sale.status}</div>
+          <Button type="button" onClick={reprint} disabled={loading} style={{ marginTop: 8, marginRight: 8 }}>
+            Reprint receipt
+          </Button>
           {refunded ? (
             <div className="field-label" style={{ marginTop: 8 }}>
               Refunded as {refunded.number} -- stock for any catalog items restocks automatically.
