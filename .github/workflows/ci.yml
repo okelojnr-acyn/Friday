@@ -108,6 +108,42 @@ jobs:
       - working-directory: web
         run: npm run build
 
+  caddyfile:
+    # deploy/Caddyfile, run by the Caddy a customer server runs, with and
+    # without website rules shaped like the ones Friday Host writes into
+    # firewall/web.caddy (friday-cloud-labs installs/remote_firewall.go).
+    # No upstreams run, so a request the firewall lets through gets 502
+    # and one it stops gets 403: that proves the rules run first.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Website rules run before the app
+        run: |
+          mkdir -p fw
+          # One argument per line of firewall/web.caddy.
+          rules() { printf '%s\n' "$@" > fw/web.caddy; }
+          code() {
+            docker rm -f caddy >/dev/null 2>&1 || true
+            docker run -d --name caddy --network host -e FRIDAY_DOMAIN=http://localhost:8080 \
+              -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$PWD/fw:/etc/caddy/fw:ro" caddy:2.11-alpine >/dev/null
+            for i in $(seq 1 20); do c=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/kernel/health) && [ "$c" != 000 ] && break; sleep 1; done
+            [ "$c" = "$1" ] || { echo "want $1, got $c"; docker logs caddy; exit 1; }
+          }
+          # No rules (no file, then a comment only): through to the app.
+          code 502
+          rules "# no rules"; code 502
+          # Everyone blocked but Friday Host.
+          rules "@fw_deny {" "client_ip 0.0.0.0/0 ::/0" "not client_ip 192.0.2.1/32" "}" \
+            "respond @fw_deny \"Blocked by this site's firewall.\" 403"
+          code 403
+          # An allowlist that leaves this runner out, then one that lets it in.
+          rules "@fw_outside not client_ip 203.0.113.0/24 192.0.2.1/32" \
+            "respond @fw_outside \"Blocked by this site's firewall.\" 403"
+          code 403
+          rules "@fw_outside not client_ip 0.0.0.0/0 ::/0 192.0.2.1/32" \
+            "respond @fw_outside \"Blocked by this site's firewall.\" 403"
+          code 502
+
   publish:
     # Versioned images for Friday Host (docs/FRIDAYHOST-READINESS.md, 4E in
     # friday-cloud-labs): ghcr.io/okelojnr-acyn/friday-<app>:<full sha>

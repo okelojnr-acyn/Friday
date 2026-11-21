@@ -1,11 +1,19 @@
 {$FRIDAY_DOMAIN} {
 	encode zstd gzip
-	# The kernel (auth, apps API) under /kernel; the browser and the kernel
-	# share one origin, so there is nothing cross-origin to configure.
-	handle_path /kernel/* {
-		reverse_proxy kernel:8080
-	}
-	handle {
-		reverse_proxy web:80
+	# route keeps the written order, so the firewall runs first.
+	route {
+		# Website rules from Friday Host's Firewall page: Friday Host
+		# writes firewall/web.caddy next to this file and reloads Caddy.
+		# None by default (an empty glob is fine).
+		import /etc/caddy/fw/*.caddy
+		# The kernel (auth, apps API) under /kernel; the browser and the
+		# kernel share one origin, so there is nothing cross-origin to
+		# configure.
+		handle_path /kernel/* {
+			reverse_proxy kernel:8080
+		}
+		handle {
+			reverse_proxy web:80
+		}
 	}
 }

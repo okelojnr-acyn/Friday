@@ -141,6 +141,8 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Website firewall rules Friday Host writes (see Caddyfile).
+      - ./firewall:/etc/caddy/fw:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
