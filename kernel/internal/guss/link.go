@@ -388,20 +388,35 @@ func (h *Handlers) Token(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// A Telegram person (linked with /link), or a Friday user who typed
+	// into the Guss widget in Friday (actor "friday:<user id>"): their
+	// entries reach Friday as them. Either way only within the service
+	// key's own org.
 	var body struct {
-		TelegramID int64 `json:"telegram_id"`
+		TelegramID int64  `json:"telegram_id"`
+		UserID     string `json:"user_id"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&body); err != nil || body.TelegramID == 0 {
-		writeError(w, http.StatusBadRequest, `send {"telegram_id": 123}`)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&body); err != nil ||
+		(body.TelegramID == 0 && body.UserID == "") {
+		writeError(w, http.StatusBadRequest, `send {"telegram_id": 123} or {"user_id": "..."}`)
 		return
 	}
 	var userID, email, role, name string
-	err := h.Pool.QueryRow(r.Context(),
-		`SELECT u.id, u.email, m.role, COALESCE(NULLIF(u.full_name, ''), l.telegram_name)
-		 FROM core.guss_links l
-		 JOIN core.users u ON u.id = l.user_id
-		 JOIN core.memberships m ON m.org_id = l.org_id AND m.user_id = l.user_id
-		 WHERE l.org_id = $1 AND l.telegram_id = $2`, org, body.TelegramID).Scan(&userID, &email, &role, &name)
+	var err error
+	if body.TelegramID != 0 {
+		err = h.Pool.QueryRow(r.Context(),
+			`SELECT u.id, u.email, m.role, COALESCE(NULLIF(u.full_name, ''), l.telegram_name)
+			 FROM core.guss_links l
+			 JOIN core.users u ON u.id = l.user_id
+			 JOIN core.memberships m ON m.org_id = l.org_id AND m.user_id = l.user_id
+			 WHERE l.org_id = $1 AND l.telegram_id = $2`, org, body.TelegramID).Scan(&userID, &email, &role, &name)
+	} else {
+		err = h.Pool.QueryRow(r.Context(),
+			`SELECT u.id, u.email, m.role, COALESCE(NULLIF(u.full_name, ''), u.email)
+			 FROM core.memberships m
+			 JOIN core.users u ON u.id = m.user_id
+			 WHERE m.org_id = $1 AND m.user_id::text = $2`, org, body.UserID).Scan(&userID, &email, &role, &name)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "not linked")
 		return
