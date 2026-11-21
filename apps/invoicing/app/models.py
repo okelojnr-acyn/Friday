@@ -87,6 +87,8 @@ class Invoice(Base):
     buyer_pin: Mapped[str] = mapped_column(Text, nullable=False, default="")
     buyer_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     prices_include_tax: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # 'till' or 'guss' (0014): where a POS sale was made.
+    channel: Mapped[str] = mapped_column(Text, nullable=False, default="till")
     etims_status: Mapped[str] = mapped_column(Text, nullable=False, default="unfiled")
     etims_via: Mapped[str] = mapped_column(Text, nullable=False, default="")
     etims_invoice_no: Mapped[str] = mapped_column(Text, nullable=False, default="")
