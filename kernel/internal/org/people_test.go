@@ -130,6 +130,34 @@ func TestPeopleRolesLocationsAndTokens(t *testing.T) {
 		}
 	}
 
+	// Who is at a location: listed there, or listed nowhere (works everywhere).
+	p.InternalToken = "itok"
+	at := func(token string, locs ...string) (int, []string) {
+		q := ""
+		for _, l := range locs {
+			q += "&location=" + l
+		}
+		r := httptest.NewRequest(http.MethodGet, "/internal/people/"+orgID+"?x=1"+q, nil)
+		r.SetPathValue("org_id", orgID)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		p.AtLocations(w, r)
+		var out struct {
+			UserIDs []string `json:"user_ids"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &out)
+		return w.Code, out.UserIDs
+	}
+	if code, _ := at("wrong", west.ID); code != http.StatusUnauthorized {
+		t.Fatalf("internal people without the token: %d", code)
+	}
+	if _, inWest := at("itok", west.ID); !slices.Contains(inWest, cashier) || !slices.Contains(inWest, owner) {
+		t.Fatalf("at Westlands: %v", inWest)
+	}
+	if _, inMain := at("itok", main); slices.Contains(inMain, cashier) || !slices.Contains(inMain, lead) {
+		t.Fatalf("at Main: %v (the cashier is only at Westlands)", inMain)
+	}
+
 	// What a token carries.
 	perms, locs, team, err := access.Load(ctx, pool, orgID, cashier, "member")
 	must(err)

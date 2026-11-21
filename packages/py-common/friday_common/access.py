@@ -105,6 +105,33 @@ class Scope:
         return query if who is None else query.where(column.in_(list(who)))
 
 
+async def people_in(scope: Scope, org_id: str) -> set[str] | None:
+    """Whose records `scope` may see: None for anyone's; for "loc", everyone
+    at those locations (asked of the kernel, which knows who works where;
+    someone with no locations listed works at all of them). Refuses when
+    the kernel can't answer: closed, never open."""
+    if scope.kind == "all" or "*" in scope.locs:
+        return None
+    if scope.kind == "loc" or TEAM_BY_LOCATION in scope.team:
+        import httpx
+
+        from .settings import get_settings
+
+        settings = get_settings()
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    f"{settings.kernel_internal_url}/people/{org_id}",
+                    params=[("location", loc) for loc in scope.locs],
+                    headers={"Authorization": f"Bearer {settings.kernel_events_token}"},
+                )
+                resp.raise_for_status()
+                return set(resp.json()["user_ids"]) | {scope.user_id}
+        except (httpx.HTTPError, KeyError, ValueError) as exc:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"couldn't check who works where: {exc}") from exc
+    return scope.people()
+
+
 def scope_for(principal: Principal, rule: str) -> Scope | None:
     kind = scope_of(principal.role, principal.perms, rule)
     if not kind:

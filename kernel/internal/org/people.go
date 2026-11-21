@@ -19,6 +19,42 @@ import (
 // business's locations.
 type People struct {
 	Pool *pgxpool.Pool
+	// InternalToken guards the apps-only routes (KERNEL_EVENTS_TOKEN).
+	InternalToken string
+}
+
+// AtLocations (GET /internal/people/{org_id}?location=...): the user ids
+// of everyone at any of those locations, plus everyone with no locations
+// listed (they work at all of them). Apps use it for a branch manager's
+// "loc" scope over people (staff lists, claims). Apps only.
+func (p *People) AtLocations(w http.ResponseWriter, r *http.Request) {
+	if p.InternalToken == "" || r.Header.Get("Authorization") != "Bearer "+p.InternalToken {
+		peopleError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	locs := r.URL.Query()["location"]
+	rows, err := p.Pool.Query(r.Context(), `
+		SELECT m.user_id::text FROM core.memberships m
+		WHERE m.org_id::text = $1 AND (
+			NOT EXISTS (SELECT 1 FROM core.membership_locations ml WHERE ml.org_id = m.org_id AND ml.user_id = m.user_id)
+			OR EXISTS (SELECT 1 FROM core.membership_locations ml WHERE ml.org_id = m.org_id AND ml.user_id = m.user_id
+			           AND ml.location_id::text = ANY($2)))
+		ORDER BY 1`, r.PathValue("org_id"), locs)
+	if err != nil {
+		peopleError(w, http.StatusInternalServerError, "couldn't load people")
+		return
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			peopleError(w, http.StatusInternalServerError, "couldn't load people")
+			return
+		}
+		ids = append(ids, id)
+	}
+	peopleJSON(w, http.StatusOK, map[string]any{"user_ids": ids})
 }
 
 func peopleJSON(w http.ResponseWriter, status int, v any) {

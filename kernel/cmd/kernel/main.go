@@ -157,7 +157,8 @@ func main() {
 	mux.Handle("GET /orgs/members", requireAuth(http.HandlerFunc(members.List)))
 	mux.Handle("PATCH /orgs/members/{user_id}/role", requireAuth(http.HandlerFunc(members.SetRole)))
 	mux.Handle("DELETE /orgs/members/{user_id}", requireAuth(http.HandlerFunc(members.Remove)))
-	people := &org.People{Pool: pool}
+	people := &org.People{Pool: pool, InternalToken: eventsToken}
+	mux.HandleFunc("GET /internal/people/{org_id}", people.AtLocations)
 	mux.Handle("PATCH /orgs/members/{user_id}", requireAuth(http.HandlerFunc(people.UpdatePerson)))
 	mux.Handle("GET /orgs/me/permissions", requireAuth(http.HandlerFunc(people.MyPermissions)))
 	mux.Handle("GET /orgs/locations", requireAuth(http.HandlerFunc(people.Locations)))
