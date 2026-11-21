@@ -53,4 +53,13 @@ func TestEnforceAccess(t *testing.T) {
 	if got := run(guss, "accounting", http.MethodGet); got != http.StatusForbidden {
 		t.Errorf("no access refuses even GET, got %d", got)
 	}
+	viewer := &auth.Claims{Role: "viewer"}
+	if got := run(viewer, "invoicing", http.MethodGet); got != http.StatusTeapot {
+		t.Errorf("a viewer reads, got %d", got)
+	}
+	for _, m := range []string{http.MethodPost, http.MethodPatch, http.MethodPut, http.MethodDelete} {
+		if got := run(viewer, "invoicing", m); got != http.StatusForbidden {
+			t.Errorf("a viewer can't %s, got %d", m, got)
+		}
+	}
 }
