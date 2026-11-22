@@ -450,7 +450,7 @@ func (h *Handlers) checkPin(w http.ResponseWriter, r *http.Request, deviceID, or
 		} else {
 			tx.Exec(ctx, `UPDATE core.pos_pins SET failed = $3 WHERE org_id = $1 AND user_id::text = $2`, org, userID, failed)
 		}
-		tx.Exec(ctx, `INSERT INTO core.pos_pin_events (org_id, user_id, device_id, kind) VALUES ($1, $2::uuid, $3::uuid, $4)`,
+		tx.Exec(ctx, `INSERT INTO core.pos_pin_events (org_id, user_id, device_id, kind) VALUES ($1, $2::uuid, NULLIF($3, '')::uuid, $4)`,
 			org, userID, deviceID, kind)
 		tx.Commit(ctx)
 		if kind == "locked" {
@@ -467,13 +467,35 @@ func (h *Handlers) checkPin(w http.ResponseWriter, r *http.Request, deviceID, or
 	}
 	tx.Exec(ctx, `UPDATE core.pos_pins SET failed = 0, locked_until = NULL WHERE org_id = $1 AND user_id::text = $2`, org, userID)
 	tx.Exec(ctx, `UPDATE core.pos_devices SET last_used_at = now() WHERE id::text = $1`, deviceID)
-	tx.Exec(ctx, `INSERT INTO core.pos_pin_events (org_id, user_id, device_id, kind) VALUES ($1, $2::uuid, $3::uuid, $4)`,
+	tx.Exec(ctx, `INSERT INTO core.pos_pin_events (org_id, user_id, device_id, kind) VALUES ($1, $2::uuid, NULLIF($3, '')::uuid, $4)`,
 		org, userID, deviceID, event)
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not check the PIN")
 		return "", "", false
 	}
 	return email, role, true
+}
+
+// PosResume (POST /auth/pos/resume, signed in): {"pin"} -> 204 when it is
+// the signed-in cashier's own PIN. The till locks after 5 idle minutes and
+// this lets the same cashier continue; on a till that isn't trusted the
+// session was started with a passkey, so the PIN only resumes it. Wrong
+// tries count towards the same lockout as signing in (plan 20.3).
+func (h *Handlers) PosResume(w http.ResponseWriter, r *http.Request) {
+	claims, ok := FromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "sign in first")
+		return
+	}
+	deviceID, _, _ := h.posDeviceFrom(r) // "" on a till that isn't trusted
+	var req struct {
+		Pin string `json:"pin"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if _, _, ok := h.checkPin(w, r, deviceID, claims.OrgID, claims.Subject, req.Pin, "resumed"); !ok {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // PosApprovalVia marks a till approval: a team leader's or manager's PIN

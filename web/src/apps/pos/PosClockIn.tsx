@@ -1,4 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { IdleLock, IDLE_MS } from "./IdleLock";
+import { fetchMyPermissions, forgetMyPermissions } from "../../lib/permissions";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { useAuth } from "../../lib/auth";
@@ -43,20 +45,73 @@ function PosClockInGate() {
   const [clockedIn, setClockedIn] = useState(
     import.meta.env.DEV && new URLSearchParams(window.location.search).has("preview"),
   );
+  const [refused, setRefused] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
+  const lastActive = useRef(Date.now());
+
+  // Only someone who may sell clocks in at the till (plan 20.3): owners
+  // and managers, and staff with the cashier job. The apps refuse a sale
+  // anyway; this says so at the door. An older kernel that can't answer
+  // lets them in.
+  async function admit() {
+    forgetMyPermissions();
+    const me = await fetchMyPermissions().catch(() => null);
+    if (me && !me.rules["pos.sell"]) {
+      logout();
+      setRefused("Only cashiers can clock in at the till. A manager can tick the cashier job for you in People.");
+      return;
+    }
+    setRefused(null);
+    lastActive.current = Date.now();
+    setClockedIn(true);
+  }
+
+  function clockOut() {
+    logout();
+    setLocked(false);
+    setClockedIn(false);
+  }
+
+  // Idle for IDLE_MS: lock over the open order until the same cashier's PIN.
+  useEffect(() => {
+    if (!clockedIn) return;
+    const seen = () => {
+      lastActive.current = Date.now();
+    };
+    const events = ["pointerdown", "keydown", "touchstart"] as const;
+    events.forEach((e) => window.addEventListener(e, seen, { passive: true }));
+    const t = window.setInterval(() => {
+      if (Date.now() - lastActive.current > IDLE_MS) setLocked(true);
+    }, 15_000);
+    return () => {
+      events.forEach((e) => window.removeEventListener(e, seen));
+      window.clearInterval(t);
+    };
+  }, [clockedIn]);
 
   if (!clockedIn || !session) {
-    return <ClockInScreen onClockedIn={() => setClockedIn(true)} />;
+    return <ClockInScreen onClockedIn={admit} refused={refused} />;
   }
 
   return (
-    <PosTill
-      onClockOut={() => {
-        logout();
-        setClockedIn(false);
-      }}
-      // The next cashier signs in over this one; the till stays as it is.
-      onSwitchCashier={() => setClockedIn(false)}
-    />
+    <>
+      <PosTill
+        onClockOut={clockOut}
+        // One cashier never sells on another's session: switching clocks
+        // this one out first (the open register stays open).
+        onSwitchCashier={clockOut}
+      />
+      {locked ? (
+        <IdleLock
+          email={session.email}
+          onResume={() => {
+            lastActive.current = Date.now();
+            setLocked(false);
+          }}
+          onClockOut={clockOut}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -66,7 +121,7 @@ function PosClockInGate() {
  * cancel) throws the same generic error either way, so there's no
  * reliable signal to branch on automatically; asking is simpler and
  * more honest than guessing. */
-function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
+function ClockInScreen({ onClockedIn, refused }: { onClockedIn: () => void; refused?: string | null }) {
   const { loginWithPasskey, requestPosCode, verifyPosCode, addPasskey } = useAuth();
   const trusted = !!posDeviceToken();
   const [mode, setMode] = useState<"scan" | "new-email" | "new-code" | "pin">(
@@ -155,6 +210,7 @@ function ClockInScreen({ onClockedIn }: { onClockedIn: () => void }) {
       <div className="till-stage-center">
       <div className="till-panel glass" style={{ textAlign: "center", fontSize: 16 }}>
         <p className="till-text" style={{ marginTop: 0 }}>Use this till's fingerprint, face or Windows Hello PIN.</p>
+        {refused ? <div className="error-banner" role="alert">{refused}</div> : null}
         {error ? <div className="error-banner">{error}</div> : null}
 
         {mode === "scan" ? (

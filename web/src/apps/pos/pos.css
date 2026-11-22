@@ -1000,3 +1000,61 @@
     animation: none;
   }
 }
+
+/* The idle lock (IdleLock.tsx): over the open order, the cashier's PIN. */
+.till-lock {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(20, 16, 8, 0.45);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.till-lock-card {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: 24px;
+  border-radius: 20px;
+  background: var(--surface);
+  text-align: center;
+  box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.5);
+}
+.till-lock-dots {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+.till-lock-dots span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--text-muted);
+}
+.till-lock-dots span.on {
+  background: var(--text);
+  border-color: var(--text);
+}
+.till-lock-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.till-lock-pad button {
+  height: 56px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 22px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.till-lock-pad button:focus-visible {
+  outline: 2px solid var(--accent);
+}
