@@ -8,6 +8,8 @@ export interface ExpenseClaim {
   currency: string;
   status: "submitted" | "approved" | "rejected" | "paid";
   receipt_url: string;
+  /** false: the business paid (recorded only). Missing on older Minions = true. */
+  reimburse?: boolean;
   submitted_at: string;
 }
 
@@ -16,6 +18,7 @@ export interface ExpenseClaimCreate {
   amount_cents: number;
   currency?: string;
   receipt_url?: string;
+  reimburse?: boolean;
 }
 
 export const fetchMyExpenseClaims = () => api.get<ExpenseClaim[]>("/api/minions/expense_claims?mine=true");

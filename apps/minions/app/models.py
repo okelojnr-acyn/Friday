@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -64,6 +64,8 @@ class ExpenseClaim(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="submitted")
     receipt_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # True: the person paid and wants it back; False: the business paid.
+    reimburse: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

@@ -69,7 +69,10 @@ export function TeamPage() {
                   <div style={{ fontWeight: 600 }}>
                     {nameOf(c.employee_id)} · {formatMoney(c.amount_cents, { currency: c.currency })}
                   </div>
-                  <div className="field-label">{c.description}</div>
+                  <div className="field-label">
+                    {c.description}
+                    {c.reimburse === false ? " · business paid" : " · pay back"}
+                  </div>
                 </div>
                 <div className="minions-claim-actions">
                   <Button size="sm" disabled={busy === c.id} onClick={() => decide(c, "rejected")}>

@@ -49,6 +49,8 @@ class ExpenseClaimCreate(BaseModel):
     amount_cents: int = Field(gt=0)
     currency: str = "USD"
     receipt_url: str = ""
+    # True: "I paid, pay me back"; False: "the business paid" (recorded, never paid out).
+    reimburse: bool = True
 
 
 class ExpenseClaimStatusUpdate(BaseModel):
@@ -76,6 +78,7 @@ class ExpenseClaimOut(BaseModel):
     currency: str
     status: str
     receipt_url: str
+    reimburse: bool
     submitted_at: datetime
 
     model_config = {"from_attributes": True}

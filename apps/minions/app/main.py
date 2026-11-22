@@ -662,6 +662,8 @@ async def pay_expense_claim(
     claim = await _get_owned_claim(session, principal, claim_id)
     if claim.status != "approved":
         raise HTTPException(400, f"claim is '{claim.status}', not 'approved'")
+    if not claim.reimburse:
+        raise HTTPException(400, "the business paid this one; there's nothing to pay back")
     employee = await _get_owned_employee(session, principal, claim.employee_id)
     if not employee.wallet_address:
         raise HTTPException(400, f"{employee.name} hasn't connected a wallet yet")
