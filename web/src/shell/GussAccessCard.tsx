@@ -139,11 +139,17 @@ function GussApprovals() {
 export function GussAccessCard({ canManage }: { canManage: boolean }) {
   const [data, setData] = useState<GussAccess | null>(null);
   const [draft, setDraft] = useState<Record<string, GussAccessLevel>>({});
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  // Messages show beside the part they belong to, and only the button
+  // that was pressed says it's working (owner: "buttons dim but nothing
+  // says what's happening; errors must show where they belong").
+  type Where = "access" | "telegram";
+  const [error, setError] = useState<{ where: Where; text: string } | null>(null);
+  const [notice, setNotice] = useState<{ where: Where; text: string } | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [key, setKey] = useState<string | null>(null);
+  // After "Link my Telegram": watch for the link to appear.
+  const [waitingFrom, setWaitingFrom] = useState<number | null>(null);
 
   function load() {
     getGussAccess()
@@ -151,31 +157,70 @@ export function GussAccessCard({ canManage }: { canManage: boolean }) {
         setData(d);
         setDraft(d.access);
       })
-      .catch((err) => setError(message(err, "Could not load Guss access")));
+      .catch((err) => setError({ where: "access", text: message(err, "Could not load Guss access") }));
   }
   useEffect(load, []);
+
+  // Poll every 3 s for up to 2 minutes while Telegram is open.
+  const linkCount = data?.links.length ?? 0;
+  useEffect(() => {
+    if (waitingFrom === null) return;
+    if (linkCount > waitingFrom) {
+      setWaitingFrom(null);
+      setNotice({ where: "telegram", text: "Linked: Guss knows your Telegram now" });
+      return;
+    }
+    const started = Date.now();
+    const t = window.setInterval(() => {
+      if (Date.now() - started > 120_000) {
+        window.clearInterval(t);
+        setWaitingFrom(null);
+        setError({ where: "telegram", text: "Not linked yet. Press Start in Guss, or send /link and enter the code below." });
+        return;
+      }
+      load();
+    }, 3000);
+    return () => window.clearInterval(t);
+  }, [waitingFrom, linkCount]);
 
   async function run(
     action: () => Promise<unknown>,
     done: string,
     fallback: string,
+    where: Where = "access",
+    label = "working",
   ) {
-    setBusy(true);
+    setBusy(label);
     setError(null);
     setNotice(null);
     try {
       await action();
-      setNotice(done);
+      if (done) setNotice({ where, text: done });
       load();
     } catch (err) {
-      setError(message(err, fallback));
+      setError({ where, text: message(err, fallback) });
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
+  const messages = (where: Where) => (
+    <>
+      {error?.where === where ? (
+        <div className="error-banner" role="alert" style={{ marginBottom: 10 }}>
+          {error.text}
+        </div>
+      ) : null}
+      {notice?.where === where ? (
+        <div role="status" style={{ marginBottom: 10 }}>
+          <Badge tone="success">{notice.text}</Badge>
+        </div>
+      ) : null}
+    </>
+  );
+
   if (!data) {
-    return error ? <div className="error-banner">{error}</div> : null;
+    return error ? <div className="error-banner">{error.text}</div> : null;
   }
 
   const changed = data.apps.some(
@@ -190,23 +235,14 @@ export function GussAccessCard({ canManage }: { canManage: boolean }) {
         their own Friday role: owners and admins approve voids, members record
         entries.
       </p>
-      {error ? (
-        <div className="error-banner" style={{ marginBottom: 10 }}>
-          {error}
-        </div>
-      ) : null}
-      {notice ? (
-        <div style={{ marginBottom: 10 }}>
-          <Badge tone="success">{notice}</Badge>
-        </div>
-      ) : null}
+      {messages("access")}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         {data.apps.map((app) => (
           <FieldWrap key={app} label={app}>
             <Select
               value={draft[app] ?? "none"}
-              disabled={!canManage || busy}
+              disabled={!canManage || busy !== null}
               onChange={(e) =>
                 setDraft((d) => ({
                   ...d,
@@ -230,7 +266,7 @@ export function GussAccessCard({ canManage }: { canManage: boolean }) {
           <Button
             size="sm"
             variant="primary"
-            disabled={!changed || busy}
+            disabled={!changed || busy !== null}
             onClick={() =>
               run(
                 () => setGussAccess(draft),
@@ -244,7 +280,7 @@ export function GussAccessCard({ canManage }: { canManage: boolean }) {
           <Button
             size="sm"
             variant="secondary"
-            disabled={busy}
+            disabled={busy !== null}
             onClick={() =>
               run(
                 async () => setKey((await newGussServiceKey()).key),
@@ -283,11 +319,17 @@ export function GussAccessCard({ canManage }: { canManage: boolean }) {
         <div style={{ fontWeight: 500, marginBottom: 4 }}>
           Link your Telegram
         </div>
+        {messages("telegram")}
+        {waitingFrom !== null ? (
+          <p className="field-label" role="status" style={{ margin: "0 0 10px" }}>
+            Waiting for you to press Start in Guss on Telegram…
+          </p>
+        ) : null}
         {data.bot_username ? (
           <div style={{ marginBottom: 10 }}>
             <Button
               variant="primary"
-              disabled={busy}
+              disabled={busy !== null}
               onClick={() =>
                 run(
                   async () => {
@@ -298,17 +340,20 @@ export function GussAccessCard({ canManage }: { canManage: boolean }) {
                       const { link } = await gussWebLink();
                       if (tab) tab.location.href = link;
                       else window.location.href = link;
+                      setWaitingFrom(data.links.length);
                     } catch (err) {
                       tab?.close();
                       throw err;
                     }
                   },
-                  "Telegram opened: press Start in Guss to finish linking",
+                  "",
                   "Could not start linking",
+                  "telegram",
+                  "open",
                 )
               }
             >
-              Link my Telegram
+              {busy === "open" ? "Opening Telegram…" : "Link my Telegram"}
             </Button>
             <p className="field-label" style={{ margin: "6px 0 0" }}>
               Opens @{data.bot_username} in Telegram; press Start there and you're linked.
@@ -335,7 +380,7 @@ export function GussAccessCard({ canManage }: { canManage: boolean }) {
           <Button
             size="sm"
             variant="primary"
-            disabled={code.length !== 6 || busy}
+            disabled={code.length !== 6 || busy !== null}
             onClick={() =>
               run(
                 async () => {
@@ -343,11 +388,13 @@ export function GussAccessCard({ canManage }: { canManage: boolean }) {
                   setCode("");
                 },
                 "Telegram linked",
-                "Could not link",
+                "Could not link: check the code (it lasts 30 minutes)",
+                "telegram",
+                "link",
               )
             }
           >
-            Link
+            {busy === "link" ? "Linking…" : "Link"}
           </Button>
         </div>
         {data.links.length > 0 ? (
@@ -380,12 +427,14 @@ export function GussAccessCard({ canManage }: { canManage: boolean }) {
                   <Button
                     size="sm"
                     variant="ghost"
-                    disabled={busy}
+                    disabled={busy !== null}
                     onClick={() =>
                       run(
                         () => unlinkGussTelegram(l.telegram_id),
                         "Unlinked",
                         "Could not unlink",
+                        "telegram",
+                        "unlink",
                       )
                     }
                   >
