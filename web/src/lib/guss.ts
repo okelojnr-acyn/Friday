@@ -22,6 +22,8 @@ export interface GussAccess {
   apps: string[];
   has_service_key: boolean;
   links: GussLink[];
+  /** Guss's Telegram bot, once Guss has reported it ("" before). */
+  bot_username?: string;
 }
 
 /** What Guss may do per app, its key, and linked people
@@ -32,6 +34,8 @@ export const setGussAccess = (access: Record<string, GussAccessLevel>) =>
 export const newGussServiceKey = () => api.post<{ key: string }>("/guss/service-key");
 export const linkGussTelegram = (code: string) =>
   api.post<{ telegram_id: number; telegram_name: string }>("/guss/link", { code });
+/** One tap: a Telegram link that opens Guss and links this account. */
+export const gussWebLink = () => api.post<{ link: string; bot: string }>("/guss/link-code");
 export const unlinkGussTelegram = (telegramId: number) => api.del<void>(`/guss/links/${telegramId}`);
 
 export interface GussVoidRequest {

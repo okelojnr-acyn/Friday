@@ -111,6 +111,48 @@ func TestLinkByCode(t *testing.T) {
 		t.Fatalf("relink: %d %s", c, body)
 	}
 
+	// One tap from Friday: Guss reports its bot, Friday makes the link,
+	// Guss redeems it once.
+	svc := func(path, body string, hf func(http.ResponseWriter, *http.Request)) (int, string) {
+		r := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+		r.Header.Set("Authorization", "Bearer "+key)
+		w := httptest.NewRecorder()
+		hf(w, r)
+		return w.Code, w.Body.String()
+	}
+	webCode := func() (int, string) {
+		r := httptest.NewRequest(http.MethodPost, "/guss/link-code", nil)
+		r = r.WithContext(auth.WithClaims(r.Context(), &auth.Claims{OrgID: orgID, Role: "owner", RegisteredClaims: jwt.RegisteredClaims{Subject: userID}}))
+		w := httptest.NewRecorder()
+		h.WebLinkCode(w, r)
+		return w.Code, w.Body.String()
+	}
+	if c, _ := webCode(); c != http.StatusConflict {
+		t.Fatalf("a link before Guss reported its bot: %d", c)
+	}
+	if c, body := svc("/guss/svc/bot", `{"username": "@DukaGussBot"}`, h.SetBot); c != http.StatusNoContent {
+		t.Fatalf("set bot: %d %s", c, body)
+	}
+	c, body := webCode()
+	var wl struct {
+		Link string `json:"link"`
+	}
+	json.Unmarshal([]byte(body), &wl)
+	if c != 200 || !strings.HasPrefix(wl.Link, "https://t.me/DukaGussBot?start=link-") {
+		t.Fatalf("web link: %d %s", c, body)
+	}
+	tok := strings.TrimPrefix(wl.Link, "https://t.me/DukaGussBot?start=link-")
+	if c, body := svc("/guss/svc/redeem", `{"code": "`+tok+`", "telegram_id": 99, "name": "Fire"}`, h.Redeem); c != 200 || !strings.Contains(body, `"guss_role":"owner"`) {
+		t.Fatalf("redeem: %d %s", c, body)
+	}
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM core.guss_links WHERE org_id = $1 AND telegram_id = 99 AND user_id::text = $2`, orgID, userID).Scan(&linked))
+	if linked != 1 {
+		t.Fatal("not linked by the web code")
+	}
+	if c, _ := svc("/guss/svc/redeem", `{"code": "`+tok+`", "telegram_id": 99, "name": "Fire"}`, h.Redeem); c != http.StatusNotFound {
+		t.Fatalf("a used web code: %d", c)
+	}
+
 	// An expired code says it expired.
 	old := issue(8)
 	_, err = pool.Exec(ctx, `UPDATE core.guss_link_codes SET expires_at = now() - interval '1 minute' WHERE org_id = $1 AND telegram_id = 8`, orgID)
