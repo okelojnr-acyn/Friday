@@ -1,9 +1,15 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError } from "../lib/api";
-import { fetchMyExpenseClaims, submitExpenseClaim, type ExpenseClaim } from "../lib/minions";
+import {
+  fetchMyExpenseClaims,
+  openClaimReceipt,
+  submitExpenseClaim,
+  uploadClaimReceipt,
+  type ExpenseClaim,
+} from "../lib/minions";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
-import { FieldWrap, Input } from "../ui/Field";
+import { FieldWrap, Input, Select } from "../ui/Field";
 import { Badge, statusTone } from "../ui/Badge";
 import { formatMoney } from "../lib/orgSettings";
 
@@ -13,7 +19,10 @@ export function ExpenseClaimsPage() {
 
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
-  const [receiptUrl, setReceiptUrl] = useState("");
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [photoKey, setPhotoKey] = useState(0); // resets the file input
+  // Who paid varies person to person (owner, 2026-11-22), so always ask.
+  const [whoPaid, setWhoPaid] = useState<"" | "me" | "business">("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -29,14 +38,27 @@ export function ExpenseClaimsPage() {
       setError("A description and a positive amount are required");
       return;
     }
+    if (!whoPaid) {
+      setError("Say who paid: you (pay you back) or the business");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      const claim = await submitExpenseClaim({ description: description.trim(), amount_cents: amountCents, receipt_url: receiptUrl.trim() });
+      let claim = await submitExpenseClaim({ description: description.trim(), amount_cents: amountCents, reimburse: whoPaid === "me" });
+      if (photo) {
+        try {
+          claim = await uploadClaimReceipt(claim.id, photo);
+        } catch (err) {
+          setError(`Claim saved, but the receipt didn't upload: ${err instanceof Error ? err.message : "try again"}`);
+        }
+      }
       setClaims((cur) => [claim, ...(cur ?? [])]);
       setDescription("");
       setAmount("");
-      setReceiptUrl("");
+      setPhoto(null);
+      setPhotoKey((k) => k + 1);
+      setWhoPaid("");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not submit claim");
     } finally {
@@ -69,8 +91,24 @@ export function ExpenseClaimsPage() {
               style={{ width: 100 }}
             />
           </FieldWrap>
-          <FieldWrap label="Receipt URL">
-            <Input value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} style={{ width: 200 }} />
+          <FieldWrap label="Who paid?" required>
+            <Select value={whoPaid} onChange={(e) => setWhoPaid(e.target.value as typeof whoPaid)} style={{ width: 210 }}>
+              <option value="" disabled>
+                Choose…
+              </option>
+              <option value="me">I paid, pay me back</option>
+              <option value="business">The business paid</option>
+            </Select>
+          </FieldWrap>
+          <FieldWrap label="Receipt photo">
+            <Input
+              key={photoKey}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
+              style={{ width: 220 }}
+            />
           </FieldWrap>
           <Button type="submit" disabled={submitting}>
             {submitting ? "Submitting..." : "Submit"}
@@ -94,6 +132,15 @@ export function ExpenseClaimsPage() {
               </span>
               <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <span>{formatMoney(c.amount_cents, { currency: c.currency })}</span>
+                <span className="field-label">{c.reimburse === false ? "business paid" : "pay back"}</span>
+                {c.receipt_sha ? (
+                  <Button
+                    variant="ghost"
+                    onClick={() => openClaimReceipt(c.id).catch((err) => setError(err instanceof Error ? err.message : "Could not open the receipt"))}
+                  >
+                    Receipt
+                  </Button>
+                ) : null}
                 <Badge tone={statusTone(c.status)}>{c.status}</Badge>
               </span>
             </div>

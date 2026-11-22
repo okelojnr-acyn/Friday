@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, LargeBinary, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -64,7 +64,23 @@ class ExpenseClaim(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="submitted")
     receipt_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # True: the person paid and wants it back; False: the business paid.
+    reimburse: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # sha of the receipt photo ("" for none); changes when the photo does.
+    receipt_sha: Mapped[str] = mapped_column(Text, nullable=False, default="")
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ClaimReceipt(Base):
+    __tablename__ = "claim_receipts"
+
+    claim_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("expense_claims.id", ondelete="CASCADE"), primary_key=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class PayrollRun(Base):

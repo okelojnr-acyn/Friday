@@ -118,3 +118,43 @@ async def test_pay_expense_claim_calls_acyn_wallet_when_wallet_connected(client,
     assert resp.json()["status"] == "paid"
     assert captured["to_address"] == "0xabc"
     assert captured["amount"] == "25.00"
+
+
+async def test_business_paid_claim_is_recorded_never_paid_out(client, as_principal, principal):
+    admin = _as_admin(as_principal, principal)
+    await client.post("/employees", json={"name": "Jane", "email": principal.email})
+
+    as_principal(principal)
+    mine = (await client.post("/expense_claims", json={"description": "Fuel", "amount_cents": 2500})).json()
+    assert mine["reimburse"] is True  # default: I paid, pay me back
+    biz = (
+        await client.post("/expense_claims", json={"description": "Fuel", "amount_cents": 2500, "reimburse": False})
+    ).json()
+    assert biz["reimburse"] is False
+
+    as_principal(admin)
+    await client.patch(f"/expense_claims/{biz['id']}/status", json={"status": "approved"})
+    resp = await client.post(f"/expense_claims/{biz['id']}/pay")
+    assert resp.status_code == 400 and "business paid" in resp.json()["detail"]
+
+
+async def test_receipt_photo_by_the_claimant_seen_by_approvers(client, as_principal, principal):
+    _as_admin(as_principal, principal)
+    await client.post("/employees", json={"name": "Jane", "email": principal.email})
+
+    as_principal(principal)
+    claim = (await client.post("/expense_claims", json={"description": "Fuel", "amount_cents": 2500})).json()
+    png = b"\x89PNG\r\n\x1a\nfake"
+    bad = await client.put(f"/expense_claims/{claim['id']}/receipt", content=b"x", headers={"content-type": "text/plain"})
+    assert bad.status_code == 415
+    put = await client.put(f"/expense_claims/{claim['id']}/receipt", content=png, headers={"content-type": "image/png"})
+    assert put.status_code == 200 and put.json()["receipt_sha"]
+    mine = await client.get(f"/expense_claims/{claim['id']}/receipt")
+    assert mine.status_code == 200 and mine.content == png
+
+    # An approver (someone else) sees it; only the claimant adds or changes it.
+    admin = make_principal(org_id=principal.org_id, role="admin", email="boss@example.com")
+    as_principal(admin)
+    assert (await client.get(f"/expense_claims/{claim['id']}/receipt")).content == png
+    again = await client.put(f"/expense_claims/{claim['id']}/receipt", content=png, headers={"content-type": "image/png"})
+    assert again.status_code in (403, 404)
