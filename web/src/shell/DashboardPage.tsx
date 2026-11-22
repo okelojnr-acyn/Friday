@@ -17,7 +17,7 @@ const OPEN_RULES: Record<string, string[]> = {
   minions: ["staff.read", "claims.submit"],
 };
 // Where each app opens; the rest open at /<name>.
-const HOME_OF: Record<string, string> = { web3: "/web3/treasury", accounting: "/accounting/reports", minions: "/people" };
+const HOME_OF: Record<string, string> = { web3: "/web3/treasury", minions: "/people" };
 // Daily-work apps first, back-office after; unknown apps go last by name.
 const APP_ORDER = ["crm", "invoicing", "inventory", "projects", "minions", "accounting", "fleets", "web3"];
 const rank = (name: string) => (APP_ORDER.indexOf(name) + 1 || APP_ORDER.length + 1);

@@ -565,6 +565,29 @@
     display: none;
   }
 }
+/* Accounting overview (apps/accounting/OverviewPage.tsx) */
+.books-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-4);
+}
+.books-lines {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+}
+.books-lines li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.books-lines .num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .cell-nowrap {
   white-space: nowrap;
 }

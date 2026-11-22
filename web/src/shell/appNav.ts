@@ -79,7 +79,10 @@ export const APP_NAV: Record<string, AppNav> = {
     app: "accounting",
     label: "Accounting",
     sections: [
-      ["Reports", [{ label: "Reports", to: "/accounting/reports", icon: "trend-up", hint: "Profit & loss, balance sheet and trial balance, from the same books." }]],
+      ["Reports", [
+        { label: "Overview", to: "/accounting", icon: "calculator", hint: "The money you have, who owes you, what you owe, and this month so far." },
+        { label: "Reports", to: "/accounting/reports", icon: "trend-up", hint: "Profit & loss, balance sheet and trial balance, from the same books." },
+      ]],
       ["Books", [
         { label: "Journal entries", to: "/accounting/journal_entry", icon: "ledger", hint: "Sales, payments and payouts post here by themselves; add manual entries for the rest." },
         { label: "Chart of accounts", to: "/accounting/account", icon: "database" },
