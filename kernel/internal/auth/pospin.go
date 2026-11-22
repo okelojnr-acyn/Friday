@@ -393,11 +393,15 @@ func (h *Handlers) PosPinLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Never more than a member: owners', admins' and managers' powers need
-	// their passkey.
+	// their passkey. But they sign in here to sell, so they keep the
+	// cashier job: as plain members without it the till couldn't even
+	// read the shelf (owner, 2026-11-22: "no products, import some").
+	var add []string
 	if role == "owner" || role == "admin" || role == "branch_manager" || role == "team_leader" {
 		role = "member"
+		add = []string{"cashier"}
 	}
-	token, err := h.Issuer.IssueVia(req.UserID, org, role, email, PosVia, posAccess, posPinTokenTTL)
+	token, err := h.Issuer.IssueVia(req.UserID, org, role, email, PosVia, posAccess, posPinTokenTTL, add...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not issue token")
 		return

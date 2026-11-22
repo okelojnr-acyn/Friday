@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"log"
+	"slices"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -81,8 +82,9 @@ func (iss *Issuer) Issue(userID, orgID, role, email string) (string, error) {
 }
 
 // IssueVia issues a short-lived token for userID acting through an
-// assistant (`via`), limited to the apps in access.
-func (iss *Issuer) IssueVia(userID, orgID, role, email, via string, access map[string]string, ttl time.Duration) (string, error) {
+// assistant (`via`), limited to the apps in access. addPerms are jobs the
+// token carries on top of the person's own (a till sign-in sells).
+func (iss *Issuer) IssueVia(userID, orgID, role, email, via string, access map[string]string, ttl time.Duration, addPerms ...string) (string, error) {
 	now := time.Now()
 	if access == nil {
 		access = map[string]string{}
@@ -100,6 +102,11 @@ func (iss *Issuer) IssueVia(userID, orgID, role, email, via string, access map[s
 		},
 	}
 	iss.fill(&claims, userID)
+	for _, p := range addPerms {
+		if !slices.Contains(claims.Perms, p) {
+			claims.Perms = append(claims.Perms, p)
+		}
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(iss.secret)
 }
