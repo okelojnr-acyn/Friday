@@ -38,4 +38,5 @@ async def test_who_reads_and_writes_the_books(client, as_principal, principal):
 
     branch = replace(principal, role="branch_manager", locs=("loc-west",))
     as_principal(branch)
-    assert (await client.get("/reports/profit-and-loss")).status_code == 403  # whole business
+    pnl = await client.get("/reports/profit-and-loss", params={"start_date": "2026-11-01", "end_date": "2026-11-30"})
+    assert pnl.status_code == 403  # whole business
