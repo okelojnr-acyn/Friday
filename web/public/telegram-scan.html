@@ -131,8 +131,8 @@
   }
   document.getElementById("qr").onclick = openQr;
 
-  // The phone's barcode reader (EAN/UPC and QR), where the browser has one
-  // (Android): starts at once and keeps reading.
+  // The barcode reader (EAN/UPC and QR): the browser's own (Android), or
+  // the ZXing one below (iPhone). Starts at once and keeps reading.
   async function startCamera() {
     const video = document.getElementById("video");
     try {
@@ -154,15 +154,28 @@
       note.textContent = "Couldn't open the camera; use Scan QR or type the code.";
     }
   }
-  const hasCamera = "BarcodeDetector" in window && navigator.mediaDevices;
-  if (hasCamera) {
-    const cam = document.getElementById("cam");
-    cam.hidden = false;
-    cam.onclick = () => { if (!stopCamera) startCamera(); };
-    startCamera();
-  } else if (inTelegram) {
-    openQr();
+  // iPhones (and other browsers without a barcode reader) get one built on
+  // ZXing, pinned, loaded only when needed; if it can't load, Telegram's
+  // QR scanner still works.
+  async function readerReady() {
+    if ("BarcodeDetector" in window) return true;
+    try {
+      await import("https://cdn.jsdelivr.net/npm/barcode-detector@3.2.3/polyfill/+esm");
+      return "BarcodeDetector" in window;
+    } catch (e) {
+      return false;
+    }
   }
+  (async () => {
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && (await readerReady())) {
+      const cam = document.getElementById("cam");
+      cam.hidden = false;
+      cam.onclick = () => { if (!stopCamera) startCamera(); };
+      startCamera();
+    } else if (inTelegram) {
+      openQr();
+    }
+  })();
 </script>
 </body>
 </html>
