@@ -15,3 +15,9 @@ CREATE TABLE core.supplier_links (
     revoked_at    TIMESTAMPTZ
 );
 CREATE INDEX supplier_links_org_supplier ON core.supplier_links (org_id, supplier_id);
+
+-- The supplier's email codes: one purpose per link ("supplier:<link id>"),
+-- so a code works only on the link it was asked for.
+ALTER TABLE core.otp_codes DROP CONSTRAINT otp_codes_purpose_check;
+ALTER TABLE core.otp_codes ADD CONSTRAINT otp_codes_purpose_check
+    CHECK (purpose IN ('signup', 'login', 'invite') OR purpose LIKE 'supplier:%');
