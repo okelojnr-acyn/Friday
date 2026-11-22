@@ -4,74 +4,165 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Scan</title>
-<!-- Guss's Telegram scanner (plan 16.3): opened from Guss's "Scan" button,
-     sends the code back to the chat with Telegram.WebApp.sendData. No
+<!-- Guss's Telegram scanner (plan 16.3), opened from Guss's Sell / Stock in /
+     Check buttons (?mode=sell|stock|check). The camera starts at once and
+     keeps scanning: each code is added to a list (the phone buzzes), and
+     Telegram's bottom button sends the batch to the chat with
+     Telegram.WebApp.sendData. Check sends the first code by itself. No
      sign-in here: Guss checks the person's Friday role before using it. -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root { --bg: var(--tg-theme-bg-color, #fff); --fg: var(--tg-theme-text-color, #1c1c1c);
           --btn: var(--tg-theme-button-color, #e07a35); --btn-fg: var(--tg-theme-button-text-color, #fff);
           --hint: var(--tg-theme-hint-color, #777); }
-  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+  body { margin: 0; padding: 12px 16px 24px; background: var(--bg); color: var(--fg);
          font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  button { display: block; width: 100%; padding: 14px; margin: 0 0 12px; border: 0; border-radius: 10px;
-           background: var(--btn); color: var(--btn-fg); font-size: 16px; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  video { width: 100%; max-height: 42vh; object-fit: cover; border-radius: 10px; background: #000; display: none; }
+  button { padding: 12px; border: 0; border-radius: 10px; background: var(--btn); color: var(--btn-fg); font-size: 16px; }
   button.secondary { background: transparent; color: var(--btn); border: 1px solid var(--btn); }
-  video { width: 100%; border-radius: 10px; display: none; margin-bottom: 12px; }
-  form { display: flex; gap: 8px; }
-  input { flex: 1; padding: 12px; font-size: 16px; border-radius: 10px; border: 1px solid var(--hint);
-          background: var(--bg); color: var(--fg); }
-  form button { width: auto; margin: 0; }
-  p { color: var(--hint); font-size: 14px; }
+  .row { display: flex; gap: 8px; margin: 10px 0; }
+  .row > * { flex: 1; }
+  input { padding: 12px; font-size: 16px; border-radius: 10px; border: 1px solid var(--hint); background: var(--bg); color: var(--fg); min-width: 0; }
+  ul { list-style: none; padding: 0; margin: 8px 0; }
+  li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--hint) 30%, transparent); }
+  li code { flex: 1; overflow-wrap: anywhere; }
+  li button { padding: 4px 12px; min-width: 40px; }
+  p { color: var(--hint); font-size: 14px; margin: 6px 0; }
 </style>
 </head>
 <body>
-<button id="qr">Scan a QR code</button>
-<button id="barcode" class="secondary" hidden>Scan a barcode</button>
+<h1 id="title">Scan</h1>
 <video id="video" playsinline muted></video>
-<form id="typed"><input id="code" inputmode="numeric" autocomplete="off" placeholder="…or type the code" aria-label="Code"><button>Send</button></form>
-<p id="note"></p>
+<div class="row">
+  <button id="qr" class="secondary" type="button">Scan QR</button>
+  <button id="cam" class="secondary" type="button" hidden>Camera</button>
+</div>
+<form id="typed" class="row"><input id="code" inputmode="numeric" autocomplete="off" placeholder="…or type the code" aria-label="Code"><button style="flex:0">Add</button></form>
+<p id="note" role="status"></p>
+<ul id="list"></ul>
+<button id="send" type="button" hidden style="width:100%">Send</button>
 <script>
   const tg = window.Telegram && window.Telegram.WebApp;
+  // Opened from a chat keyboard button, Telegram gives no initData, but
+  // sendData works there (and only there): platform tells us we're inside.
+  const inTelegram = !!(tg && tg.platform && tg.platform !== "unknown");
+  const mode = ["sell", "stock", "check"].includes(new URLSearchParams(location.search).get("mode"))
+    ? new URLSearchParams(location.search).get("mode") : "check";
+  const TITLES = { sell: "Scan what you sold", stock: "Scan what came in", check: "Scan to check an item" };
+  document.getElementById("title").textContent = TITLES[mode];
   const note = document.getElementById("note");
-  if (!tg || !tg.initData) note.textContent = "Open this from Guss's Scan button in Telegram.";
+  const listEl = document.getElementById("list");
+  const items = new Map(); // code -> count, in scan order
+  let lastCode = "", lastAt = 0, stopCamera = null, sent = false;
+
   tg && tg.ready();
-  const send = (code) => {
-    code = String(code || "").trim().slice(0, 256);
-    if (!code) return;
-    if (tg && tg.initData) tg.sendData(code); // closes the page; Guss replies in the chat
-    else note.textContent = "Scanned: " + code;
-  };
+  tg && tg.expand();
+  if (!inTelegram) note.textContent = "Open this from Guss's scan buttons in Telegram.";
 
-  document.getElementById("qr").onclick = () => {
-    if (!tg || !tg.showScanQrPopup) { note.textContent = "This Telegram can't scan QR codes; type the code."; return; }
-    tg.showScanQrPopup({ text: "Point at the QR code" }, (text) => { send(text); return true; });
-  };
-
-  // EAN/UPC product barcodes: Telegram's popup reads QR only, so use the
-  // browser's own detector where there is one (Android's in-app browser).
-  if ("BarcodeDetector" in window && navigator.mediaDevices) {
-    const btn = document.getElementById("barcode");
-    btn.hidden = false;
-    btn.onclick = async () => {
-      const video = document.getElementById("video");
-      try {
-        const detector = new BarcodeDetector();
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        video.srcObject = stream; video.style.display = "block"; await video.play();
-        const stop = () => stream.getTracks().forEach((t) => t.stop());
-        const look = async () => {
-          const found = await detector.detect(video).catch(() => []);
-          if (found.length) { stop(); send(found[0].rawValue); } else requestAnimationFrame(look);
-        };
-        look();
-      } catch (e) {
-        note.textContent = "Couldn't open the camera; type the code instead.";
-      }
-    };
+  function buzz() {
+    try { tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred("success"); } catch (e) {}
+    try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
   }
 
-  document.getElementById("typed").onsubmit = (e) => { e.preventDefault(); send(document.getElementById("code").value); };
+  function send() {
+    if (sent || items.size === 0) return;
+    sent = true;
+    if (stopCamera) stopCamera();
+    const data = JSON.stringify({ m: mode, c: [...items].map(([c, n]) => [c, n]) });
+    if (inTelegram) tg.sendData(data.slice(0, 4096)); // closes the page; Guss replies in the chat
+    else { note.textContent = "Would send: " + data; sent = false; }
+  }
+
+  function render() {
+    listEl.innerHTML = "";
+    for (const [code, n] of items) {
+      const li = document.createElement("li");
+      const c = document.createElement("code"); c.textContent = code;
+      const minus = document.createElement("button"); minus.type = "button"; minus.className = "secondary"; minus.textContent = "−";
+      minus.setAttribute("aria-label", "One less " + code);
+      minus.onclick = () => { n > 1 ? items.set(code, n - 1) : items.delete(code); render(); };
+      const count = document.createElement("b"); count.textContent = "× " + n;
+      const plus = document.createElement("button"); plus.type = "button"; plus.className = "secondary"; plus.textContent = "+";
+      plus.setAttribute("aria-label", "One more " + code);
+      plus.onclick = () => { items.set(code, n + 1); render(); };
+      li.append(c, minus, count, plus);
+      listEl.append(li);
+    }
+    const total = [...items.values()].reduce((a, b) => a + b, 0);
+    const label = total ? `Send ${total} item${total === 1 ? "" : "s"} to Guss` : "";
+    const pageBtn = document.getElementById("send");
+    if (inTelegram && tg.MainButton) {
+      if (total) { tg.MainButton.setText(label); tg.MainButton.show(); } else tg.MainButton.hide();
+    } else { pageBtn.hidden = !total; pageBtn.textContent = label; }
+  }
+
+  // One code read (camera, QR popup or typed). The same code again within
+  // 1.5 s is the camera seeing it twice, not a second item.
+  function add(code) {
+    code = String(code || "").trim().slice(0, 128);
+    if (!code || sent) return;
+    const now = Date.now();
+    if (code === lastCode && now - lastAt < 1500) return;
+    lastCode = code; lastAt = now;
+    items.set(code, (items.get(code) || 0) + 1);
+    buzz();
+    render();
+    if (mode === "check") send();
+  }
+
+  if (inTelegram && tg.MainButton) tg.MainButton.onClick(send);
+  document.getElementById("send").onclick = send;
+  document.getElementById("typed").onsubmit = (e) => {
+    e.preventDefault();
+    const input = document.getElementById("code");
+    lastCode = ""; add(input.value); input.value = "";
+  };
+
+  // Telegram's own scanner: QR codes; stays open for a batch (returning
+  // false keeps it up) until the person closes it.
+  function openQr() {
+    if (!tg || !tg.showScanQrPopup) { note.textContent = "This Telegram can't scan QR codes; type the code."; return; }
+    if (stopCamera) stopCamera();
+    tg.showScanQrPopup({ text: mode === "check" ? "Point at the code" : "Keep scanning; close when done" }, (text) => {
+      add(text);
+      return mode === "check";
+    });
+  }
+  document.getElementById("qr").onclick = openQr;
+
+  // The phone's barcode reader (EAN/UPC and QR), where the browser has one
+  // (Android): starts at once and keeps reading.
+  async function startCamera() {
+    const video = document.getElementById("video");
+    try {
+      const formats = await BarcodeDetector.getSupportedFormats();
+      const detector = new BarcodeDetector({ formats });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      video.srcObject = stream; video.style.display = "block"; await video.play();
+      let running = true;
+      stopCamera = () => { running = false; stream.getTracks().forEach((t) => t.stop()); video.style.display = "none"; stopCamera = null; };
+      const look = async () => {
+        if (!running) return;
+        const found = await detector.detect(video).catch(() => []);
+        if (found.length) add(found[0].rawValue);
+        setTimeout(look, 150);
+      };
+      look();
+      note.textContent = mode === "check" ? "Point at the barcode." : "Keep scanning. Tap Send when done.";
+    } catch (e) {
+      note.textContent = "Couldn't open the camera; use Scan QR or type the code.";
+    }
+  }
+  const hasCamera = "BarcodeDetector" in window && navigator.mediaDevices;
+  if (hasCamera) {
+    const cam = document.getElementById("cam");
+    cam.hidden = false;
+    cam.onclick = () => { if (!stopCamera) startCamera(); };
+    startCamera();
+  } else if (inTelegram) {
+    openQr();
+  }
 </script>
 </body>
 </html>
