@@ -45,7 +45,8 @@ type Issuer struct {
 // fill adds the person's scope to claims. If it can't be loaded the token
 // carries no permissions and no locations, so it opens less, never more.
 func (iss *Issuer) fill(c *Claims, userID string) {
-	if iss.Scope == nil {
+	// Suppliers aren't members: no permissions, locations or team.
+	if iss.Scope == nil || c.Via == SupplierVia {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

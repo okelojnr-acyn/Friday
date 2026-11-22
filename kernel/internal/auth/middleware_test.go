@@ -34,3 +34,26 @@ func TestAssistantTokensOnlyReachAppRoutes(t *testing.T) {
 		t.Fatalf("claims round trip: %+v %v", claims, err)
 	}
 }
+
+func TestSupplierSessionsOnlyReachTheirPurchaseOrders(t *testing.T) {
+	iss := NewIssuer("secret", time.Hour)
+	token, err := iss.IssueVia("supplier:s1", "o1", SupplierVia, "s@x.co", SupplierVia, map[string]string{"inventory": "write"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	for path, want := range map[string]int{
+		"/api/inventory/supplier/purchase_orders": http.StatusTeapot,
+		"/api/inventory/products":                 http.StatusForbidden,
+		"/api/invoicing/invoices":                 http.StatusForbidden,
+		"/auth/me":                                http.StatusForbidden,
+	} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		RequireAuth(iss)(next).ServeHTTP(w, r)
+		if w.Code != want {
+			t.Errorf("%s: got %d, want %d", path, w.Code, want)
+		}
+	}
+}

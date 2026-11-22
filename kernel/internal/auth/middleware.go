@@ -24,6 +24,12 @@ func RequireAuth(issuer *Issuer) func(http.Handler) http.Handler {
 				writeError(w, http.StatusUnauthorized, "invalid token: "+err.Error())
 				return
 			}
+			// A supplier reaches only Inventory's supplier routes (their own
+			// purchase orders), nothing else in Friday.
+			if claims.Via == SupplierVia && !strings.HasPrefix(r.URL.Path, "/api/inventory/supplier/") {
+				writeError(w, http.StatusForbidden, "a supplier sign-in only reaches your purchase orders")
+				return
+			}
 			// An assistant's token works on app routes only, never on the
 			// kernel's own (members, roles, integrations, passkeys).
 			if claims.Via != "" && !strings.HasPrefix(r.URL.Path, "/api/") && !posKernelRoute(claims.Via, r) {

@@ -1,3 +1,4 @@
+import { SupplierPage } from "./shell/SupplierPage";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider } from "./lib/auth";
 import { OrgSettingsProvider } from "./lib/orgSettings";
@@ -35,6 +36,7 @@ export default function App() {
     <AuthProvider>
       <OrgSettingsProvider>
       <Routes>
+        <Route path="/supplier" element={<SupplierPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/join" element={<AcceptInvitePage />} />

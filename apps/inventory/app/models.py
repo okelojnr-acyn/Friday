@@ -212,6 +212,12 @@ class PurchaseOrder(Base):
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     paid_method: Mapped[str] = mapped_column(Text, nullable=False, default="")
     paid_reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The supplier page (0016): "", "acknowledged" or "dispatched", their
+    # note, and the sha of the invoice file they added ("" for none).
+    supplier_status: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    supplier_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    supplier_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    invoice_file_sha: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -250,3 +256,17 @@ class PurchaseOrderLine(Base):
     @property
     def total_cost_cents(self) -> int:
         return int((Decimal(self.quantity) * self.unit_cost_cents).to_integral_value())
+
+
+class PoInvoiceFile(Base):
+    """The supplier's invoice for a purchase order (0016)."""
+
+    __tablename__ = "po_invoice_files"
+
+    po_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("purchase_orders.id", ondelete="CASCADE"), primary_key=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
