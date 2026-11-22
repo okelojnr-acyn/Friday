@@ -68,6 +68,8 @@ class Invoice(Base):
     stripe_payment_intent_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # The store or warehouse the sale was made at (0017, from its till).
     location_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # A staff return's approver (0018): their user id; "" when not needed.
+    approved_by: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # The latest Paystack checkout's reference (0016), so a till's poll can
     # verify it even when the webhook never arrives (see paystack_pay.py).
     paystack_reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
