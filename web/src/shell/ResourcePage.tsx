@@ -23,6 +23,7 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
   const app = appProp ?? params.app ?? "";
   const resource = params.resource ?? "";
   const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
   const [schema, setSchema] = useState<ResourceSpec[] | null>(null);
   const [records, setRecords] = useState<RecordRow[] | null>(null);
@@ -53,6 +54,7 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
   useEffect(() => {
     setEditing(null);
     setQuery("");
+    setStatus(null);
   }, [app, resource]);
 
   const spec = useMemo(() => schema?.find((s) => s.name === resource) ?? null, [schema, resource]);
@@ -77,15 +79,20 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
     return null;
   }, [spec, searchParams]);
 
+  // Status tabs with counts, as Xero, QuickBooks, Zendesk and Linear open
+  // their lists (All · Draft · Sent · Paid …), from the status/stage field.
+  const statusField = spec?.fields.find((f) => (f.name === "status" || f.name === "stage") && f.type === "select" && f.options?.length) ?? null;
+
   const visibleRecords = useMemo(() => {
     if (!records) return records;
     const q = query.trim().toLowerCase();
     return records.filter(
       (r) =>
         (!activeFilter || r[activeFilter.field.name] === activeFilter.value) &&
+        (!status || !statusField || r[statusField.name] === status) &&
         (!q || Object.values(r).some((v) => typeof v === "string" && v.toLowerCase().includes(q))),
     );
-  }, [records, activeFilter, query]);
+  }, [records, activeFilter, query, status, statusField]);
 
   if (error) return <div className="page error-banner">{error}</div>;
   if (!schema) return <div className="page spinner">Loading...</div>;
@@ -181,6 +188,28 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
       </div>
 
       {error ? <div className="error-banner" style={{ marginBottom: 16 }}>{error}</div> : null}
+
+      {statusField && records && view !== "kanban" ? (
+        <div className="status-tabs" role="tablist" aria-label={statusField.label}>
+          {[null, ...(statusField.options ?? [])].map((opt) => {
+            const n = opt === null ? records.length : records.filter((r) => r[statusField.name] === opt).length;
+            if (opt !== null && n === 0) return null;
+            return (
+              <button
+                key={opt ?? "all"}
+                type="button"
+                role="tab"
+                aria-selected={status === opt}
+                className={`status-tab${status === opt ? " active" : ""}`}
+                onClick={() => setStatus(opt)}
+              >
+                {opt === null ? "All" : opt.charAt(0).toUpperCase() + opt.slice(1).replace(/_/g, " ")}
+                <span className="status-tab-count">{n}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       {!visibleRecords ? (
         <div className="spinner">Loading...</div>
