@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, LONG } from "./api";
 import type { ResourceSpec } from "./types";
 
-export const fetchSchema = (app: string) => api.get<ResourceSpec[]>(`/api/${app}/schema`);
+export const fetchSchema = (app: string) => api.cached<ResourceSpec[]>(`/api/${app}/schema`, LONG);
