@@ -12,9 +12,13 @@ export interface PosSale {
 
 export const fetchPosSale = (number: string) => api.get<PosSale>(`/api/invoicing/pos/sales/${number}`);
 
-export const returnPosSale = (number: string, shiftId?: string) =>
+/** `approval`: a team leader's or manager's PIN approval (approveAtTill),
+ * needed when staff take a return (the API answers 428 without one). */
+export const returnPosSale = (number: string, shiftId?: string, approval?: string) =>
   api.post<PosSale>(
     `/api/invoicing/pos/sales/${encodeURIComponent(number)}/return${shiftId ? `?shift_id=${encodeURIComponent(shiftId)}` : ""}`,
+    undefined,
+    approval ? { "X-Friday-Approval": approval } : undefined,
   );
 
 /** Starts a real Pesapal checkout for the built sale payload (same shape

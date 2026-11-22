@@ -17,11 +17,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+
+import jwt
 from pathlib import Path
 
 from fastapi import Depends, HTTPException, status
 
 from .auth import ROLE_RANK, Principal, get_current_principal
+from .settings import get_settings
 
 RULES: dict[str, dict[str, str]] = {
     k: v
@@ -178,3 +181,37 @@ def require(rule: str):
         return scope
 
     return _check
+
+
+APPROVAL_HEADER = "X-Friday-Approval"
+APPROVERS = ("owner", "admin", "branch_manager", "team_leader")
+
+
+def check_approval(token: str | None, principal: Principal, *, amount_cents: int, location_id: str | None) -> str:
+    """A staff action someone over them approved at the till (the kernel's
+    POST /auth/pos/approve: a team leader's or manager's PIN, two minutes).
+    The approver is someone else, over this person (their team, or the
+    place) and within their limit. Returns the approver's user id; 428
+    asks for an approval, 403 says why this one won't do."""
+    if not token:
+        raise HTTPException(status.HTTP_428_PRECONDITION_REQUIRED, "a team leader's or manager's approval is needed")
+    settings = get_settings()
+    try:
+        c = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except jwt.PyJWTError:
+        raise HTTPException(status.HTTP_428_PRECONDITION_REQUIRED, "the approval ran out; approve again") from None
+    role = c.get("role", "")
+    if c.get("via") != "pos-approval" or c.get("org_id") != principal.org_id or role not in APPROVERS:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "that isn't an approval from this business")
+    if c.get("sub") == principal.user_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "someone else approves your return")
+    if role == "team_leader" and principal.user_id not in (c.get("team") or ()):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "you aren't in that team leader's team; ask your own, or a manager")
+    if role == "branch_manager" and "*" not in (c.get("locs") or ()) and str(location_id) not in (c.get("locs") or ()):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "that manager isn't over this location")
+    limit = APPROVAL_LIMIT_CENTS.get(role)
+    if limit is not None and amount_cents > limit:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, f"above {ROLE_NAMES.get(role, role)}'s limit ({limit // 100:,}); ask {who_can('pos.sell', role)}"
+        )
+    return str(c.get("sub"))

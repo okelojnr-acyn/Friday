@@ -5,7 +5,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from datetime import UTC, date, datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from friday_common.importer import ImportField, ImportTarget, import_router
 from friday_common import (
     FieldSpec,
@@ -56,7 +56,7 @@ from .schemas import (
     QuoteCreate,
     QuoteStatusUpdate,
 )
-from friday_common.access import Scope, require, scope_for
+from friday_common.access import APPROVAL_HEADER, Scope, check_approval, require, scope_for
 from friday_common.etims import normalize_pin
 from friday_common.etims.kernel import get_etims_config
 
@@ -1095,6 +1095,7 @@ async def get_pos_sale(
 @pos_router.post("/sales/{number}/return", response_model=InvoiceOut, status_code=201)
 async def return_pos_sale(
     number: str,
+    request: Request,
     shift_id: uuid.UUID | None = None,
     body: dict | None = None,
     principal: Principal = Depends(get_current_principal),
@@ -1110,9 +1111,18 @@ async def return_pos_sale(
     makes Inventory's existing pos_sale_recorded webhook restock
     automatically -- zero Inventory code needed for returns."""
     original = await _get_pos_sale(session, principal, number)
-    # shortcut: any cashier at the sale's location may take a return; plan
-    # 12.2 wants a team leader's approval for staff (with section 16.4).
     at_place(scope, original.location_id, "that sale")
+    # Staff need a team leader's or manager's PIN at the till (plan 12.2),
+    # within their limit; the whole sale's total is the most it can be.
+    approved_by = None
+    if principal.role == "member":
+        await session.refresh(original, attribute_names=["lines"])
+        approved_by = check_approval(
+            request.headers.get(APPROVAL_HEADER),
+            principal,
+            amount_cents=original.grand_total_cents,
+            location_id=str(original.location_id) if original.location_id else None,
+        )
     # Sent again with the same client_return_id (a retry whose reply was
     # lost): the refund it made, never a second one. The refund's Payment
     # carries the id.
@@ -1178,6 +1188,7 @@ async def return_pos_sale(
         cashier_email=principal.email,
         pos_shift_id=await shift_for_sale(session, principal, shift_id),
         location_id=original.location_id,
+        approved_by=approved_by or "",
         issued_at=now,
         created_at=now,
         updated_at=now,

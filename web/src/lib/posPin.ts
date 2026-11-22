@@ -89,6 +89,11 @@ export const pinLogin = (userId: string, pin: string) =>
     { method: "POST", body: JSON.stringify({ user_id: userId, pin }) },
   );
 
+/** A team leader's or manager's PIN on this trusted till approving one
+ * staff action (a return), for two minutes. */
+export const approveAtTill = (userId: string, pin: string) =>
+  deviceFetch<{ approval: string }>("/auth/pos/approve", { method: "POST", body: JSON.stringify({ user_id: userId, pin }) });
+
 export async function trustThisTill(name: string): Promise<PosDevice> {
   const d = await api.post<PosDevice & { token: string }>("/pos/devices", { name });
   setPosDeviceToken(d.token, d.id);

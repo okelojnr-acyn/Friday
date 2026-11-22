@@ -187,3 +187,69 @@ func TestCashierPin(t *testing.T) {
 		t.Fatalf("activity: %v", kinds)
 	}
 }
+
+// A team leader's PIN on a trusted till approves one staff return (plan
+// 12.2): a short, signed approval that opens nothing by itself.
+func TestTillApproval(t *testing.T) {
+	pool := testPool(t)
+	h := testHandlers(t, pool)
+	h.Issuer = NewIssuer("test-secret-test-secret-test-secret", time.Hour)
+	ctx := context.Background()
+	orgID := newOrg(t, pool)
+	ownerEmail := "owner-" + randHex(4) + "@example.com"
+	ownerID, err := h.joinOrg(ctx, ownerEmail, "Owner", orgID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := claimsFor(ownerID, orgID, ownerEmail)
+	person := func(role, pin string) string {
+		email := role + "-" + randHex(4) + "@example.com"
+		id, err := h.joinOrg(ctx, email, role, orgID, role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := &Claims{OrgID: orgID, Role: role, Email: email}
+		c.Subject = id
+		if w := doJSON(t, h.SetPosPin, "PUT", "/pos/pin", c, nil, map[string]string{"pin": pin}, nil); w.Code != 204 {
+			t.Fatalf("PIN for %s: %d %s", role, w.Code, w.Body)
+		}
+		return id
+	}
+	leader := person("team_leader", "591738")
+	cashier := person("member", "482913")
+	w := doJSON(t, h.EnrolPosDevice, "POST", "/pos/devices", owner, nil, map[string]string{"name": "Till 1"}, nil)
+	var dev struct{ ID, Token string }
+	json.Unmarshal(w.Body.Bytes(), &dev)
+
+	approve := func(device, userID, pin string) *httptest.ResponseRecorder {
+		return doJSON(t, h.PosApprove, "POST", "/auth/pos/approve", nil, map[string]string{PosDeviceHeader: device}, map[string]string{"user_id": userID, "pin": pin}, nil)
+	}
+	if w := approve("", leader, "591738"); w.Code != 403 {
+		t.Fatalf("untrusted till: %d", w.Code)
+	}
+	if w := approve(dev.Token, cashier, "482913"); w.Code != 403 {
+		t.Fatalf("a cashier approving: %d", w.Code)
+	}
+	if w := approve(dev.Token, leader, "000000"); w.Code != 401 {
+		t.Fatalf("wrong PIN: %d", w.Code)
+	}
+	w = approve(dev.Token, leader, "591738")
+	var out struct {
+		Approval string `json:"approval"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if w.Code != 200 {
+		t.Fatalf("approve: %d %s", w.Code, w.Body)
+	}
+	c, err := h.Issuer.Verify(out.Approval)
+	if err != nil || c.Via != PosApprovalVia || c.Subject != leader || c.Role != "team_leader" || len(c.Access) != 0 {
+		t.Fatalf("approval claims: %+v %v", c, err)
+	}
+	if c.ExpiresAt == nil || time.Until(c.ExpiresAt.Time) > 2*time.Minute {
+		t.Fatalf("approval lasts too long: %v", c.ExpiresAt)
+	}
+	var kind string
+	if err := pool.QueryRow(ctx, `SELECT kind FROM core.pos_pin_events WHERE org_id = $1 AND user_id::text = $2 ORDER BY created_at DESC LIMIT 1`, orgID, leader).Scan(&kind); err != nil || kind != "approved" {
+		t.Fatalf("event: %q %v", kind, err)
+	}
+}

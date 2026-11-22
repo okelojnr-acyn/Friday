@@ -378,7 +378,6 @@ func (h *Handlers) PosCashiers(w http.ResponseWriter, r *http.Request) {
 
 // PosPinLogin signs a cashier in with their PIN on an enrolled till.
 func (h *Handlers) PosPinLogin(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	deviceID, org, err := h.posDeviceFrom(r)
 	if err != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "this till isn't trusted for PIN sign-in; a manager can trust it in POS settings", "code": "device_not_enrolled"})
@@ -389,65 +388,8 @@ func (h *Handlers) PosPinLogin(w http.ResponseWriter, r *http.Request) {
 		Pin    string `json:"pin"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
-
-	tx, err := h.Pool.Begin(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not sign in")
-		return
-	}
-	defer tx.Rollback(ctx)
-	var salt, hash []byte
-	var failed int
-	var lockedUntil *time.Time
-	var email, role string
-	err = tx.QueryRow(ctx, `
-		SELECT p.salt, p.hash, p.failed, p.locked_until, u.email, m.role
-		FROM core.pos_pins p JOIN core.users u ON u.id = p.user_id
-		JOIN core.memberships m ON m.org_id = p.org_id AND m.user_id = p.user_id
-		WHERE p.org_id = $1 AND p.user_id::text = $2 FOR UPDATE OF p`, org, req.UserID,
-	).Scan(&salt, &hash, &failed, &lockedUntil, &email, &role)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "wrong PIN")
-		return
-	}
-	if lockedUntil != nil && lockedUntil.After(time.Now()) {
-		writeJSON(w, http.StatusLocked, map[string]string{
-			"error": "too many wrong PINs; ask a manager to unlock it, or try again after " + lockedUntil.Format("15:04"),
-			"code":  "pin_locked",
-		})
-		return
-	}
-	if subtle.ConstantTimeCompare(hashPin(req.Pin, salt), hash) != 1 {
-		failed++
-		kind := "wrong_pin"
-		if failed >= posPinMaxFailed {
-			tx.Exec(ctx, `UPDATE core.pos_pins SET failed = 0, locked_until = now() + make_interval(secs => $3)
-				WHERE org_id = $1 AND user_id::text = $2`, org, req.UserID, posPinLockFor.Seconds())
-			kind = "locked"
-		} else {
-			tx.Exec(ctx, `UPDATE core.pos_pins SET failed = $3 WHERE org_id = $1 AND user_id::text = $2`, org, req.UserID, failed)
-		}
-		tx.Exec(ctx, `INSERT INTO core.pos_pin_events (org_id, user_id, device_id, kind) VALUES ($1, $2::uuid, $3::uuid, $4)`,
-			org, req.UserID, deviceID, kind)
-		tx.Commit(ctx)
-		if kind == "locked" {
-			writeJSON(w, http.StatusLocked, map[string]string{
-				"error": "too many wrong PINs; locked for 15 minutes or until a manager unlocks it",
-				"code":  "pin_locked",
-			})
-			return
-		}
-		writeJSON(w, http.StatusUnauthorized, map[string]any{
-			"error": "wrong PIN", "code": "wrong_pin", "tries_left": posPinMaxFailed - failed,
-		})
-		return
-	}
-	tx.Exec(ctx, `UPDATE core.pos_pins SET failed = 0, locked_until = NULL WHERE org_id = $1 AND user_id::text = $2`, org, req.UserID)
-	tx.Exec(ctx, `UPDATE core.pos_devices SET last_used_at = now() WHERE id::text = $1`, deviceID)
-	tx.Exec(ctx, `INSERT INTO core.pos_pin_events (org_id, user_id, device_id, kind) VALUES ($1, $2::uuid, $3::uuid, 'signin')`,
-		org, req.UserID, deviceID)
-	if err := tx.Commit(ctx); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not sign in")
+	email, role, ok := h.checkPin(w, r, deviceID, org, req.UserID, req.Pin, "signin")
+	if !ok {
 		return
 	}
 	// Never more than a member: owners', admins' and managers' powers need
@@ -462,3 +404,112 @@ func (h *Handlers) PosPinLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, authResponse{Token: token, OrgID: org, Role: role, Email: email})
 }
+
+// checkPin checks userID's PIN on enrolled till deviceID, locking it after
+// too many wrong tries, and records `event` when it's right. On a wrong or
+// locked PIN it has already answered.
+func (h *Handlers) checkPin(w http.ResponseWriter, r *http.Request, deviceID, org, userID, pin, event string) (email, role string, ok bool) {
+	ctx := r.Context()
+	tx, err := h.Pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not check the PIN")
+		return "", "", false
+	}
+	defer tx.Rollback(ctx)
+	var salt, hash []byte
+	var failed int
+	var lockedUntil *time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT p.salt, p.hash, p.failed, p.locked_until, u.email, m.role
+		FROM core.pos_pins p JOIN core.users u ON u.id = p.user_id
+		JOIN core.memberships m ON m.org_id = p.org_id AND m.user_id = p.user_id
+		WHERE p.org_id = $1 AND p.user_id::text = $2 FOR UPDATE OF p`, org, userID,
+	).Scan(&salt, &hash, &failed, &lockedUntil, &email, &role)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "wrong PIN")
+		return "", "", false
+	}
+	if lockedUntil != nil && lockedUntil.After(time.Now()) {
+		writeJSON(w, http.StatusLocked, map[string]string{
+			"error": "too many wrong PINs; ask a manager to unlock it, or try again after " + lockedUntil.Format("15:04"),
+			"code":  "pin_locked",
+		})
+		return "", "", false
+	}
+	if subtle.ConstantTimeCompare(hashPin(pin, salt), hash) != 1 {
+		failed++
+		kind := "wrong_pin"
+		if failed >= posPinMaxFailed {
+			tx.Exec(ctx, `UPDATE core.pos_pins SET failed = 0, locked_until = now() + make_interval(secs => $3)
+				WHERE org_id = $1 AND user_id::text = $2`, org, userID, posPinLockFor.Seconds())
+			kind = "locked"
+		} else {
+			tx.Exec(ctx, `UPDATE core.pos_pins SET failed = $3 WHERE org_id = $1 AND user_id::text = $2`, org, userID, failed)
+		}
+		tx.Exec(ctx, `INSERT INTO core.pos_pin_events (org_id, user_id, device_id, kind) VALUES ($1, $2::uuid, $3::uuid, $4)`,
+			org, userID, deviceID, kind)
+		tx.Commit(ctx)
+		if kind == "locked" {
+			writeJSON(w, http.StatusLocked, map[string]string{
+				"error": "too many wrong PINs; locked for 15 minutes or until a manager unlocks it",
+				"code":  "pin_locked",
+			})
+			return "", "", false
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error": "wrong PIN", "code": "wrong_pin", "tries_left": posPinMaxFailed - failed,
+		})
+		return "", "", false
+	}
+	tx.Exec(ctx, `UPDATE core.pos_pins SET failed = 0, locked_until = NULL WHERE org_id = $1 AND user_id::text = $2`, org, userID)
+	tx.Exec(ctx, `UPDATE core.pos_devices SET last_used_at = now() WHERE id::text = $1`, deviceID)
+	tx.Exec(ctx, `INSERT INTO core.pos_pin_events (org_id, user_id, device_id, kind) VALUES ($1, $2::uuid, $3::uuid, $4)`,
+		org, userID, deviceID, event)
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not check the PIN")
+		return "", "", false
+	}
+	return email, role, true
+}
+
+// PosApprovalVia marks a till approval: a team leader's or manager's PIN
+// approving one staff action (a return) at the till, for two minutes. It
+// reaches no app on its own (no access); apps check it as a second token.
+const PosApprovalVia = "pos-approval"
+
+// PosApprove (POST /auth/pos/approve, enrolled till): {"user_id", "pin"}
+// from a team leader or manager -> {"approval"}, signed and short.
+func (h *Handlers) PosApprove(w http.ResponseWriter, r *http.Request) {
+	deviceID, org, err := h.posDeviceFrom(r)
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "this till isn't trusted for PINs; a manager can trust it in POS settings", "code": "device_not_enrolled"})
+		return
+	}
+	var req struct {
+		UserID string `json:"user_id"`
+		Pin    string `json:"pin"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.UserID == "" {
+		writeError(w, http.StatusBadRequest, "choose who approves")
+		return
+	}
+	var role string
+	h.Pool.QueryRow(r.Context(), `SELECT role FROM core.memberships WHERE org_id = $1 AND user_id::text = $2`, org, req.UserID).Scan(&role)
+	if role != "owner" && role != "admin" && role != "branch_manager" && role != "team_leader" {
+		writeError(w, http.StatusForbidden, "only a team leader or a manager can approve")
+		return
+	}
+	email, role, ok := h.checkPin(w, r, deviceID, org, req.UserID, req.Pin, "approved")
+	if !ok {
+		return
+	}
+	token, err := h.Issuer.IssueVia(req.UserID, org, role, email, PosApprovalVia, map[string]string{}, posApprovalTTL)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not issue the approval")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"approval": token, "expires_in": int(posApprovalTTL.Seconds())})
+}
+
+const posApprovalTTL = 2 * time.Minute

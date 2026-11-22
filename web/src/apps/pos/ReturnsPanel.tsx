@@ -2,7 +2,8 @@ import { useState } from "react";
 import { ApiError } from "../../lib/api";
 import { fetchPosSale, returnPosSale, type PosSale } from "../../lib/pos";
 import { Button } from "../../ui/Button";
-import { Input } from "../../ui/Field";
+import { Input, Select } from "../../ui/Field";
+import { approveAtTill, listPosCashiers, posDeviceToken, type PosCashier } from "../../lib/posPin";
 import { Icon } from "../../ui/Icon";
 import { Modal } from "../../ui/Modal";
 import { api } from "../../lib/api";
@@ -107,15 +108,43 @@ export function ReturnsPanel({ onClose, shiftId }: ReturnsPanelProps) {
     }
   }
 
-  async function refund() {
+  // Staff returns need a team leader's or manager's PIN on this till.
+  const [approvers, setApprovers] = useState<PosCashier[] | null>(null);
+  const [approver, setApprover] = useState("");
+  const [approverPin, setApproverPin] = useState("");
+
+  async function refund(approval?: string) {
     if (!sale) return;
     setLoading(true);
     setError(null);
     try {
-      setRefunded(await returnPosSale(sale.number, shiftId));
+      setRefunded(await returnPosSale(sale.number, shiftId, approval));
+      setApprovers(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not refund that sale");
+      if (err instanceof ApiError && err.status === 428) {
+        if (!posDeviceToken()) {
+          setError("A team leader or manager approves staff returns with their PIN on a trusted till, or signs in and takes it.");
+        } else {
+          setError(err.message);
+          setApprovers(await listPosCashiers().catch(() => []));
+        }
+      } else {
+        setError(err instanceof ApiError ? err.message : "Could not refund that sale");
+      }
     } finally {
+      setLoading(false);
+    }
+  }
+
+  async function approveAndRefund() {
+    setLoading(true);
+    setError(null);
+    try {
+      const { approval } = await approveAtTill(approver, approverPin);
+      setApproverPin("");
+      await refund(approval);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not approve");
       setLoading(false);
     }
   }
@@ -157,10 +186,37 @@ export function ReturnsPanel({ onClose, shiftId }: ReturnsPanelProps) {
               This sale is already void.
             </div>
           ) : (
-            <Button type="button" variant="danger" onClick={refund} disabled={loading} style={{ marginTop: 8 }}>
+            <Button type="button" variant="danger" onClick={() => refund()} disabled={loading} style={{ marginTop: 8 }}>
               <Icon name="history" size={14} /> Refund in full
             </Button>
           )}
+          {approvers && !refunded ? (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
+              <Select value={approver} onChange={(e) => setApprover(e.target.value)} aria-label="Who approves" style={{ minWidth: 180 }}>
+                <option value="" disabled>
+                  Team leader or manager…
+                </option>
+                {approvers.map((p) => (
+                  <option key={p.user_id} value={p.user_id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+              <Input
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="Their PIN"
+                aria-label="Approver's PIN"
+                value={approverPin}
+                onChange={(e) => setApproverPin(e.target.value)}
+                style={{ width: 120 }}
+              />
+              <Button type="button" variant="primary" onClick={approveAndRefund} disabled={loading || !approver || approverPin.length < 4}>
+                Approve and refund
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </Modal>

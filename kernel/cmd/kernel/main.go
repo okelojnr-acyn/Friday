@@ -136,6 +136,7 @@ func main() {
 	// Cashier PIN (plan section 11): trusted tills, PINs, lockout.
 	mux.HandleFunc("GET /auth/pos/cashiers", authHandlers.PosCashiers)
 	mux.HandleFunc("POST /auth/pos/pin", authHandlers.PosPinLogin)
+	mux.HandleFunc("POST /auth/pos/approve", authHandlers.PosApprove)
 	mux.Handle("POST /pos/devices", requireAuth(http.HandlerFunc(authHandlers.EnrolPosDevice)))
 	mux.Handle("GET /pos/devices", requireAuth(http.HandlerFunc(authHandlers.ListPosDevices)))
 	mux.Handle("DELETE /pos/devices/{id}", requireAuth(http.HandlerFunc(authHandlers.RevokePosDevice)))
