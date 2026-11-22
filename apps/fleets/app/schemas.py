@@ -112,3 +112,53 @@ class FuelLogOut(BaseModel):
     cost_cents: int
 
     model_config = {"from_attributes": True}
+
+
+class ParcelCreate(BaseModel):
+    tracking_code: str = Field(min_length=1, max_length=128)
+    description: str = ""
+    recipient_name: str = ""
+    recipient_phone: str = ""
+    destination: str = ""
+
+
+class ParcelUpdate(BaseModel):
+    description: str | None = None
+    recipient_name: str | None = None
+    recipient_phone: str | None = None
+    destination: str | None = None
+
+
+class ParcelOut(BaseModel):
+    id: uuid.UUID
+    tracking_code: str
+    description: str
+    recipient_name: str
+    recipient_phone: str
+    destination: str
+    status: str
+    holder_user_id: str
+    holder_email: str
+    location_id: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ParcelEventOut(BaseModel):
+    status: str
+    by_email: str
+    note: str
+    at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ParcelScan(BaseModel):
+    """One scan: in (received here), out (out for delivery, with you),
+    delivered, or returned."""
+
+    code: str = Field(min_length=1, max_length=128)
+    action: str = Field(pattern="^(in|out|delivered|returned)$")
+    note: str = Field(default="", max_length=300)

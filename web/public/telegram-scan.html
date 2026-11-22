@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Scan</title>
 <!-- Guss's Telegram scanner (plan 16.3), opened from Guss's Sell / Stock in /
-     Check buttons (?mode=sell|stock|check). The camera starts at once and
+     Parcels / Check buttons (?mode=sell|stock|parcel|check). The camera starts at once and
      keeps scanning: each code is added to a list (the phone buzzes), and
      Telegram's bottom button sends the batch to the chat with
      Telegram.WebApp.sendData. Check sends the first code by itself. No
@@ -33,6 +33,12 @@
 </head>
 <body>
 <h1 id="title">Scan</h1>
+<div class="row" id="actions" hidden role="group" aria-label="What happens to these parcels">
+  <button type="button" data-a="in">In</button>
+  <button type="button" data-a="out" class="secondary">Out</button>
+  <button type="button" data-a="delivered" class="secondary">Delivered</button>
+  <button type="button" data-a="returned" class="secondary">Returned</button>
+</div>
 <video id="video" playsinline muted></video>
 <div class="row">
   <button id="qr" class="secondary" type="button">Scan QR</button>
@@ -47,9 +53,25 @@
   // Opened from a chat keyboard button, Telegram gives no initData, but
   // sendData works there (and only there): platform tells us we're inside.
   const inTelegram = !!(tg && tg.platform && tg.platform !== "unknown");
-  const mode = ["sell", "stock", "check"].includes(new URLSearchParams(location.search).get("mode"))
+  const mode = ["sell", "stock", "parcel", "check"].includes(new URLSearchParams(location.search).get("mode"))
     ? new URLSearchParams(location.search).get("mode") : "check";
-  const TITLES = { sell: "Scan what you sold", stock: "Scan what came in", check: "Scan to check an item" };
+  const TITLES = { sell: "Scan what you sold", stock: "Scan what came in", parcel: "Scan parcels", check: "Scan to check an item" };
+  // Parcels: what happens to the whole batch (in, out for delivery, delivered, returned).
+  let action = "in";
+  if (mode === "parcel") {
+    const bar = document.getElementById("actions");
+    bar.hidden = false;
+    bar.querySelectorAll("button").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b.dataset.a === action));
+      b.onclick = () => {
+        action = b.dataset.a;
+        bar.querySelectorAll("button").forEach((x) => {
+          x.className = x === b ? "" : "secondary";
+          x.setAttribute("aria-pressed", String(x === b));
+        });
+      };
+    });
+  }
   document.getElementById("title").textContent = TITLES[mode];
   const note = document.getElementById("note");
   const listEl = document.getElementById("list");
@@ -69,7 +91,7 @@
     if (sent || items.size === 0) return;
     sent = true;
     if (stopCamera) stopCamera();
-    const data = JSON.stringify({ m: mode, c: [...items].map(([c, n]) => [c, n]) });
+    const data = JSON.stringify({ m: mode, a: mode === "parcel" ? action : undefined, c: [...items].map(([c, n]) => [c, n]) });
     if (inTelegram) tg.sendData(data.slice(0, 4096)); // closes the page; Guss replies in the chat
     else { note.textContent = "Would send: " + data; sent = false; }
   }

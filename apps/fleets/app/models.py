@@ -88,3 +88,39 @@ class FuelLog(Base):
     # asked for" posture as Inventory's unit_of_measure being optional.
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cost_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+
+PARCEL_STATUSES = ("received", "out_for_delivery", "delivered", "returned")
+
+
+class Parcel(Base):
+    __tablename__ = "parcels"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    tracking_code: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    recipient_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    recipient_phone: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    destination: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="received")
+    holder_user_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    holder_email: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    location_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ParcelEvent(Base):
+    __tablename__ = "parcel_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    parcel_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parcels.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    by_user_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    by_email: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
