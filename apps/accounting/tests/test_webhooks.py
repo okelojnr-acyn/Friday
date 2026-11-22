@@ -451,3 +451,22 @@ async def test_a_reversed_payment_and_a_repayment_are_separate_postings(client, 
     lines = [l for e in await _journal_entries(client) if e["source_ref"].startswith(invoice_id) for l in e["lines"]]
     net = lambda acct: sum(l["debit_cents"] - l["credit_cents"] for l in lines if l["account_id"] == acct)  # noqa: E731
     assert net(mpesa) == 5000 and net(revenue) == -5000
+
+
+async def test_a_claim_payout_clears_owed_to_staff_or_books_a_shop_expense(client, kernel_auth_header, principal):
+    async def paid(owed_booked):
+        claim_id = str(uuid.uuid4())
+        body = {
+            "org_id": principal.org_id,
+            "payload": {"claim_id": claim_id, "amount_cents": 250000, "currency": "KES", "owed_booked": owed_booked, "description": "fuel"},
+        }
+        for _ in range(2):  # a repeat delivery posts once
+            assert (await client.post("/internal/webhooks/claim-paid", headers=kernel_auth_header, json=body)).status_code == 204
+        [entry] = [e for e in await _journal_entries(client) if e["source_ref"] == claim_id]
+        return {line["account_id"]: line for line in entry["lines"]}
+
+    lines = await paid(True)
+    assert lines[await _account_id(client, "2150")]["debit_cents"] == 250000
+    assert lines[await _account_id(client, "1010")]["credit_cents"] == 250000
+    lines = await paid(False)
+    assert lines[await _account_id(client, "6900")]["debit_cents"] == 250000

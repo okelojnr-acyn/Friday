@@ -325,6 +325,44 @@ async def pos_sale_cogs(body: dict, session: AsyncSession = Depends(get_session)
     await session.commit()
 
 
+@webhooks_router.post("/claim-paid", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def claim_paid(body: dict, session: AsyncSession = Depends(get_session)):
+    """Subscribed to minions.expense_claim.paid: Cr Cash for what was paid
+    out, Dr 2150 Owed to staff when Guss already booked the expense as
+    owed (owed_booked), else Dr 6900 Shop expenses (booked now)."""
+    payload = body.get("payload", {})
+    org_id = uuid.UUID(body["org_id"])
+    await set_org_context(session, str(org_id))
+    if not await first_delivery(session, body):
+        return
+    claim_id = payload.get("claim_id") or ""
+    if claim_id and await _already_posted(session, org_id, "claim", claim_id):
+        return
+    amount_cents = payload.get("amount_cents", 0) or 0
+    if amount_cents <= 0:
+        return
+    await ensure_default_accounts(session, org_id)
+    debit = await get_account_by_code(session, org_id, "2150" if payload.get("owed_booked") else "6900")
+    cash = await get_account_by_code(session, org_id, "1010")
+    now = datetime.now(UTC)
+    entry = JournalEntry(
+        org_id=org_id,
+        number=_new_entry_number(now),
+        entry_date=now.date(),
+        memo=f"Expense claim paid: {payload.get('description') or claim_id}"[:500],
+        source="claim",
+        source_ref=claim_id,
+        status="posted",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(entry)
+    await session.flush()
+    session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=debit.id, debit_cents=amount_cents, credit_cents=0, description=debit.name))
+    session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=cash.id, debit_cents=0, credit_cents=amount_cents, description="Paid out"))
+    await session.commit()
+
+
 @webhooks_router.post("/payroll-paid", dependencies=[Depends(require_kernel_token)], status_code=204)
 async def payroll_paid(body: dict, session: AsyncSession = Depends(get_session)):
     """Subscribed to minions.payroll_run.paid -- posts Dr Salary Expense /

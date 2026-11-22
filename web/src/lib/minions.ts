@@ -9,7 +9,7 @@ export interface ExpenseClaim {
   description: string;
   amount_cents: number;
   currency: string;
-  status: "submitted" | "approved" | "rejected" | "paid";
+  status: "submitted" | "approved" | "rejected" | "paid" | "withdrawn";
   receipt_url: string;
   /** false: the business paid (recorded only). Missing on older Minions = true. */
   reimburse?: boolean;
@@ -30,6 +30,9 @@ export const fetchMyExpenseClaims = () => api.get<ExpenseClaim[]>("/api/minions/
 
 export const submitExpenseClaim = (body: ExpenseClaimCreate) =>
   api.post<ExpenseClaim>("/api/minions/expense_claims", body);
+
+/** Takes back your own claim while it still waits. */
+export const withdrawExpenseClaim = (id: string) => api.post<ExpenseClaim>(`/api/minions/expense_claims/${id}/withdraw`);
 
 export interface WalletLink {
   wallet_address: string;

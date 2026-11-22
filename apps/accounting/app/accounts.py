@@ -31,12 +31,16 @@ DEFAULT_ACCOUNTS = (
     # VAT paid on purchases, claimed back on the VAT return.
     ("1500", "VAT Input (claimable)", "asset"),
     ("2000", "Accounts Payable", "liability"),
+    # Money staff paid from their own pocket until it's paid back (Guss
+    # books pay-me-back expenses here; a claim's payout clears it).
+    ("2150", "Owed to staff", "liability"),
     # VAT charged on sales, owed to KRA (named "Tax Payable" before).
     ("2200", "VAT Output (payable)", "liability"),
     ("3000", "Owner's Equity", "equity"),
     ("4000", "Sales Revenue", "income"),
     ("5000", "Cost of Goods Sold", "expense"),
     ("6000", "Salary Expense", "expense"),
+    ("6900", "Shop expenses", "expense"),
 )
 
 
