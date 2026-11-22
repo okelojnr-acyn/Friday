@@ -34,13 +34,10 @@ export interface Product {
 /** Best-effort: the inventory app may not be installed for this org, in
  * which case the POS register just falls back to freeform-only entry
  * (no product catalog, no barcode scanning) rather than erroring. */
-export async function fetchProductCatalog(): Promise<Product[]> {
-  try {
-    return await api.get<Product[]>("/api/inventory/products");
-  } catch {
-    return [];
-  }
-}
+/** The shelf. Throws when it can't be read, so the till can say why
+ * instead of "no products yet" (a refused PIN sign-in looked like an
+ * empty shop, 2026-11-22). */
+export const fetchProductCatalog = () => api.get<Product[]>("/api/inventory/products");
 
 export interface ProductBulkRow {
   name: string;

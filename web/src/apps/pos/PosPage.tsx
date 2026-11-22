@@ -100,6 +100,7 @@ export function PosPage({
   const { byId: unitById } = useUnits();
   const salesUnitOf = (p: Product | undefined) => (p ? unitById.get(p.sales_uom_id ?? "") : undefined);
   const [products, setProducts] = useState<ShelfProduct[]>([]);
+  const [shelfError, setShelfError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
@@ -207,7 +208,9 @@ export function PosPage({
       setPendingCount(queueRef.current.len());
       setReady(true);
     });
-    fetchProductCatalog().then((p) => setProducts(p as ShelfProduct[]));
+    fetchProductCatalog()
+      .then((p) => setProducts(p as ShelfProduct[]))
+      .catch((err) => setShelfError(err instanceof ApiError ? err.message : "Couldn't load the products; check the connection"));
   }, []);
 
   // The cart follows the org's tax rule; when the settings arrive the
@@ -983,7 +986,11 @@ export function PosPage({
                   + Item not on the shelf
                 </button>
               )}
-              {products.length === 0 ? (
+              {shelfError ? (
+                <div className="till-empty error-banner" role="alert" style={{ gridColumn: "1 / -1" }}>
+                  The products couldn't be loaded: {shelfError}
+                </div>
+              ) : products.length === 0 ? (
                 <div className="till-empty" style={{ gridColumn: "1 / -1" }}>
                   No products yet. Add them in Inventory, or import a list (Settings → Import).
                 </div>
