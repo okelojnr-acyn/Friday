@@ -9,7 +9,8 @@ import { StatCard } from "../../ui/StatCard";
 import { Card } from "../../ui/Card";
 import { Button } from "../../ui/Button";
 import { Icon } from "../../ui/Icon";
-import { KanbanView } from "../../ui/resource/KanbanView";
+import { PipelineBoard } from "./PipelineBoard";
+import { createRecord } from "../../lib/resourceApi";
 import { FormView } from "../../ui/resource/FormView";
 import { formatMoney } from "../../lib/orgSettings";
 
@@ -32,6 +33,7 @@ export function PipelinePage() {
   const [opportunities, setOpportunities] = useState<RecordRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<RecordRow | "new" | null>(null);
+  const [query, setQuery] = useState("");
 
   function load() {
     Promise.all([fetchSchema("crm"), listRecords("crm", "opportunity")])
@@ -155,21 +157,39 @@ export function PipelinePage() {
           </Button>
         </Card>
       ) : (
-      <KanbanView
-        spec={spec}
-        records={opportunities}
-        onCardClick={setEditing}
-        onMove={async (record, newStage) => {
-          const prev = opportunities;
-          setOpportunities(opportunities.map((o) => (o.id === record.id ? { ...o, stage: newStage } : o)));
-          try {
-            await updateRecord("crm", "opportunity", record.id, { stage: newStage });
-          } catch (err) {
-            setOpportunities(prev);
-            setError(err instanceof ApiError ? err.message : "Could not move this opportunity");
-          }
-        }}
-      />
+      <>
+        <input
+          type="search"
+          className="pipeline-search"
+          aria-label="Search deals"
+          placeholder="Search deals"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <PipelineBoard
+          deals={opportunities.filter((o) =>
+            [o.company, o.contact_name, o.contact_email].some((v) => String(v ?? "").toLowerCase().includes(query.trim().toLowerCase())),
+          )}
+          onOpen={setEditing}
+          onMove={async (record, newStage, lostReason) => {
+            const prev = opportunities;
+            setOpportunities(opportunities.map((o) => (o.id === record.id ? { ...o, stage: newStage } : o)));
+            try {
+              await updateRecord("crm", "opportunity", String(record.id), {
+                stage: newStage,
+                ...(lostReason !== undefined ? { lost_reason: lostReason } : {}),
+              });
+            } catch (err) {
+              setOpportunities(prev);
+              setError(err instanceof ApiError ? err.message : "Could not move this deal");
+            }
+          }}
+          onAdd={async (stage, company, cents) => {
+            await createRecord("crm", "opportunity", { contact_name: company, company, stage, value_cents: cents });
+            load();
+          }}
+        />
+      </>
       )}
 
       {editing ? (
