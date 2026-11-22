@@ -111,8 +111,9 @@ export default defineConfig({
         theme_color: "#e07a35",
         background_color: "#ffffff",
         display: "standalone",
-        start_url: "/",
-        scope: "/",
+        // The installed app opens the staff app, never Friday's admin home.
+        start_url: "/minions/",
+        scope: "/minions/",
         icons: [
           { src: "/minions-icon-192.png", sizes: "192x192", type: "image/png" },
           { src: "/minions-icon-512.png", sizes: "512x512", type: "image/png" },

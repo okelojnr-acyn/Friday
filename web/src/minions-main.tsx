@@ -21,7 +21,9 @@ registerSW({ immediate: true });
 // serves index.html -- the main shell -- instead, silently dropping the
 // mini-app). Minions had the identical unmodified pattern; this is the
 // same fix, not a new one.
-const basename = window.location.pathname.startsWith("/minions.html") ? "/minions.html" : "/";
+// Staff open it at /minions/ (vercel.json serves minions.html there).
+const path = window.location.pathname;
+const basename = path.startsWith("/minions.html") ? "/minions.html" : path.startsWith("/minions") ? "/minions" : "/";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

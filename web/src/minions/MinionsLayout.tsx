@@ -22,12 +22,15 @@ export function RequireMinionsAuth() {
 
 /** The staff app's tabs (plan 12.6/12.7): a bottom bar, as phone apps
  * have it, showing only what this person can use. */
-function tabsFor(me: MyPermissions | null): { to: string; icon: IconName; label: string }[] {
-  const tabs: { to: string; icon: IconName; label: string }[] = [
-    { to: "/", icon: "kanban", label: "Today" },
+type Tab = { to: string; icon: IconName; label: string; external?: boolean };
+function tabsFor(me: MyPermissions | null): Tab[] {
+  const tabs: Tab[] = [{ to: "/", icon: "kanban", label: "Today" }];
+  // Cashiers sell from the till, its own installable app.
+  if (me?.rules["pos.sell"]) tabs.push({ to: "/pos.html", icon: "storefront", label: "Sell", external: true });
+  tabs.push(
     { to: "/expense-claims", icon: "receipt", label: "Claims" },
     { to: "/payroll", icon: "wallet", label: "Pay" },
-  ];
+  );
   if (me?.rules["claims.approve"]) tabs.push({ to: "/team", icon: "users", label: "Team" });
   tabs.push({ to: "/me", icon: "user", label: "Me" });
   return tabs;
@@ -51,12 +54,19 @@ function MinionsLayout() {
         <Outlet />
       </main>
       <nav className="minions-tabs" aria-label="Minions">
-        {tabsFor(me).map((t) => (
+        {tabsFor(me).map((t) =>
+          t.external ? (
+            <a key={t.to} href={t.to} className="minions-tab">
+              <Icon name={t.icon} size={22} />
+              <span>{t.label}</span>
+            </a>
+          ) : (
           <NavLink key={t.to} to={t.to} end={t.to === "/"} className={({ isActive }) => `minions-tab${isActive ? " active" : ""}`}>
             <Icon name={t.icon} size={22} />
             <span>{t.label}</span>
           </NavLink>
-        ))}
+          ),
+        )}
       </nav>
     </div>
   );
