@@ -367,4 +367,4 @@ async def test_guss_sends_an_mpesa_prompt_for_a_scanned_basket_once(client, pays
 
     today = datetime.now(UTC).date().isoformat()
     guss_sales = (await client.get(f"/pos/sales?day={today}&channel=guss")).json()
-    assert first["invoice_id"] in str(guss_sales), "filed as a Guss sale, not a till's"
+    assert [(x["channel"], x["status"]) for x in guss_sales] == [("guss", "paid")], "filed as a Guss sale"
