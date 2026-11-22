@@ -7,6 +7,8 @@ import { MyTasksPage } from "./MyTasksPage";
 import { ExpenseClaimsPage } from "./ExpenseClaimsPage";
 import { WalletPage } from "./WalletPage";
 import { PayrollPage } from "./PayrollPage";
+import { MePage } from "./MePage";
+import { TeamPage } from "./TeamPage";
 
 /** The trimmed route tree: My Tasks, Expense Claims, Wallet, Payroll --
  * employee-facing only. No /register or /join: an employee's account is
@@ -26,6 +28,8 @@ export default function MinionsApp() {
           <Route path="/expense-claims" element={<ExpenseClaimsPage />} />
           <Route path="/wallet" element={<WalletPage />} />
           <Route path="/payroll" element={<PayrollPage />} />
+          <Route path="/team" element={<TeamPage />} />
+          <Route path="/me" element={<MePage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

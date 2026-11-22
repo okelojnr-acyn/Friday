@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { ApiError } from "../lib/api";
 import { fetchMyPayroll, type MyPayrollLine } from "../lib/minions";
@@ -24,7 +25,10 @@ export function PayrollPage() {
   return (
     <div className="page">
       <div className="page-header">
-        <h1 className="page-title">Payroll</h1>
+        <h1 className="page-title">Pay</h1>
+        <Link to="/wallet" className="btn btn-secondary btn-sm">
+          Wallet
+        </Link>
       </div>
 
       {lines.length === 0 ? (

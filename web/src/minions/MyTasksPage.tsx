@@ -44,7 +44,7 @@ export function MyTasksPage() {
   return (
     <div className="page">
       <div className="page-header">
-        <h1 className="page-title">My Tasks</h1>
+        <h1 className="page-title">Today</h1>
       </div>
 
       {mine.length === 0 ? (
