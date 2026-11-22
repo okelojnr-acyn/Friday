@@ -160,6 +160,31 @@ func TestLinkByCode(t *testing.T) {
 	if c, body := enter(old); c != http.StatusGone || !strings.Contains(body, "expired") {
 		t.Fatalf("expired code: %d %s", c, body)
 	}
+
+	// People tells Guss who reports to whom (team leaders' approvals).
+	var staffID string
+	must(pool.QueryRow(ctx, `INSERT INTO core.users (email) VALUES ('s-' || gen_random_uuid() || '@x.test') RETURNING id::text`).Scan(&staffID))
+	_, err = pool.Exec(ctx, `INSERT INTO core.memberships (org_id, user_id, role, reports_to) VALUES ($1, $2, 'member', $3)`, orgID, staffID, userID)
+	must(err)
+	_, err = pool.Exec(ctx, `INSERT INTO core.guss_links (org_id, telegram_id, user_id) VALUES ($1, 55, $2)`, orgID, staffID)
+	must(err)
+	r = httptest.NewRequest(http.MethodGet, "/guss/svc/people", nil)
+	r.Header.Set("Authorization", "Bearer "+key)
+	w = httptest.NewRecorder()
+	h.People(w, r)
+	var ppl struct {
+		People []linkView `json:"people"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &ppl)
+	found := false
+	for _, p := range ppl.People {
+		if p.TelegramID == 55 {
+			found = p.ReportsTo == userID && p.GussRole == "staff"
+		}
+	}
+	if !found {
+		t.Fatalf("people: %s", w.Body.String())
+	}
 }
 
 func jsonInt(n int64) string {

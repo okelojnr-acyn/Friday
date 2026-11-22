@@ -92,8 +92,8 @@ func GussRole(fridayRole string) string {
 		return "owner"
 	case "admin", "branch_manager":
 		return "manager"
-	// Team leaders act as staff in Guss until it scopes approvals to
-	// their team (plan 12.8 step 5).
+	// Team leaders stay "staff" here so an older Guss keeps them; a newer
+	// Guss reads role "team_leader" and reports_to for their team's approvals.
 	case "team_leader", "member":
 		return "staff"
 	default:
@@ -143,10 +143,13 @@ type linkView struct {
 	Email        string `json:"email"`
 	Role         string `json:"role"`
 	GussRole     string `json:"guss_role"`
+	// Who they report to (a Friday user id, "" if nobody): Guss sends a
+	// team leader their team's requests.
+	ReportsTo string `json:"reports_to"`
 }
 
 func (h *Handlers) links(ctx context.Context, orgID, onlyUser string) ([]linkView, error) {
-	q := `SELECT l.telegram_id, l.telegram_name, l.user_id, u.email, m.role
+	q := `SELECT l.telegram_id, l.telegram_name, l.user_id, u.email, m.role, COALESCE(m.reports_to::text, '')
 	      FROM core.guss_links l
 	      JOIN core.users u ON u.id = l.user_id
 	      JOIN core.memberships m ON m.org_id = l.org_id AND m.user_id = l.user_id
@@ -160,7 +163,7 @@ func (h *Handlers) links(ctx context.Context, orgID, onlyUser string) ([]linkVie
 	out := []linkView{}
 	for rows.Next() {
 		var v linkView
-		if err := rows.Scan(&v.TelegramID, &v.TelegramName, &v.UserID, &v.Email, &v.Role); err != nil {
+		if err := rows.Scan(&v.TelegramID, &v.TelegramName, &v.UserID, &v.Email, &v.Role, &v.ReportsTo); err != nil {
 			return nil, err
 		}
 		v.GussRole = GussRole(v.Role)
