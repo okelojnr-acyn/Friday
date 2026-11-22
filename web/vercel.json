@@ -1,5 +1,7 @@
 {
   "rewrites": [
+    { "source": "/minions", "destination": "/minions.html" },
+    { "source": "/minions/(.*)", "destination": "/minions.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
