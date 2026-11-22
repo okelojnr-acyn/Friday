@@ -1157,6 +1157,7 @@ async def return_pos_sale(
             number=original.number,
             cashier_user_id=original.cashier_user_id,
             cashier_email=original.cashier_email,
+            location_id=original.location_id,
             lines=[
                 SimpleNamespace(product_id=l.product_id, quantity=-l.quantity, unit_cost_cents=l.unit_cost_cents, uom_factor=l.uom_factor)
                 for l in original.lines
