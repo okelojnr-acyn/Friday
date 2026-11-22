@@ -1715,3 +1715,177 @@
   display: flex;
   gap: 8px;
 }
+
+/* CRM pipeline board (apps/crm/PipelineBoard.tsx) */
+.pipeline-search {
+  width: min(360px, 100%);
+  margin-bottom: 12px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.pipeline {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+.pipeline-col {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 200px;
+}
+.pipeline-col.over {
+  border-color: var(--accent);
+  background: rgba(224, 122, 53, 0.06);
+}
+.pipeline-head {
+  display: grid;
+  gap: 2px;
+}
+.pipeline-count {
+  display: inline-block;
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  font-size: 12px;
+  text-align: center;
+}
+.pipeline-sums {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.pipeline-add {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+.pipeline-add:hover,
+.pipeline-add:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.pipeline-quick {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+.pipeline-quick input {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+.pipeline-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.pipeline-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid transparent;
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+  cursor: grab;
+}
+.pipeline-card.rotting {
+  border-left-color: var(--danger);
+}
+.pipeline-card-main {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+.pipeline-card-name {
+  font-weight: 600;
+}
+.pipeline-card-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.pipeline-card-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.pipeline-overdue {
+  color: var(--danger);
+  font-weight: 600;
+}
+.pipeline-card-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.pipeline-card-actions select {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.pipeline-won,
+.pipeline-lost {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.pipeline-won {
+  color: var(--success);
+}
+.pipeline-lost {
+  color: var(--danger);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+@media (max-width: 860px) {
+  .pipeline {
+    grid-template-columns: repeat(3, 82vw);
+    scroll-snap-type: x mandatory;
+  }
+  .pipeline-col {
+    scroll-snap-align: start;
+  }
+}
