@@ -1,7 +1,7 @@
-import { Navigate, Outlet, Link } from "react-router-dom";
+import { Link, Navigate, NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../lib/auth";
+import { useMyPermissions, type MyPermissions } from "../lib/permissions";
 import { Icon, type IconName } from "../ui/Icon";
-import { Button } from "../ui/Button";
 import { Avatar } from "../ui/Avatar";
 import { initials } from "../ui/resource/fieldFormat";
 
@@ -20,46 +20,44 @@ export function RequireMinionsAuth() {
   return <MinionsLayout />;
 }
 
-const NAV: { to: string; icon: IconName; label: string }[] = [
-  { to: "/", icon: "kanban", label: "My Tasks" },
-  { to: "/expense-claims", icon: "receipt", label: "Expense Claims" },
-  { to: "/payroll", icon: "wallet", label: "Payroll" },
-  { to: "/wallet", icon: "key", label: "Wallet" },
-];
+/** The staff app's tabs (plan 12.6/12.7): a bottom bar, as phone apps
+ * have it, showing only what this person can use. */
+function tabsFor(me: MyPermissions | null): { to: string; icon: IconName; label: string }[] {
+  const tabs: { to: string; icon: IconName; label: string }[] = [
+    { to: "/", icon: "kanban", label: "Today" },
+    { to: "/expense-claims", icon: "receipt", label: "Claims" },
+    { to: "/payroll", icon: "wallet", label: "Pay" },
+  ];
+  if (me?.rules["claims.approve"]) tabs.push({ to: "/team", icon: "users", label: "Team" });
+  tabs.push({ to: "/me", icon: "user", label: "Me" });
+  return tabs;
+}
 
 function MinionsLayout() {
-  const { session, logout } = useAuth();
+  const { session } = useAuth();
+  const me = useMyPermissions();
   if (!session) return null;
   return (
-    <div>
-      <header className="topbar">
-        <div className="topbar-left">
-          <Link to="/" className="topbar-brand">
-            Friday Minions
-          </Link>
-        </div>
-        <div className="topbar-right">
-          {NAV.map((item) => (
-            <Link
-              key={item.to}
-              to={item.to}
-              title={item.label}
-              className="btn btn-secondary btn-sm btn-pill"
-            >
-              <Icon name={item.icon} size={16} />
-              {item.label}
-            </Link>
-          ))}
-          <span className="topbar-user" title={session.role}>
-            <Avatar label={initials(session.email)} title={session.email} size={26} />
-            {session.email}
-          </span>
-          <Button variant="ghost" size="sm" onClick={logout} title="Log out">
-            <Icon name="logout" size={16} />
-          </Button>
-        </div>
+    <div className="minions-shell">
+      <header className="minions-top">
+        <Link to="/" className="topbar-brand">
+          Friday Minions
+        </Link>
+        <Link to="/me" className="minions-avatar" aria-label="Me">
+          <Avatar label={initials(session.email)} title={session.email} size={30} />
+        </Link>
       </header>
-      <Outlet />
+      <main className="minions-main">
+        <Outlet />
+      </main>
+      <nav className="minions-tabs" aria-label="Minions">
+        {tabsFor(me).map((t) => (
+          <NavLink key={t.to} to={t.to} end={t.to === "/"} className={({ isActive }) => `minions-tab${isActive ? " active" : ""}`}>
+            <Icon name={t.icon} size={22} />
+            <span>{t.label}</span>
+          </NavLink>
+        ))}
+      </nav>
     </div>
   );
 }

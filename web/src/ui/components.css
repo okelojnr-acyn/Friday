@@ -1606,3 +1606,112 @@
   font-weight: 500;
   white-space: nowrap;
 }
+
+/* Minions staff app (web/src/minions): phone-first, bottom tab bar. */
+.minions-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.minions-top {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.minions-main {
+  flex: 1;
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+}
+.minions-page {
+  max-width: 640px;
+  margin: 0 auto;
+  display: grid;
+  gap: 12px;
+}
+.minions-tabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  justify-content: space-around;
+  padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.minions-tab {
+  flex: 1;
+  max-width: 120px;
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-radius: 12px;
+}
+.minions-tab.active {
+  color: var(--accent);
+}
+.minions-tab:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.minions-h2 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+.minions-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+.minions-id {
+  display: grid;
+  gap: 6px;
+  text-align: center;
+}
+.minions-staff-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.minions-cta {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+}
+.minions-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.minions-claim {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.minions-claim-actions {
+  display: flex;
+  gap: 8px;
+}
