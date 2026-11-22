@@ -54,6 +54,8 @@ async def publish_pos_sale_recorded(org_id: str, inv: Invoice, charged_cents: in
             "amount_cents": charged_cents,
             "cashier_user_id": inv.cashier_user_id,
             "cashier_email": inv.cashier_email,
+            # The till's location: Inventory takes the stock from there.
+            "location_id": str(inv.location_id) if inv.location_id else None,
             "lines": [
                 {
                     "product_id": str(line.product_id),

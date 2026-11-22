@@ -362,6 +362,46 @@ IMAGE_TYPES = {"image/webp", "image/jpeg", "image/png"}
 MAX_IMAGE_BYTES = 400 * 1024
 
 
+@products_router.get("/{product_id}/stock-by-location")
+async def stock_by_location(
+    product_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("stock.read")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """How many are at each warehouse, from the stock ledger (every change
+    is a move tagged with its warehouse). People limited to their
+    locations see only warehouses there; moves with no warehouse show as
+    "Not set" for everyone else."""
+    product = await _get_owned(session, principal, product_id)
+    rows = await session.execute(
+        text(
+            """
+            SELECT w.id, COALESCE(w.name, ''), w.location_id, SUM(m.qty_delta)
+            FROM stock_moves m LEFT JOIN warehouses w ON w.id = m.warehouse_id
+            WHERE m.org_id = :org AND m.product_id = :pid
+            GROUP BY w.id, w.name, w.location_id
+            ORDER BY COALESCE(w.name, '~')
+            """
+        ),
+        {"org": product.org_id, "pid": product.id},
+    )
+    everywhere = "*" in scope.locs or scope.kind == "all"
+    out = []
+    for wid, name, loc, qty in rows.all():
+        if not everywhere and (loc is None or str(loc) not in scope.locs):
+            continue
+        out.append(
+            {
+                "warehouse_id": str(wid) if wid else None,
+                "warehouse": name or "Not set",
+                "location_id": str(loc) if loc else None,
+                "qty": qty,
+            }
+        )
+    return out
+
+
 @products_router.put("/{product_id}/image", response_model=ProductOut)
 async def put_product_image(
     product_id: uuid.UUID,
@@ -547,6 +587,19 @@ async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_sess
         return
     now = datetime.now(UTC)
     reference = str(payload.get("invoice_number", ""))
+    # Sold at a till in a location: the stock leaves that location's
+    # warehouse (the default one there first); otherwise the product's own.
+    sold_from = None
+    if payload.get("location_id"):
+        sold_from = (
+            await session.execute(
+                text(
+                    "SELECT id FROM warehouses WHERE org_id = :org AND location_id::text = :loc"
+                    " ORDER BY is_default DESC, created_at LIMIT 1"
+                ),
+                {"org": org_id, "loc": str(payload["location_id"])},
+            )
+        ).scalar()
 
     # One total per product: a sale can carry the same product on two
     # lines (one discounted). A line is in the unit it was sold in; its
@@ -581,13 +634,21 @@ async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_sess
                 """
                 INSERT INTO stock_moves (id, org_id, product_id, product_name, qty_delta, reason, reference, warehouse_id, created_at)
                 SELECT gen_random_uuid(), org_id, id, name, ROUND(-(:base + :sold * sales_factor), 3),
-                       'pos_sale', :ref, default_warehouse_id, :now
+                       'pos_sale', :ref, COALESCE(CAST(:wh AS uuid), default_warehouse_id), :now
                 FROM products WHERE id = :pid AND org_id = :org AND track_inventory
                 ON CONFLICT (org_id, product_id, reference) WHERE reason = 'pos_sale' AND reference <> '' DO NOTHING
                 RETURNING qty_delta
                 """
             ),
-            {"base": totals["base"], "sold": totals["sold"], "ref": reference, "now": now, "pid": pid, "org": org_id},
+            {
+                "base": totals["base"],
+                "sold": totals["sold"],
+                "ref": reference,
+                "now": now,
+                "pid": pid,
+                "org": org_id,
+                "wh": str(sold_from) if sold_from else None,
+            },
         )
         delta = made.scalar()
         if delta is None:

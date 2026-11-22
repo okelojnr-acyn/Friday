@@ -1,3 +1,4 @@
+import { StockByLocationPanel } from "../../apps/inventory/StockByLocationPanel";
 import { useState, type FormEvent } from "react";
 import type { RecordRow, ResourceSpec } from "../../lib/types";
 import { ApiError } from "../../lib/api";
@@ -137,6 +138,7 @@ export function FormView({ spec, app, schema, record, onClose, onSaved }: FormVi
           currency={String(record!.currency ?? "USD")}
         />
       ) : null}
+      {isEdit && app === "inventory" && spec.name === "product" ? <StockByLocationPanel productId={record!.id} /> : null}
       {isEdit && app === "inventory" && spec.name === "product" ? (
         <CreatePurchaseOrderPanel
           productId={record!.id}
