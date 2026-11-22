@@ -49,6 +49,7 @@ var subscriptions = []subscription{
 	{Event: "minions.expense_claim.paid", App: "accounting", WebhookPath: "/internal/webhooks/claim-paid"},
 	{Event: "inventory.purchase.received", App: "accounting", WebhookPath: "/internal/webhooks/purchase-received"},
 	{Event: "inventory.purchase.paid", App: "accounting", WebhookPath: "/internal/webhooks/purchase-paid"},
+	{Event: "inventory.stock.adjusted", App: "accounting", WebhookPath: "/internal/webhooks/stock-adjusted"},
 }
 
 func newEventID() string {

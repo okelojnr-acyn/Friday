@@ -209,6 +209,47 @@ async def purchase_received(body: dict, session: AsyncSession = Depends(get_sess
     await session.commit()
 
 
+@webhooks_router.post("/stock-adjusted", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def stock_adjusted(body: dict, session: AsyncSession = Depends(get_session)):
+    """Subscribed to inventory.stock.adjusted: stock counted in or out by
+    hand, at cost. In: Dr Inventory Asset, Cr Owner's Equity (stock put
+    into the business without a purchase order). Out: Dr Stock losses,
+    Cr Inventory Asset (plan 20.2 #1)."""
+    payload = body.get("payload", {})
+    org_id = uuid.UUID(body["org_id"])
+    await set_org_context(session, str(org_id))
+    if not await first_delivery(session, body):
+        return
+    value = int(payload.get("value_cents", 0) or 0)
+    if value == 0:
+        return
+    await ensure_default_accounts(session, org_id)
+    inventory_asset = await get_account_by_code(session, org_id, "1400")
+    other = await get_account_by_code(session, org_id, "3000" if value > 0 else "5100")
+    now = datetime.now(UTC)
+    name = payload.get("product_name") or "stock"
+    word = "in" if value > 0 else "out"
+    entry = JournalEntry(
+        org_id=org_id,
+        number=_new_entry_number(now),
+        entry_date=now.date(),
+        memo=f"Stock counted {word}: {abs(payload.get('delta', 0)):g} {name}"
+        + (f" ({payload['reference']})" if payload.get("reference") else ""),
+        source="inventory",
+        source_ref=str(body.get("id") or ""),
+        status="posted",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(entry)
+    await session.flush()
+    amount = abs(value)
+    debit, credit = (inventory_asset, other) if value > 0 else (other, inventory_asset)
+    session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=debit.id, debit_cents=amount, credit_cents=0, description=f"{name}, at cost"))
+    session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=credit.id, debit_cents=0, credit_cents=amount, description=f"{name}, at cost"))
+    await session.commit()
+
+
 @webhooks_router.post("/purchase-paid", dependencies=[Depends(require_kernel_token)], status_code=204)
 async def purchase_paid(body: dict, session: AsyncSession = Depends(get_session)):
     """Subscribed to inventory.purchase.paid: the supplier is paid.

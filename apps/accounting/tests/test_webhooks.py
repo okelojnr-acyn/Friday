@@ -470,3 +470,28 @@ async def test_a_claim_payout_clears_owed_to_staff_or_books_a_shop_expense(clien
     assert lines[await _account_id(client, "1010")]["credit_cents"] == 250000
     lines = await paid(False)
     assert lines[await _account_id(client, "6900")]["debit_cents"] == 250000
+
+
+async def test_stock_counted_in_and_out_reach_the_books_at_cost(client, kernel_auth_header, principal):
+    """Plan 20.2 #1: stock counted in without a purchase order is stock the
+    owner put in (Dr Inventory, Cr Owner's Equity); counted out is a loss
+    (Dr Stock losses, Cr Inventory). Delivered twice, booked once."""
+    body = {"id": str(uuid.uuid4()), "org_id": principal.org_id,
+            "payload": {"product_name": "Greek Yoghurt", "delta": 50, "value_cents": 3250000, "reason": "received"}}
+    assert (await client.post("/internal/webhooks/stock-adjusted", headers=kernel_auth_header, json=body)).status_code == 204
+    await client.post("/internal/webhooks/stock-adjusted", headers=kernel_auth_header, json=body)  # a retry
+    out = {"id": str(uuid.uuid4()), "org_id": principal.org_id,
+           "payload": {"product_name": "Greek Yoghurt", "delta": -2, "value_cents": -130000, "reason": "write_off"}}
+    await client.post("/internal/webhooks/stock-adjusted", headers=kernel_auth_header, json=out)
+    entries = await _journal_entries(client)
+    assert len(entries) == 2
+    lines = {}
+    for e in entries:
+        assert e["total_debit_cents"] == e["total_credit_cents"]
+        for line in e["lines"]:
+            lines.setdefault(line["account_id"], [0, 0])
+            lines[line["account_id"]][0] += line["debit_cents"]
+            lines[line["account_id"]][1] += line["credit_cents"]
+    assert lines[await _account_id(client, "1400")] == [3250000, 130000]
+    assert lines[await _account_id(client, "3000")] == [0, 3250000]
+    assert lines[await _account_id(client, "5100")] == [130000, 0]

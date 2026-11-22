@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from friday_common.importer import ImportField, ImportTarget, import_router
 from friday_common import (
     first_delivery,
+    publish_event,
     FieldSpec,
     Principal,
     ResourceSpec,
@@ -528,6 +529,10 @@ async def adjust_stock(
     if body.reason not in REASONS:
         raise HTTPException(422, f"reason must be one of {REASONS}")
     product = await _get_owned(session, principal, product_id)
+    # A product that doesn't track stock has none to sell from: Guss's
+    # "sold 8 rice" took Daawat (untracked) to -8 (plan 20.2 #2).
+    if body.reason == "sale" and not product.track_inventory:
+        return product
     warehouse_id = body.warehouse_id or product.default_warehouse_id
     if warehouse_id is not None and not scope.everywhere:
         warehouse = await session.get(Warehouse, warehouse_id)
@@ -547,6 +552,23 @@ async def adjust_stock(
             created_at=now,
         )
     )
+    # Stock counted in or out by hand reaches the books at cost (plan
+    # 20.2 #1: received stock never did, so Inventory Asset went to
+    # -29,710). Guss books its own restocks at what was paid ("guss:").
+    value_cents = int((Decimal(body.delta) * product.cost_cents).to_integral_value())
+    if body.reason in ("received", "write_off", "manual_adjustment") and value_cents and not body.reference.startswith("guss:"):
+        await publish_event(
+            "inventory.stock.adjusted",
+            principal.org_id,
+            {
+                "product_name": product.name,
+                "delta": float(body.delta),
+                "value_cents": value_cents,
+                "reason": body.reason,
+                "reference": body.reference,
+            },
+            session=session,
+        )
     await session.commit()
     await session.refresh(product)
     return product
