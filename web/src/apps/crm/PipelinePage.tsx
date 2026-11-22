@@ -1,3 +1,4 @@
+import { AppHint } from "../../shell/AppFrame";
 import { useEffect, useMemo, useState } from "react";
 import { fetchSchema } from "../../lib/schema";
 import { listRecords, updateRecord } from "../../lib/resourceApi";
@@ -83,6 +84,7 @@ export function PipelinePage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Pipeline</h1>
+          <AppHint />
         </div>
         <Button variant="primary" size="sm" className="btn-pill" onClick={() => setEditing("new")}>
           <Icon name="plus" size={14} /> New Opportunity

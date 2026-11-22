@@ -142,7 +142,7 @@ export function StorePage() {
 
   const stockStats = useMemo(() => {
     const rows = (products ?? []).filter((p) => p.track_inventory);
-    const low = rows.filter((p) => Number(p.reorder_point) > 0 && Number(p.on_hand_qty) <= Number(p.reorder_point));
+    const low = rows.filter((p) => Number(p.on_hand_qty) <= Math.max(0, Number(p.reorder_point) || 0));
     const filled = rows.length === 0 ? 0 : Math.min(5, low.length === 0 ? 0 : Math.max(1, Math.ceil((low.length / rows.length) * 5)));
     return { lowCount: low.length, trackedCount: rows.length, filled };
   }, [products]);

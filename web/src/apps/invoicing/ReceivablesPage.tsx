@@ -1,3 +1,4 @@
+import { AppHint } from "../../shell/AppFrame";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../../lib/api";
@@ -60,7 +61,11 @@ export function ReceivablesPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Receivables</h1>
+          <AppHint />
         </div>
+        <Link to="/invoicing/invoice?new=1" className="btn btn-primary btn-sm btn-pill">
+          New invoice
+        </Link>
       </div>
 
       {error ? <div className="error-banner">{error}</div> : null}
@@ -84,7 +89,7 @@ export function ReceivablesPage() {
                   {amount(t.total_cents)}
                 </div>
                 <div className="field-label">
-                  {amount(t.total_cents - t.current_cents)} overdue
+                  {t.total_cents - t.current_cents ? `${amount(t.total_cents - t.current_cents)} overdue` : "Nothing overdue"}
                   {t.days_over_90_cents ? ` · ${amount(t.days_over_90_cents)} over 90 days` : ""}
                 </div>
               </Card>

@@ -1,3 +1,4 @@
+import { AppHint } from "../../shell/AppFrame";
 import { useEffect, useState } from "react";
 import { ApiError } from "../../lib/api";
 import {
@@ -138,6 +139,7 @@ export function ReportsPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Reports</h1>
+          <AppHint />
           <nav style={{ display: "flex", gap: 8, marginTop: 10 }}>
             <Button size="sm" variant={tab === "pnl" ? "primary" : "secondary"} onClick={() => setTab("pnl")}>
               Profit &amp; Loss

@@ -1,7 +1,21 @@
+import { createContext, useContext } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { APP_ICONS } from "../ui/AppTile";
 import { Icon } from "../ui/Icon";
 import { navForPath, type NavItem } from "./appNav";
+
+const ActiveNav = createContext<NavItem | null>(null);
+
+/** The rail entry for this page: its name (so "Pay details" isn't titled
+ * "Employees") and its hint. */
+export const useActiveNav = () => useContext(ActiveNav);
+
+/** The page's one small hint, under its title (plan 18: hints above the
+ * title read as stray text). */
+export function AppHint() {
+  const hint = useActiveNav()?.hint;
+  return hint ? <p className="app-hint">{hint}</p> : null;
+}
 
 /** Every app in the Apps & integrations layout (owner's foundation
  * design): a left rail with the app's sections, the page beside it. On a
@@ -54,8 +68,9 @@ export function AppFrame() {
           ))}
         </nav>
         <div className="hub-main">
-          {active?.hint ? <p className="app-hint">{active.hint}</p> : null}
-          <Outlet />
+          <ActiveNav.Provider value={active ?? null}>
+            <Outlet />
+          </ActiveNav.Provider>
         </div>
       </div>
     </div>

@@ -381,6 +381,9 @@
   color: var(--text);
   text-decoration: none;
 }
+.cell-nowrap {
+  white-space: nowrap;
+}
 .status-tabs {
   display: flex;
   gap: var(--space-1);
@@ -415,7 +418,8 @@
   font-size: 12px;
 }
 .app-hint {
-  margin: 0 0 calc(-1 * var(--space-2));
+  margin: 4px 0 0;
+  max-width: 60ch;
   color: var(--text-muted);
   font-size: 13px;
 }
