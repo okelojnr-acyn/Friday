@@ -42,12 +42,15 @@ func RequireAuth(issuer *Issuer) func(http.Handler) http.Handler {
 	}
 }
 
-// posKernelRoute lets a cashier's PIN session read the two kernel routes
-// the till itself needs: who is signed in, and the org's settings
-// (currency, receipt details).
+// posKernelRoute lets a cashier's PIN session reach the kernel routes the
+// till itself needs: who is signed in, the org's settings (currency,
+// receipt details), and resuming an idle till with the same PIN.
 func posKernelRoute(via string, r *http.Request) bool {
-	if via != PosVia || r.Method != http.MethodGet {
+	if via != PosVia {
 		return false
 	}
-	return r.URL.Path == "/auth/me" || r.URL.Path == "/orgs/settings"
+	if r.Method == http.MethodPost {
+		return r.URL.Path == "/auth/pos/resume"
+	}
+	return r.Method == http.MethodGet && (r.URL.Path == "/auth/me" || r.URL.Path == "/orgs/settings")
 }

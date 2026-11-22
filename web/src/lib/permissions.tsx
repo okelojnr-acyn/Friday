@@ -17,6 +17,11 @@ export interface MyPermissions {
 
 let cached: Promise<MyPermissions> | null = null;
 
+/** A new person signed in on this page (the till): ask again. */
+export function forgetMyPermissions(): void {
+  cached = null;
+}
+
 export function fetchMyPermissions(): Promise<MyPermissions> {
   cached ??= api.get<MyPermissions>("/orgs/me/permissions").catch((err) => {
     cached = null;

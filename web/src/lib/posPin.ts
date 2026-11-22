@@ -81,6 +81,11 @@ async function deviceFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+/** The signed-in cashier's own PIN resumes their locked till (plan 20.3);
+ * a trusted till says so, an untrusted one resumes a passkey session. */
+export const resumeTill = (pin: string) =>
+  api.post<void>("/auth/pos/resume", { pin }, { "X-Pos-Device": posDeviceToken() ?? "" });
+
 export const listPosCashiers = () => deviceFetch<PosCashier[]>("/auth/pos/cashiers");
 
 export const pinLogin = (userId: string, pin: string) =>

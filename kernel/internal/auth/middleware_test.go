@@ -57,3 +57,26 @@ func TestSupplierSessionsOnlyReachTheirPurchaseOrders(t *testing.T) {
 		}
 	}
 }
+
+func TestPosKernelRoutes(t *testing.T) {
+	cases := []struct {
+		method, path string
+		want         bool
+	}{
+		{"GET", "/auth/me", true},
+		{"GET", "/orgs/settings", true},
+		{"POST", "/auth/pos/resume", true},
+		{"POST", "/orgs/settings", false},
+		{"GET", "/auth/pos/resume", false},
+		{"POST", "/orgs/members", false},
+	}
+	for _, c := range cases {
+		r := httptest.NewRequest(c.method, c.path, nil)
+		if got := posKernelRoute(PosVia, r); got != c.want {
+			t.Errorf("%s %s = %v, want %v", c.method, c.path, got, c.want)
+		}
+	}
+	if posKernelRoute("guss", httptest.NewRequest("POST", "/auth/pos/resume", nil)) {
+		t.Error("only a till PIN session may resume")
+	}
+}
