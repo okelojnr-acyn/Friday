@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { ApiError } from "../../lib/api";
 import {
   fetchAccountLedger,
@@ -139,14 +138,6 @@ export function ReportsPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Reports</h1>
-          <nav style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <Link to="/accounting/account" className="btn btn-sm btn-pill btn-secondary">
-              Chart of Accounts
-            </Link>
-            <Link to="/accounting/journal_entry" className="btn btn-sm btn-pill btn-secondary">
-              Journal Entries
-            </Link>
-          </nav>
           <nav style={{ display: "flex", gap: 8, marginTop: 10 }}>
             <Button size="sm" variant={tab === "pnl" ? "primary" : "secondary"} onClick={() => setTab("pnl")}>
               Profit &amp; Loss

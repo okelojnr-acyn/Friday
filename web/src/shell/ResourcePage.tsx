@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { fetchSchema } from "../lib/schema";
+import { appPath } from "./appNav";
 import { listRecords, updateRecord } from "../lib/resourceApi";
 import type { RecordRow, ResourceSpec, ViewKind } from "../lib/types";
 import { ApiError } from "../lib/api";
@@ -16,8 +17,12 @@ import { ProductCards } from "../apps/inventory/ProductCards";
 import { ProductEditor } from "../apps/inventory/ProductEditor";
 import type { Product } from "../lib/inventory";
 
-export function ResourcePage() {
-  const { app = "", resource = "" } = useParams();
+/** `app` is set when the URL isn't the app's name (People shows Minions). */
+export function ResourcePage({ app: appProp }: { app?: string } = {}) {
+  const params = useParams();
+  const app = appProp ?? params.app ?? "";
+  const resource = params.resource ?? "";
+  const [query, setQuery] = useState("");
   const [searchParams] = useSearchParams();
   const [schema, setSchema] = useState<ResourceSpec[] | null>(null);
   const [records, setRecords] = useState<RecordRow[] | null>(null);
@@ -47,6 +52,7 @@ export function ResourcePage() {
   // record.
   useEffect(() => {
     setEditing(null);
+    setQuery("");
   }, [app, resource]);
 
   const spec = useMemo(() => schema?.find((s) => s.name === resource) ?? null, [schema, resource]);
@@ -72,9 +78,14 @@ export function ResourcePage() {
   }, [spec, searchParams]);
 
   const visibleRecords = useMemo(() => {
-    if (!records || !activeFilter) return records;
-    return records.filter((r) => r[activeFilter.field.name] === activeFilter.value);
-  }, [records, activeFilter]);
+    if (!records) return records;
+    const q = query.trim().toLowerCase();
+    return records.filter(
+      (r) =>
+        (!activeFilter || r[activeFilter.field.name] === activeFilter.value) &&
+        (!q || Object.values(r).some((v) => typeof v === "string" && v.toLowerCase().includes(q))),
+    );
+  }, [records, activeFilter, query]);
 
   if (error) return <div className="page error-banner">{error}</div>;
   if (!schema) return <div className="page spinner">Loading...</div>;
@@ -115,24 +126,23 @@ export function ResourcePage() {
           {activeFilter ? (
             <div className="field-label" style={{ marginTop: 4 }}>
               Filtered by {activeFilter.field.label} ·{" "}
-              <Link to={`/${app}/${resource}`} style={{ color: "var(--accent)" }}>
+              <Link to={`${appPath(app)}/${resource}`} style={{ color: "var(--accent)" }}>
                 Clear
               </Link>
             </div>
           ) : null}
-          <nav style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            {schema.map((s) => (
-              <Link
-                key={s.name}
-                to={`/${app}/${s.name}`}
-                className={`btn btn-sm btn-pill ${s.name === resource ? "btn-primary" : "btn-secondary"}`}
-              >
-                {s.labelPlural}
-              </Link>
-            ))}
-          </nav>
+          <label className="hub-search" style={{ marginTop: 10 }}>
+            <Icon name="search" size={16} />
+            <input
+              type="search"
+              placeholder={`Search ${spec.labelPlural.toLowerCase()}`}
+              aria-label={`Search ${spec.labelPlural}`}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           {nonFormViews.length > 1
             ? nonFormViews.map((v) => (
                 <Button
@@ -233,5 +243,5 @@ export function AppIndexRedirect() {
 
   if (firstResource === undefined) return <div className="page spinner">Loading...</div>;
   if (firstResource === null) return <div className="page empty-state">This app has nothing to show yet.</div>;
-  return <Navigate to={`/${app}/${firstResource}`} replace />;
+  return <Navigate to={`${appPath(app)}/${firstResource}`} replace />;
 }

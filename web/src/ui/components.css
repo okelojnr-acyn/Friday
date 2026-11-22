@@ -266,15 +266,18 @@
 
 .app-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
-  gap: var(--space-3);
-  max-width: 760px;
+  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+  gap: var(--space-4) var(--space-3);
+  max-width: 960px;
+}
+.home .page-title {
+  margin-bottom: var(--space-5);
 }
 .app-tile {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
+  gap: 10px;
   padding: var(--space-3) var(--space-2);
   background: transparent;
   border: 1px solid transparent;
@@ -284,24 +287,123 @@
   text-align: center;
   transition: background 0.12s ease, transform 0.1s ease;
 }
-.app-tile:hover {
+.app-tile:hover,
+.app-tile:focus-visible {
   background: var(--glass-bg);
   border-color: var(--glass-border);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
 }
+/* App icons in the phone-launcher style: the app's colour as a soft
+   gradient, a white glyph, a top highlight and a coloured shadow. */
 .app-tile-icon {
-  width: 52px;
-  height: 52px;
+  --tile: var(--accent);
+  position: relative;
+  width: 76px;
+  height: 76px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
+  border-radius: 22px;
+  color: #fff;
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.35), transparent 55%),
+    linear-gradient(150deg, color-mix(in srgb, var(--tile) 78%, #fff), var(--tile) 55%, color-mix(in srgb, var(--tile) 80%, #000));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 6px 16px -6px color-mix(in srgb, var(--tile) 70%, transparent);
+}
+.app-tile-icon svg {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18));
+}
+.app-tile-icon-sm {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
 }
 .app-tile-label {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+@media (max-width: 640px) {
+  .app-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-3) var(--space-1);
+  }
+  .app-tile-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 18px;
+  }
+  .app-tile-label {
+    font-size: 13px;
+  }
+}
+
+/* An app in the Apps & integrations layout (shell/AppFrame.tsx): the
+   pages inside drop their own padding and width. */
+.app-frame {
+  max-width: 1320px;
+}
+.app-frame .hub {
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+.app-frame .hub-main > .page {
+  padding: 0;
+  max-width: none !important;
+  margin: 0;
+}
+.app-frame-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 8px 10px;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 16px;
+  text-decoration: none;
+}
+.app-frame-section {
+  display: grid;
+  gap: 2px;
+  margin-top: var(--space-2);
+}
+.app-frame-section-title {
+  padding: 4px 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.app-frame .hub-nav-item {
+  color: var(--text);
+  text-decoration: none;
+}
+.app-hint {
+  margin: 0 0 calc(-1 * var(--space-2));
+  color: var(--text-muted);
   font-size: 13px;
-  font-weight: 500;
+}
+@media (max-width: 640px) {
+  .app-frame .hub {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app-frame .hub-nav {
+    align-items: center;
+  }
+  .app-frame-section {
+    display: flex;
+    gap: var(--space-1);
+    margin: 0;
+  }
+  .app-frame-section-title {
+    display: none;
+  }
+  .app-frame-title span:last-child {
+    white-space: nowrap;
+  }
 }
 
 .kanban-board {
@@ -692,6 +794,10 @@
 }
 .ref-picker-row:hover {
   background: var(--surface);
+}
+.ref-picker-add {
+  color: var(--accent);
+  font-weight: 600;
 }
 .ref-picker-empty {
   padding: var(--space-2) var(--space-3);

@@ -42,7 +42,8 @@ export type IconName =
   | "storefront"
   | "sparkle"
   | "send"
-  | "mic";
+  | "mic"
+  | "till";
 
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = {
@@ -341,6 +342,14 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
         <svg {...common}>
           <path d="M4 12 20 4l-5 16-3-7-8-1Z" />
           <path d="m12 13 8-9" />
+        </svg>
+      );
+    case "till":
+      return (
+        <svg {...common}>
+          <rect x="3" y="12" width="18" height="8" rx="1.5" />
+          <path d="M6 12V6h8v6M14 8.5h3.5L19 12" />
+          <path d="M7 16h2M11 16h2M15 16h2" />
         </svg>
       );
     case "app-window":

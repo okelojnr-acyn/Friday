@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { fetchSchema } from "../../lib/schema";
 import { listRecords, updateRecord } from "../../lib/resourceApi";
 import { ApiError } from "../../lib/api";
@@ -84,14 +83,6 @@ export function PipelinePage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Pipeline</h1>
-          <nav style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <Link to="/crm/opportunity" className="btn btn-sm btn-pill btn-secondary">
-              All Opportunities
-            </Link>
-            <Link to="/crm/activity" className="btn btn-sm btn-pill btn-secondary">
-              Activities
-            </Link>
-          </nav>
         </div>
         <Button variant="primary" size="sm" className="btn-pill" onClick={() => setEditing("new")}>
           <Icon name="plus" size={14} /> New Opportunity

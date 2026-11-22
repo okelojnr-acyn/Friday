@@ -18,24 +18,27 @@ interface AppTileProps {
 // than the kernel catalog's icon field, so the grid never shows two apps
 // with the same glyph (it used to: anything outside four names fell back
 // to a generic window, and Point of Sale reused Invoicing's receipt).
-export const APP_ICONS: Record<string, { icon: IconName; color: string }> = {
+// `label` overrides the catalog's name where the owner renamed an app.
+export const APP_ICONS: Record<string, { icon: IconName; color: string; label?: string }> = {
   crm: { icon: "funnel", color: "#d6483f" },
   invoicing: { icon: "invoice", color: "#2f9e63" },
   projects: { icon: "kanban", color: "#3f6fd6" },
   inventory: { icon: "box", color: "#b5792a" },
   accounting: { icon: "calculator", color: "#6b5bd2" },
   web3: { icon: "chain", color: "#0f8f9c" },
-  minions: { icon: "users", color: "#c2417a" },
+  minions: { icon: "users", color: "#c2417a", label: "People" },
   fleets: { icon: "truck", color: "#4d6b2f" },
-  pos: { icon: "storefront", color: "#e07a35" },
+  pos: { icon: "till", color: "#e07a35" },
+  store: { icon: "storefront", color: "#1f8a70" },
+  more: { icon: "plus", color: "#7a7468" },
 };
 
 export function AppTile({ to, app, label, external }: AppTileProps) {
   const { icon, color } = APP_ICONS[app] ?? { icon: "app-window" as IconName, color: "var(--accent)" };
   const content = (
     <>
-      <span className="app-tile-icon" style={{ color }}>
-        <Icon name={icon} size={22} />
+      <span className="app-tile-icon" style={{ ["--tile" as string]: color }}>
+        <Icon name={icon} size={30} />
       </span>
       <span className="app-tile-label">{label}</span>
     </>
