@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scan</title>
+<!-- Guss's Telegram scanner (plan 16.3): opened from Guss's "Scan" button,
+     sends the code back to the chat with Telegram.WebApp.sendData. No
+     sign-in here: Guss checks the person's Friday role before using it. -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root { --bg: var(--tg-theme-bg-color, #fff); --fg: var(--tg-theme-text-color, #1c1c1c);
+          --btn: var(--tg-theme-button-color, #e07a35); --btn-fg: var(--tg-theme-button-text-color, #fff);
+          --hint: var(--tg-theme-hint-color, #777); }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+         font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button { display: block; width: 100%; padding: 14px; margin: 0 0 12px; border: 0; border-radius: 10px;
+           background: var(--btn); color: var(--btn-fg); font-size: 16px; }
+  button.secondary { background: transparent; color: var(--btn); border: 1px solid var(--btn); }
+  video { width: 100%; border-radius: 10px; display: none; margin-bottom: 12px; }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; padding: 12px; font-size: 16px; border-radius: 10px; border: 1px solid var(--hint);
+          background: var(--bg); color: var(--fg); }
+  form button { width: auto; margin: 0; }
+  p { color: var(--hint); font-size: 14px; }
+</style>
+</head>
+<body>
+<button id="qr">Scan a QR code</button>
+<button id="barcode" class="secondary" hidden>Scan a barcode</button>
+<video id="video" playsinline muted></video>
+<form id="typed"><input id="code" inputmode="numeric" autocomplete="off" placeholder="…or type the code" aria-label="Code"><button>Send</button></form>
+<p id="note"></p>
+<script>
+  const tg = window.Telegram && window.Telegram.WebApp;
+  const note = document.getElementById("note");
+  if (!tg || !tg.initData) note.textContent = "Open this from Guss's Scan button in Telegram.";
+  tg && tg.ready();
+  const send = (code) => {
+    code = String(code || "").trim().slice(0, 256);
+    if (!code) return;
+    if (tg && tg.initData) tg.sendData(code); // closes the page; Guss replies in the chat
+    else note.textContent = "Scanned: " + code;
+  };
+
+  document.getElementById("qr").onclick = () => {
+    if (!tg || !tg.showScanQrPopup) { note.textContent = "This Telegram can't scan QR codes; type the code."; return; }
+    tg.showScanQrPopup({ text: "Point at the QR code" }, (text) => { send(text); return true; });
+  };
+
+  // EAN/UPC product barcodes: Telegram's popup reads QR only, so use the
+  // browser's own detector where there is one (Android's in-app browser).
+  if ("BarcodeDetector" in window && navigator.mediaDevices) {
+    const btn = document.getElementById("barcode");
+    btn.hidden = false;
+    btn.onclick = async () => {
+      const video = document.getElementById("video");
+      try {
+        const detector = new BarcodeDetector();
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        video.srcObject = stream; video.style.display = "block"; await video.play();
+        const stop = () => stream.getTracks().forEach((t) => t.stop());
+        const look = async () => {
+          const found = await detector.detect(video).catch(() => []);
+          if (found.length) { stop(); send(found[0].rawValue); } else requestAnimationFrame(look);
+        };
+        look();
+      } catch (e) {
+        note.textContent = "Couldn't open the camera; type the code instead.";
+      }
+    };
+  }
+
+  document.getElementById("typed").onsubmit = (e) => { e.preventDefault(); send(document.getElementById("code").value); };
+</script>
+</body>
+</html>
