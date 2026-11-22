@@ -79,6 +79,7 @@ class ExpenseClaimOut(BaseModel):
     status: str
     receipt_url: str
     reimburse: bool
+    receipt_sha: str = ""
     submitted_at: datetime
 
     model_config = {"from_attributes": True}

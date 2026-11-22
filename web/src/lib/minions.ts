@@ -1,4 +1,7 @@
-import { api } from "./api";
+import { api, ApiError } from "./api";
+import { shrinkPhoto } from "./productImages";
+import { KERNEL_URL } from "./runtimeConfig";
+import { loadSession } from "./session";
 
 export interface ExpenseClaim {
   id: string;
@@ -10,6 +13,8 @@ export interface ExpenseClaim {
   receipt_url: string;
   /** false: the business paid (recorded only). Missing on older Minions = true. */
   reimburse?: boolean;
+  /** "" or missing: no receipt photo. */
+  receipt_sha?: string;
   submitted_at: string;
 }
 
@@ -46,3 +51,36 @@ export interface MyPayrollLine {
 }
 
 export const fetchMyPayroll = () => api.get<MyPayrollLine[]>("/api/minions/me/payroll");
+
+async function receiptFetch(id: string, init?: RequestInit): Promise<Response> {
+  const token = loadSession()?.token;
+  const headers = new Headers(init?.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(`${KERNEL_URL}/api/minions/expense_claims/${id}/receipt`, { ...init, headers });
+  if (!res.ok) {
+    let message = res.statusText;
+    try {
+      message = (await res.json()).detail ?? message;
+    } catch {
+      // not JSON
+    }
+    throw new ApiError(res.status, message);
+  }
+  return res;
+}
+
+/** Adds the receipt photo to your own waiting claim (resized to 1280 px). */
+export async function uploadClaimReceipt(id: string, file: File): Promise<ExpenseClaim> {
+  const blob = await shrinkPhoto(file, 1280);
+  const res = await receiptFetch(id, { method: "PUT", body: blob, headers: { "Content-Type": blob.type } });
+  return (await res.json()) as ExpenseClaim;
+}
+
+/** Opens a claim's receipt photo in a new tab. */
+export async function openClaimReceipt(id: string): Promise<void> {
+  const tab = window.open("", "_blank");
+  const blob = await (await receiptFetch(id)).blob();
+  const url = URL.createObjectURL(blob);
+  if (tab) tab.location.href = url;
+  else window.location.href = url;
+}

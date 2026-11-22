@@ -1,7 +1,8 @@
+import hashlib
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from friday_common import (
     first_delivery,
     FieldSpec,
@@ -30,6 +31,7 @@ from .models import (
     PAY_FREQUENCIES,
     PAYOUT_METHODS,
     PAYROLL_RUN_STATUSES,
+    ClaimReceipt,
     Employee,
     EmployeeSale,
     ExpenseClaim,
@@ -613,6 +615,72 @@ async def _get_owned_claim(session: AsyncSession, principal: Principal, claim_id
     if claim is None or str(claim.org_id) != principal.org_id:
         raise HTTPException(404, "expense claim not found")
     return claim
+
+
+RECEIPT_TYPES = {"image/webp", "image/jpeg", "image/png"}
+MAX_RECEIPT_BYTES = 1024 * 1024
+
+
+@expense_claims_router.put("/{claim_id}/receipt", response_model=ExpenseClaimOut)
+async def put_claim_receipt(
+    claim_id: uuid.UUID,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The receipt photo, as the raw image body: only the person who made
+    the claim, while it waits for a decision."""
+    claim = await _get_owned_claim(session, principal, claim_id)
+    me = await _resolve_my_employee(session, principal)
+    if claim.employee_id != me.id:
+        raise HTTPException(403, "only the person who made the claim adds its receipt")
+    if claim.status != "submitted":
+        raise HTTPException(400, f"claim is '{claim.status}'; receipts go on claims still waiting")
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type not in RECEIPT_TYPES:
+        raise HTTPException(415, "send a WebP, JPEG or PNG photo")
+    data = await request.body()
+    if not data:
+        raise HTTPException(422, "the photo is empty")
+    if len(data) > MAX_RECEIPT_BYTES:
+        raise HTTPException(413, "the photo is over 1 MB; resize it first")
+    now = datetime.now(UTC)
+    receipt = await session.get(ClaimReceipt, claim.id)
+    if receipt is None:
+        session.add(ClaimReceipt(claim_id=claim.id, org_id=claim.org_id, content_type=content_type, data=data, updated_at=now))
+    else:
+        receipt.content_type, receipt.data, receipt.updated_at = content_type, data, now
+    claim.receipt_sha = hashlib.sha256(data).hexdigest()[:16]
+    await session.commit()
+    await session.refresh(claim)
+    return claim
+
+
+@expense_claims_router.get("/{claim_id}/receipt")
+async def get_claim_receipt(
+    claim_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("claims.read")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The photo, for the claimant and whoever can see their claims."""
+    claim = await _get_owned_claim(session, principal, claim_id)
+    if scope.kind == "own":
+        me = await _resolve_my_employee(session, principal)
+        if claim.employee_id != me.id:
+            raise HTTPException(404, "expense claim not found")
+    else:
+        ids = await _visible_employee_ids(session, principal, scope)
+        if ids is not None and claim.employee_id not in ids:
+            raise HTTPException(404, "expense claim not found")
+    receipt = await session.get(ClaimReceipt, claim.id)
+    if receipt is None:
+        raise HTTPException(404, "no receipt")
+    return Response(
+        content=receipt.data,
+        media_type=receipt.content_type,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
 @expense_claims_router.patch("/{claim_id}/status", response_model=ExpenseClaimOut)

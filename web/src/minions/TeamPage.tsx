@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
 import { formatMoney } from "../lib/orgSettings";
-import type { ExpenseClaim } from "../lib/minions";
+import { openClaimReceipt, type ExpenseClaim } from "../lib/minions";
 import { Button } from "../ui/Button";
 
 interface TeamMember {
@@ -72,6 +72,14 @@ export function TeamPage() {
                   <div className="field-label">
                     {c.description}
                     {c.reimburse === false ? " · business paid" : " · pay back"}
+                    {c.receipt_sha ? (
+                      <>
+                        {" · "}
+                        <Button variant="ghost" size="sm" onClick={() => void openClaimReceipt(c.id).catch(() => {})}>
+                          Receipt
+                        </Button>
+                      </>
+                    ) : null}
                   </div>
                 </div>
                 <div className="minions-claim-actions">
