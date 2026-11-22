@@ -196,7 +196,7 @@ func (h *Handlers) Access(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"access": access, "apps": apps, "has_service_key": hasKey, "links": people,
+		"access": access, "apps": apps, "has_service_key": hasKey, "links": people, "bot_username": botUsername(r, h, c.OrgID),
 	})
 }
 
@@ -484,4 +484,11 @@ func (h *Handlers) People(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"people": people, "access": access})
+}
+
+// botUsername is Guss's Telegram bot, "" until Guss has reported it.
+func botUsername(r *http.Request, h *Handlers, orgID string) string {
+	var bot string
+	h.Pool.QueryRow(r.Context(), `SELECT bot_username FROM core.guss_service WHERE org_id = $1`, orgID).Scan(&bot)
+	return bot
 }

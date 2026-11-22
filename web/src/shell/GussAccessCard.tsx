@@ -3,6 +3,7 @@ import { ApiError } from "../lib/api";
 import {
   decideGussVoid,
   getGussAccess,
+  gussWebLink,
   linkGussTelegram,
   listGussVoids,
   newGussServiceKey,
@@ -282,8 +283,40 @@ export function GussAccessCard({ canManage }: { canManage: boolean }) {
         <div style={{ fontWeight: 500, marginBottom: 4 }}>
           Link your Telegram
         </div>
+        {data.bot_username ? (
+          <div style={{ marginBottom: 10 }}>
+            <Button
+              variant="primary"
+              disabled={busy}
+              onClick={() =>
+                run(
+                  async () => {
+                    // Opened now, while the click still counts, or the
+                    // browser blocks it as a pop-up.
+                    const tab = window.open("", "_blank");
+                    try {
+                      const { link } = await gussWebLink();
+                      if (tab) tab.location.href = link;
+                      else window.location.href = link;
+                    } catch (err) {
+                      tab?.close();
+                      throw err;
+                    }
+                  },
+                  "Telegram opened: press Start in Guss to finish linking",
+                  "Could not start linking",
+                )
+              }
+            >
+              Link my Telegram
+            </Button>
+            <p className="field-label" style={{ margin: "6px 0 0" }}>
+              Opens @{data.bot_username} in Telegram; press Start there and you're linked.
+            </p>
+          </div>
+        ) : null}
         <p className="field-label" style={{ marginBottom: 8 }}>
-          Send /link to your Guss bot and enter the 6-digit code here within 30
+          {data.bot_username ? "Or send" : "Send"} /link to your Guss bot and enter the 6-digit code here within 30
           minutes. Pasting the whole message works too.
         </p>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
