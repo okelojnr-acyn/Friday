@@ -205,17 +205,24 @@ async def settle(session: AsyncSession, org_id: str, invoice_id: str, reference:
     if newly_paid:
         inv.status = "paid"
         inv.updated_at = now
+    if newly_paid:
+        # Saved with the payment, in its transaction (plan 19.2).
+        await session.refresh(inv, attribute_names=["lines", "payments"])
+        if pos_pending:
+            await publish_pos_sale_recorded(org_id, inv, inv.grand_total_cents, session=session)
+            await publish_invoice_paid(
+                org_id, inv, inv.grand_total_cents, invoice_lines_payload(inv), session=session
+            )
+        else:
+            await publish_invoice_paid(
+                org_id,
+                inv,
+                inv.paid_cents,
+                invoice_lines_payload(inv),
+                posting_ref=rebook_ref(inv, uuid.uuid4().hex),
+                session=session,
+            )
     await session.commit()
-    if not newly_paid:
-        return
-    await session.refresh(inv, attribute_names=["lines", "payments"])
-    if pos_pending:
-        await publish_pos_sale_recorded(org_id, inv, inv.grand_total_cents)
-        await publish_invoice_paid(org_id, inv, inv.grand_total_cents, invoice_lines_payload(inv))
-    else:
-        await publish_invoice_paid(
-            org_id, inv, inv.paid_cents, invoice_lines_payload(inv), posting_ref=rebook_ref(inv, uuid.uuid4().hex)
-        )
 
 
 async def manual_tenders(session: AsyncSession, principal: Principal, invoice: Invoice, payments: list, charged: int) -> int:

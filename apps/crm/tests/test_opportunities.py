@@ -36,7 +36,7 @@ async def test_winning_an_opportunity_publishes_crm_opportunity_won(client, monk
     """
     captured = {}
 
-    async def fake_publish_event(event_type, org_id, payload):
+    async def fake_publish_event(event_type, org_id, payload, **_):
         captured["type"] = event_type
         captured["org_id"] = org_id
         captured["payload"] = payload

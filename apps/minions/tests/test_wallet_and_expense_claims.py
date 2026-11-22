@@ -163,7 +163,7 @@ async def test_receipt_photo_by_the_claimant_seen_by_approvers(client, as_princi
 async def test_withdraw_a_waiting_claim_and_payouts_reach_the_books(client, as_principal, principal, monkeypatch):
     sent = []
 
-    async def fake_publish_event(event_type, org_id, payload):
+    async def fake_publish_event(event_type, org_id, payload, **_):
         sent.append((event_type, payload))
 
     monkeypatch.setattr("app.main.publish_event", fake_publish_event)

@@ -195,13 +195,12 @@ async def update_opportunity(
         setattr(opp, field_name, value)
     opp.updated_at = datetime.now(UTC)
 
-    await session.commit()
-    await session.refresh(opp)
-
     # The one cross-app integration point in the MVP: winning an
     # opportunity gives Invoicing enough to draft an invoice. See
-    # kernel/internal/gateway/events.go for where this gets routed.
-    if previous_stage != "won" and opp.stage == "won":
+    # kernel/internal/gateway/events.go for where this gets routed. Saved
+    # with the stage change, in its transaction (plan 19.2).
+    won = previous_stage != "won" and opp.stage == "won"
+    if won:
         await publish_event(
             "crm.opportunity.won",
             principal.org_id,
@@ -213,7 +212,12 @@ async def update_opportunity(
                 "value_cents": opp.value_cents,
                 "currency": opp.currency,
             },
+            session=session,
         )
+    await session.commit()
+    await session.refresh(opp)
+
+    if won:
         await _notify_slack(
             principal.org_id,
             f":tada: Won: {opp.contact_name} ({opp.company}) -- {opp.currency} {opp.value_cents / 100:,.2f}",

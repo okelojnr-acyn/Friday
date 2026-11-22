@@ -58,3 +58,38 @@ async def test_a_repeated_event_is_applied_once(client, kernel_auth_header, prin
             },
         )
     assert (await client.get(f"/products/{p['id']}")).json()["on_hand_qty"] == 9
+
+
+async def test_an_event_saved_with_its_change_commits_and_rolls_back_with_it(monkeypatch, principal):
+    """Plan 19.2: published with `session=`, the event is written in the
+    caller's transaction: a rollback leaves neither the change nor the
+    event; a commit keeps both and sends the event right after."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    async with make_engine().begin() as conn:
+        await conn.execute(text(f'DELETE FROM "{get_settings().db_schema}".event_outbox'))
+    sent = []
+
+    async def up(client, event_id, event_type, org_id, payload):
+        sent.append(event_type)
+
+    monkeypatch.setattr(events, "_send", up)
+
+    async with AsyncSession(make_engine()) as session:
+        await events.publish_event("test.rolled_back", principal.org_id, {"n": 1}, session=session)
+        await session.rollback()
+    assert await outbox_rows() == []
+
+    async with AsyncSession(make_engine()) as session:
+        await events.publish_event("test.committed", principal.org_id, {"n": 2}, session=session)
+        assert sent == []  # nothing goes out before the commit
+        await session.commit()
+    import asyncio
+
+    for _ in range(50):  # the after-commit send runs as a task
+        if sent:
+            break
+        await asyncio.sleep(0.02)
+    (row,) = await outbox_rows()
+    assert row.type == "test.committed" and row.delivered_at is not None
+    assert sent == ["test.committed"]

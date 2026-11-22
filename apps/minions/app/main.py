@@ -746,10 +746,9 @@ async def pay_expense_claim(
         reason=f"Expense claim: {claim.description}",
     )
     claim.status = "paid"
-    await session.commit()
-    await session.refresh(claim)
     # The books: a claim Guss booked as owed (its description ends "(Guss
     # <id>)") clears 2150 Owed to staff; any other is a shop expense now.
+    # Saved with the claim's new status, in its transaction (plan 19.2).
     await publish_event(
         "minions.expense_claim.paid",
         principal.org_id,
@@ -760,7 +759,10 @@ async def pay_expense_claim(
             "owed_booked": bool(re.search(r"\(Guss [0-9a-f]{8}\)$", claim.description)),
             "description": claim.description,
         },
+        session=session,
     )
+    await session.commit()
+    await session.refresh(claim)
     return claim
 
 
@@ -945,17 +947,18 @@ async def refresh_payroll_run_status(
         run.status = "paid"
         run.updated_at = datetime.now(UTC)
 
-    await session.commit()
-    await session.refresh(run, attribute_names=["lines"])
-
     if newly_paid:
         paid_cents = sum(l.gross_amount_cents for l in run.lines if l.status == "confirmed")
         if paid_cents > 0:
+            # Saved with the run's new status (plan 19.2).
             await publish_event(
                 "minions.payroll_run.paid",
                 principal.org_id,
                 {"payroll_run_id": str(run.id), "amount_cents": paid_cents, "currency": run.currency},
+                session=session,
             )
+    await session.commit()
+    await session.refresh(run, attribute_names=["lines"])
     return PayrollRunOut.from_model(run)
 
 

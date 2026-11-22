@@ -437,12 +437,20 @@ async def record_payment(
         inv.status = "paid"
         inv.updated_at = datetime.now(UTC)
 
+    if newly_paid:
+        # Saved with the payment, in its transaction (plan 19.2).
+        await session.flush()
+        await session.refresh(inv, attribute_names=["lines", "payments"])
+        await publish_invoice_paid(
+            principal.org_id,
+            inv,
+            paid,
+            invoice_lines_payload(inv),
+            posting_ref=rebook_ref(inv, uuid.uuid4().hex),
+            session=session,
+        )
     await session.commit()
     await session.refresh(inv, attribute_names=["lines", "payments"])
-    if newly_paid:
-        await publish_invoice_paid(
-            principal.org_id, inv, paid, invoice_lines_payload(inv), posting_ref=rebook_ref(inv, uuid.uuid4().hex)
-        )
     return InvoiceOut.from_model(inv)
 
 
@@ -803,25 +811,28 @@ async def record_pos_sale(
             )
         )
     try:
+        await session.flush()
+        await session.refresh(invoice, attribute_names=["lines", "payments"])
+        # The sale's events are saved with it, in one transaction (plan
+        # 19.2): Inventory takes the stock and Minions credits the cashier
+        # (publish_pos_sale_recorded's doc comment); a POS sale is created
+        # already-paid, so it books at once -- a credit sale books when
+        # it's paid, like an invoice.
+        await publish_pos_sale_recorded(principal.org_id, invoice, charged_cents, session=session)
+        if not on_credit:
+            await publish_invoice_paid(
+                principal.org_id, invoice, charged_cents, invoice_lines_payload(invoice), session=session
+            )
         await session.commit()
     except IntegrityError:
-        # The same sale arrived twice at once; the other request saved it.
+        # The same sale arrived twice at once; the other request saved it
+        # (and its events: this one's roll back with it).
         await session.rollback()
         existing = await _pos_sale_by_client_id(session, principal, str(client_sale_id))
         if existing is None:
             raise
         return InvoiceOut.from_model(existing)
     await session.refresh(invoice, attribute_names=["lines", "payments"])
-
-    # Lets Inventory auto-decrement stock for any line rung up from the
-    # product catalog, and Minions attribute the sale to an employee (see
-    # publish_pos_sale_recorded's own doc comment).
-    await publish_pos_sale_recorded(principal.org_id, invoice, charged_cents)
-    # A POS sale is created already-paid, so this is always a "newly
-    # paid" transition -- no status check needed, unlike record_payment.
-    # A credit sale reaches the books when it's paid, like an invoice.
-    if not on_credit:
-        await publish_invoice_paid(principal.org_id, invoice, charged_cents, invoice_lines_payload(invoice))
 
     return InvoiceOut.from_model(invoice)
 
@@ -1179,7 +1190,7 @@ async def return_pos_sale(
             raise HTTPException(409, "this sale is on credit: take it all back, or record the payment first")
         original.status = "void"
         original.updated_at = datetime.now(UTC)
-        await session.commit()
+        await session.flush()
         await session.refresh(original, attribute_names=["lines", "payments"])
         back = SimpleNamespace(
             number=original.number,
@@ -1191,7 +1202,9 @@ async def return_pos_sale(
                 for l in original.lines
             ],
         )
-        await publish_pos_sale_recorded(principal.org_id, back, 0)
+        await publish_pos_sale_recorded(principal.org_id, back, 0, session=session)
+        await session.commit()
+        await session.refresh(original, attribute_names=["lines", "payments"])
         return InvoiceOut.from_model(original)
 
     now = datetime.now(UTC)
@@ -1284,14 +1297,17 @@ async def return_pos_sale(
         original.status = "void"
     original.updated_at = now
 
-    await session.commit()
+    await session.flush()
     await session.refresh(refund, attribute_names=["lines", "payments"])
-
-    await publish_pos_sale_recorded(principal.org_id, refund, refund_total_cents)
+    await publish_pos_sale_recorded(principal.org_id, refund, refund_total_cents, session=session)
     # Negative paid_amount_cents -- Accounting's invoice-paid webhook
     # mirrors the debit/credit sides for a negative amount so the ledger
     # itself never carries a negative entry.
-    await publish_invoice_paid(principal.org_id, refund, refund_total_cents, invoice_lines_payload(refund))
+    await publish_invoice_paid(
+        principal.org_id, refund, refund_total_cents, invoice_lines_payload(refund), session=session
+    )
+    await session.commit()
+    await session.refresh(refund, attribute_names=["lines", "payments"])
 
     return InvoiceOut.from_model(refund)
 
@@ -1353,10 +1369,11 @@ async def create_credit_note(
             received_at=now,
         )
     )
+    await session.flush()
+    await session.refresh(note, attribute_names=["lines", "payments"])
+    await publish_invoice_paid(principal.org_id, note, note_total_cents, invoice_lines_payload(note), session=session)
     await session.commit()
     await session.refresh(note, attribute_names=["lines", "payments"])
-
-    await publish_invoice_paid(principal.org_id, note, note_total_cents, invoice_lines_payload(note))
 
     return InvoiceOut.from_model(note)
 

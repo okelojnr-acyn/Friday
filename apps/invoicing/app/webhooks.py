@@ -154,10 +154,12 @@ async def stripe_webhook(request: Request, session: AsyncSession = Depends(get_s
         inv.status = "paid"
         inv.updated_at = now
 
-    await session.commit()
     if newly_paid:
+        # Saved with the payment, in its transaction (plan 19.2).
+        await session.flush()
         await session.refresh(inv, attribute_names=["lines", "payments"])
-        await publish_invoice_paid(org_id, inv, paid, invoice_lines_payload(inv))
+        await publish_invoice_paid(org_id, inv, paid, invoice_lines_payload(inv), session=session)
+    await session.commit()
     return {"ok": True}
 
 
@@ -217,10 +219,11 @@ async def pesapal_webhook(
         )
         invoice.status = "paid"
         invoice.updated_at = now
-        await session.commit()
+        await session.flush()
         await session.refresh(invoice, attribute_names=["lines", "payments"])
-        await publish_pos_sale_recorded(org_id, invoice, charged_cents)
-        await publish_invoice_paid(org_id, invoice, charged_cents, invoice_lines_payload(invoice))
+        await publish_pos_sale_recorded(org_id, invoice, charged_cents, session=session)
+        await publish_invoice_paid(org_id, invoice, charged_cents, invoice_lines_payload(invoice), session=session)
+        await session.commit()
     elif status in ("FAILED", "INVALID"):
         invoice.status = "void"
         invoice.updated_at = now

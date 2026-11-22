@@ -76,7 +76,7 @@ async def test_pos_sale_tax_reconciles_against_charged_amount(client):
 async def test_pos_sale_publishes_pos_sale_recorded_only_for_catalog_lines(client, monkeypatch):
     captured = []
 
-    async def fake_publish_event(event_type, org_id, payload):
+    async def fake_publish_event(event_type, org_id, payload, **_):
         captured.append((event_type, payload))
 
     # record_pos_sale publishes both invoicing.pos_sale.recorded

@@ -51,7 +51,33 @@ def _outbox() -> str:
     return f'"{get_settings().db_schema}".event_outbox'
 
 
-async def publish_event(event_type: str, org_id: str, payload: dict) -> None:
+# Deliveries started after a commit; kept so they aren't garbage-collected.
+_sending: set = set()
+
+
+async def _stage(session, event_type: str, org_id: str, payload: dict) -> None:
+    """Write the event in the caller's transaction and send it once that
+    commits. A rollback drops the event with the change it describes."""
+    from sqlalchemy import event as sa_event
+
+    event_id = str(uuid.uuid4())
+    await session.execute(
+        text(f"INSERT INTO {_outbox()} (id, type, org_id, payload) VALUES (:id, :type, :org, CAST(:payload AS jsonb))"),
+        {"id": event_id, "type": event_type, "org": org_id, "payload": json.dumps(payload, default=str)},
+    )
+
+    def _after_commit(_sync_session) -> None:
+        try:
+            task = asyncio.get_event_loop().create_task(deliver_due(only_id=event_id))
+            _sending.add(task)
+            task.add_done_callback(_sending.discard)
+        except RuntimeError:
+            pass  # no loop here: run_outbox sends it within its interval
+
+    sa_event.listen(session.sync_session, "after_commit", _after_commit, once=True)
+
+
+async def publish_event(event_type: str, org_id: str, payload: dict, *, session=None) -> None:
     """Publish a domain event (e.g. "invoicing.pos_sale.recorded") to the
     kernel, which delivers it to every app subscribed to it.
 
@@ -62,7 +88,17 @@ async def publish_event(event_type: str, org_id: str, payload: dict) -> None:
     travels with it, so a receiver that gets it twice can tell
     (first_delivery). Never raises: the request that published has
     already succeeded.
+
+    With `session` (plan 19.2): the event is written in that session's
+    transaction, before its commit, so a sale and the events it causes are
+    saved together or not at all (before, a crash between the commit and
+    this write lost the stock move or journal entry). Call it before
+    `commit()`. Without `session` it keeps the after-commit behaviour.
     """
+    if session is not None:
+        await _stage(session, event_type, org_id, payload)
+        return
+
     from .db import make_engine
 
     event_id = str(uuid.uuid4())

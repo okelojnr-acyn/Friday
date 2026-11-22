@@ -179,7 +179,7 @@ async def test_refresh_status_confirms_and_marks_run_paid(client, as_principal, 
 
     captured = {}
 
-    async def fake_publish_event(event_type, org_id, payload):
+    async def fake_publish_event(event_type, org_id, payload, **_):
         captured["event_type"] = event_type
         captured["org_id"] = org_id
         captured["payload"] = payload
@@ -239,7 +239,7 @@ async def test_refresh_status_does_not_publish_when_nothing_was_actually_paid(cl
 
     captured = {}
 
-    async def fake_publish_event(event_type, org_id, payload):
+    async def fake_publish_event(event_type, org_id, payload, **_):
         captured["called"] = True
 
     monkeypatch.setattr("app.main.publish_event", fake_publish_event)

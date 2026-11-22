@@ -810,10 +810,12 @@ async def set_purchase_order_status(
     if received_now:
         po.received_at = po.updated_at
         await price_purchase_vat(session, principal.org_id, po)
+    if received_now:
+        await session.flush()
+        await session.refresh(po, attribute_names=["lines"])
+        await publish_purchase_received(session, principal.org_id, po)
     await session.commit()
     await session.refresh(po, attribute_names=["lines"])
-    if received_now:
-        await publish_purchase_received(session, principal.org_id, po)
     return PurchaseOrderOut.from_model(po)
 
 
