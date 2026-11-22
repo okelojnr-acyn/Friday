@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { gussChat, gussReport, gussStatus } from "../lib/guss";
+import { gussChat, gussReport, gussStatus, listGussVoids } from "../lib/guss";
+import { useMyPermissions } from "../lib/permissions";
 import { Icon } from "./Icon";
 
 type Line = { from: "you" | "guss" | "error"; text: string };
@@ -65,6 +66,12 @@ const TEXT = {
     viewer: "Viewers can see reports. Ask an admin to record entries.",
     micBlocked: "Microphone blocked. Allow it in the browser's address bar to speak to Guss.",
     noAnswer: "Guss didn't answer. Try again in a moment.",
+    quickGroup: "Quick entries",
+    quick: { sell: "Sold…", stock: "Restocked…", paid: "Paid…" },
+    prefill: { sell: "sold ", stock: "restocked ", paid: "paid " },
+    approvals: "Approvals",
+    noApprovals: "No void requests are waiting.",
+    approvalsWhere: "Approve or reject them in Apps & integrations, Guss.",
   },
   id: {
     reports: { day: "Hari ini", week: "Minggu ini", month: "Bulan ini" },
@@ -89,8 +96,17 @@ const TEXT = {
     viewer: "Viewer bisa melihat laporan. Minta admin untuk mencatat.",
     micBlocked: "Mikrofon diblokir. Izinkan di bilah alamat browser untuk bicara ke Guss.",
     noAnswer: "Guss tidak menjawab. Coba lagi sebentar.",
+    quickGroup: "Catatan cepat",
+    quick: { sell: "Terjual…", stock: "Restok…", paid: "Bayar…" },
+    prefill: { sell: "terjual ", stock: "restok ", paid: "bayar " },
+    approvals: "Persetujuan",
+    noApprovals: "Tidak ada permintaan pembatalan.",
+    approvalsWhere: "Setujui atau tolak di Aplikasi & integrasi, Guss.",
   },
 };
+
+// Guss gives week and month reports to these Friday roles only.
+const LONGER_REPORTS = ["owner", "admin", "branch_manager"];
 
 function widgetText() {
   const lang = typeof navigator === "undefined" ? "" : navigator.language.toLowerCase();
@@ -114,6 +130,14 @@ export function GussWidget() {
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const canWrite = session?.role !== "viewer";
+  // What this person does (plan 12.3): null on an older kernel, then
+  // everything shows as before and Guss still checks.
+  const me = useMyPermissions();
+  const reports = !me || LONGER_REPORTS.includes(me.role) ? REPORTS : (["day"] as const);
+  const quick = (["sell", "stock", "paid"] as const).filter(
+    (k) => !me || (k === "sell" ? Boolean(me.rules["pos.sell"]) : k === "stock" ? Boolean(me.rules["stock.write"]) : true),
+  );
+  const decides = !me || me.role === "owner" || me.role === "admin";
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<Recognition | null>(null);
   const [canSpeak] = useState(() => typeof window !== "undefined" && speechRecognition() !== null);
@@ -194,6 +218,20 @@ export function GussWidget() {
     }
   }
 
+  function prefill(words: string) {
+    setText(words);
+    inputRef.current?.focus();
+  }
+
+  function approvals() {
+    void ask(async () => {
+      const { requests } = await listGussVoids();
+      if (requests.length === 0) return { reply: t.noApprovals };
+      const list = requests.map((r) => `${r.number}. ${r.requested_by}: ${r.entry} (${r.reason})`).join("\n");
+      return { reply: `${list}\n${t.approvalsWhere}` };
+    }, t.approvals);
+  }
+
   function send() {
     const t = text.trim();
     if (!t) return;
@@ -245,7 +283,7 @@ export function GussWidget() {
           </div>
 
           <div className="guss-reports" role="group" aria-label={t.reportsGroup}>
-            {REPORTS.map((w) => (
+            {reports.map((w) => (
               <button
                 key={w}
                 type="button"
@@ -256,6 +294,11 @@ export function GussWidget() {
                 {t.reports[w]}
               </button>
             ))}
+            {decides && (
+              <button type="button" className="guss-chip" disabled={busy} onClick={approvals}>
+                {t.approvals}
+              </button>
+            )}
             {lines.length > 0 && (
               <button type="button" className="guss-chip guss-chip-quiet" onClick={() => setLines([])}>
                 {t.clear}
@@ -263,6 +306,15 @@ export function GussWidget() {
             )}
           </div>
 
+          {canWrite && quick.length > 0 && (
+            <div className="guss-reports" role="group" aria-label={t.quickGroup}>
+              {quick.map((k) => (
+                <button key={k} type="button" className="guss-chip guss-chip-quiet" onClick={() => prefill(t.prefill[k])}>
+                  {t.quick[k]}
+                </button>
+              ))}
+            </div>
+          )}
           {canWrite ? (
             <form
               className="guss-form"
