@@ -1,4 +1,4 @@
-import { api, resourceBasePath } from "./api";
+import { api, resourceBasePath, SHORT } from "./api";
 import type { RecordRow } from "./types";
 import { invalidateReferenceOptions } from "./referenceCache";
 
@@ -14,7 +14,7 @@ const UPDATE_PATH_OVERRIDES: Record<string, (base: string, id: string) => string
 };
 
 export function listRecords(app: string, resourceName: string): Promise<RecordRow[]> {
-  return api.get<RecordRow[]>(resourceBasePath(app, resourceName));
+  return api.cached<RecordRow[]>(resourceBasePath(app, resourceName), SHORT);
 }
 
 export async function createRecord(

@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, LONG, SHORT } from "./api";
 
 /** People and access (plan section 12): the kernel's /orgs/members,
  * /orgs/invites, /orgs/locations and /orgs/access/rules. */
@@ -43,7 +43,7 @@ export interface AccessRules {
   rules: Record<string, Record<string, string>>;
 }
 
-export const listPeople = () => api.get<Person[]>("/orgs/members");
+export const listPeople = () => api.cached<Person[]>("/orgs/members", SHORT);
 export const updatePerson = (
   userId: string,
   patch: { role?: string; perms?: string[]; locations?: string[]; reports_to?: string },
@@ -61,11 +61,11 @@ export const createInvite = (body: {
 }) => api.post<Invite>("/orgs/invites", body);
 export const revokeInvite = (id: string) => api.del<void>(`/orgs/invites/${id}`);
 
-export const listLocations = () => api.get<Location[]>("/orgs/locations");
+export const listLocations = () => api.cached<Location[]>("/orgs/locations", LONG);
 export const saveLocation = (loc: Omit<Location, "id"> & { id?: string }) =>
   loc.id ? api.patch<Location>(`/orgs/locations/${loc.id}`, loc) : api.post<Location>("/orgs/locations", loc);
 
-export const accessRules = () => api.get<AccessRules>("/orgs/access/rules");
+export const accessRules = () => api.cached<AccessRules>("/orgs/access/rules", LONG);
 
 export const ROLE_LABEL: Record<string, string> = {
   owner: "Owner",

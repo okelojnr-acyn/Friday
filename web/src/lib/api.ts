@@ -54,15 +54,54 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+// A short memory for GETs (owner, 2026-11-22: every move between pages
+// re-read everything). Same path in flight = one request; a fresh answer
+// is reused for `ttlMs`; any change (POST/PATCH/PUT/DELETE) forgets it
+// all, so your own edits show at once. Keyed by org and person, so
+// switching business or account never shows someone else's data.
+// shortcut: another person's edit can take up to ttlMs to show; lower
+// the TTLs (or add a "refresh") if that bites.
+const memory = new Map<string, { at: number; value: Promise<unknown> }>();
+
+function cachedGet<T>(path: string, ttlMs: number): Promise<T> {
+  const session = loadSession();
+  const key = `${session?.orgId ?? ""} ${session?.email ?? ""} ${path}`;
+  const hit = memory.get(key);
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value as Promise<T>;
+  const value = request<T>(path).catch((err) => {
+    memory.delete(key);
+    throw err;
+  });
+  memory.set(key, { at: Date.now(), value });
+  return value;
+}
+
+async function change<T>(path: string, init: RequestInit): Promise<T> {
+  memory.clear();
+  try {
+    return await request<T>(path, init);
+  } finally {
+    // A read that started during the change may hold the old answer.
+    memory.clear();
+  }
+}
+
+/** How long a read may be reused: settings-like reads for minutes, lists briefly. */
+export const LONG = 10 * 60_000;
+export const SHORT = 30_000;
+
 export const api = {
+  /** Always asks the server (polling, payment status, anything live). */
   get: <T>(path: string) => request<T>(path),
+  /** Reuses a recent answer; see cachedGet. */
+  cached: <T>(path: string, ttlMs: number) => cachedGet<T>(path, ttlMs),
   post: <T>(path: string, body?: unknown, headers?: Record<string, string>) =>
-    request<T>(path, { method: "POST", body: body !== undefined ? JSON.stringify(body) : undefined, headers }),
+    change<T>(path, { method: "POST", body: body !== undefined ? JSON.stringify(body) : undefined, headers }),
   patch: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "PATCH", body: body !== undefined ? JSON.stringify(body) : undefined }),
+    change<T>(path, { method: "PATCH", body: body !== undefined ? JSON.stringify(body) : undefined }),
   put: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "PUT", body: body !== undefined ? JSON.stringify(body) : undefined }),
-  del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+    change<T>(path, { method: "PUT", body: body !== undefined ? JSON.stringify(body) : undefined }),
+  del: <T>(path: string) => change<T>(path, { method: "DELETE" }),
 };
 
 /** Naive but exhaustive against the current registry: every resource
