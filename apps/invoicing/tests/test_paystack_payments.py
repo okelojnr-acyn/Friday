@@ -350,3 +350,21 @@ async def test_receipts_go_to_the_business_address_when_set(client, paystack, mo
     # A customer's own email still wins.
     await client.post("/pos/sales/pay-with-paystack", json=dict(_sale(1000), email="amina@example.test"))
     assert paystack["started"][-1][2]["email"] == "amina@example.test"
+
+
+async def test_guss_sends_an_mpesa_prompt_for_a_scanned_basket_once(client, paystack):
+    body = dict(_sale(1000), phone="0712345678", channel="guss", client_sale_id="guss:7f1c")
+    r = await client.post("/pos/sales/pay-with-paystack", json=body)
+    assert r.status_code == 201, r.text
+    first = r.json()
+    # A retry (the reply was lost) sends no second prompt.
+    again = await client.post("/pos/sales/pay-with-paystack", json=body)
+    assert again.json()["invoice_id"] == first["invoice_id"]
+    assert len(paystack["prompts"]) == 1
+    _paid(paystack, paystack["prompts"][-1][5], 1000, channel="mobile_money")
+    assert (await client.get(f"/pos/sales/{first['invoice_id']}/status")).json()["status"] == "paid"
+    from datetime import UTC, datetime
+
+    today = datetime.now(UTC).date().isoformat()
+    guss_sales = (await client.get(f"/pos/sales?day={today}&channel=guss")).json()
+    assert [(x["channel"], x["status"]) for x in guss_sales] == [("guss", "paid")], "filed as a Guss sale"
