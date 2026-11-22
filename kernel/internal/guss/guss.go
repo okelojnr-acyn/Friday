@@ -31,6 +31,8 @@ type Handlers struct {
 	Issuer *auth.Issuer
 	// Client is replaced in tests; nil means the SSRF-safe default.
 	Client *http.Client
+	// WebURL is Friday's web address, for step-up links.
+	WebURL string
 }
 
 type config struct {

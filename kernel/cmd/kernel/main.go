@@ -189,7 +189,7 @@ func main() {
 	// no Authorization header; see google_oauth.go's oauthStateClaims doc.
 	mux.HandleFunc("GET /orgs/integrations/google_calendar/oauth/callback", integrationHandlers.GoogleOAuthCallback)
 
-	gussHandlers := &guss.Handlers{Pool: pool, Issuer: issuer}
+	gussHandlers := &guss.Handlers{Pool: pool, Issuer: issuer, WebURL: corsOrigin}
 	mux.Handle("GET /guss/status", requireAuth(http.HandlerFunc(gussHandlers.Status)))
 	mux.Handle("GET /guss/access", requireAuth(http.HandlerFunc(gussHandlers.Access)))
 	mux.Handle("PUT /guss/access", requireAuth(http.HandlerFunc(gussHandlers.SetAccess)))
@@ -202,6 +202,10 @@ func main() {
 	mux.HandleFunc("GET /guss/svc/people", gussHandlers.People)
 	mux.HandleFunc("POST /guss/svc/bot", gussHandlers.SetBot)
 	mux.HandleFunc("POST /guss/svc/redeem", gussHandlers.Redeem)
+	mux.HandleFunc("POST /guss/svc/step-up", gussHandlers.StartStepUp)
+	mux.HandleFunc("GET /guss/svc/step-up/{id}", gussHandlers.StepUpStatus)
+	mux.HandleFunc("GET /auth/step-up", authHandlers.StepUpInfo)
+	mux.HandleFunc("POST /auth/step-up/verify", authHandlers.StepUpVerify)
 	mux.Handle("POST /guss/link-code", requireAuth(http.HandlerFunc(gussHandlers.WebLinkCode)))
 	mux.Handle("POST /guss/chat", requireAuth(http.HandlerFunc(gussHandlers.Chat)))
 	mux.Handle("GET /guss/report", requireAuth(http.HandlerFunc(gussHandlers.Report)))
