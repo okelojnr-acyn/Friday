@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from friday_common import FieldSpec, Principal, ResourceSpec, create_app, get_current_principal, get_org_session, resource
+from friday_common.access import Scope, require, scope_for, whole_business
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -156,6 +157,7 @@ async def list_accounts(
 async def create_account(
     body: AccountCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("books.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     if body.type not in ACCOUNT_TYPES:
@@ -178,11 +180,13 @@ async def _get_journal_entry(session: AsyncSession, principal: Principal, entry_
 async def list_journal_entries(
     source_ref: str | None = None,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("books.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """All entries, newest first; `?source_ref=` narrows to one reference
     (Guss checks "guss:<entry id>" before sending, so a retry never books
     an entry twice)."""
+    whole_business(scope)
     query = select(JournalEntry).where(JournalEntry.org_id == _org(principal))
     if source_ref is not None:
         query = query.where(JournalEntry.source_ref == source_ref)
@@ -194,8 +198,10 @@ async def list_journal_entries(
 async def get_journal_entry(
     entry_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("books.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    whole_business(scope)
     entry = await _get_journal_entry(session, principal, entry_id)
     return JournalEntryOut.from_model(entry)
 
@@ -210,6 +216,11 @@ async def create_journal_entry(
     is enforced here, not in the database, same reasoning as every other
     cross-row business rule in this codebase (see Account's doc comment
     on JournalEntry in models.py)."""
+    # Guss books what staff record (an expense, a paid restock) as a draft
+    # the accountant posts: anyone who can claim expenses may send one.
+    # Typing entries in is the books' own (owners and admins).
+    if scope_for(principal, "books.write" if body.source == "manual" else "claims.submit") is None:
+        raise HTTPException(403, "your role can't add to the books; ask an admin")
     total_debit = sum(l.debit_cents for l in body.lines)
     total_credit = sum(l.credit_cents for l in body.lines)
     if total_debit != total_credit:
@@ -252,6 +263,7 @@ async def set_journal_entry_status(
     entry_id: uuid.UUID,
     body: JournalEntryStatusUpdate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("books.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """draft -> posted is the only transition; once posted, lines are
@@ -272,8 +284,10 @@ async def set_journal_entry_status(
 @fiscal_periods_router.get("", response_model=list[FiscalPeriodOut])
 async def list_fiscal_periods(
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("books.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    whole_business(scope)
     rows = await session.execute(
         select(FiscalPeriod).where(FiscalPeriod.org_id == _org(principal)).order_by(FiscalPeriod.start_date.desc())
     )
@@ -284,6 +298,7 @@ async def list_fiscal_periods(
 async def create_fiscal_period(
     body: FiscalPeriodCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("books.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     if body.status not in FISCAL_PERIOD_STATUSES:
@@ -298,8 +313,10 @@ async def create_fiscal_period(
 @bank_accounts_router.get("", response_model=list[BankAccountOut])
 async def list_bank_accounts(
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("books.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    whole_business(scope)
     rows = await session.execute(select(BankAccount).where(BankAccount.org_id == _org(principal)))
     return rows.scalars().all()
 
@@ -308,6 +325,7 @@ async def list_bank_accounts(
 async def create_bank_account(
     body: BankAccountCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("books.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     bank_account = BankAccount(org_id=_org(principal), **body.model_dump())
@@ -320,8 +338,10 @@ async def create_bank_account(
 @bank_transactions_router.get("", response_model=list[BankTransactionOut])
 async def list_bank_transactions(
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("books.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    whole_business(scope)
     rows = await session.execute(
         select(BankTransaction)
         .where(BankTransaction.org_id == _org(principal))
@@ -334,6 +354,7 @@ async def list_bank_transactions(
 async def create_bank_transaction(
     body: BankTransactionCreate,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("books.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     txn = BankTransaction(org_id=_org(principal), status="unmatched", **body.model_dump())
@@ -347,6 +368,7 @@ async def create_bank_transaction(
 async def match_bank_transaction(
     txn_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("books.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Marks a bank transaction matched -- manual reconciliation only in

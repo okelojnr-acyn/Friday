@@ -169,7 +169,7 @@ async def test_org_isolation_on_journal_entries(client, as_principal, principal)
         )
     ).json()
 
-    as_principal(make_principal())
+    as_principal(make_principal(role="admin"))
     assert (await client.get(f"/journal_entries/{created['id']}")).status_code == 404
     assert (await client.get("/journal_entries")).json() == []
 

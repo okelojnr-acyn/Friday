@@ -13,6 +13,7 @@ from friday_common import (
     resource,
 )
 from friday_common.integrations import AcynWalletProvider, CoinGeckoProvider
+from friday_common.access import Scope, require, whole_business
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -83,8 +84,10 @@ async def _provider(principal: Principal) -> AcynWalletProvider:
 @wallets_router.get("", response_model=list[WalletOut])
 async def list_wallets(
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("books.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    whole_business(scope)
     rows = await session.execute(
         select(Wallet).where(Wallet.org_id == _org(principal)).order_by(Wallet.network, Wallet.currency)
     )
@@ -94,6 +97,7 @@ async def list_wallets(
 @wallets_router.post("/refresh", response_model=list[WalletOut])
 async def refresh_wallets(
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("pay.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Pulls the treasury's registered networks and per-network balances
@@ -132,8 +136,10 @@ async def refresh_wallets(
 @transactions_router.get("", response_model=list[TransactionOut])
 async def list_transactions(
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("books.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    whole_business(scope)
     rows = await session.execute(
         select(Transaction).where(Transaction.org_id == _org(principal)).order_by(Transaction.created_at.desc())
     )
@@ -144,6 +150,7 @@ async def list_transactions(
 async def request_payout(
     body: PayoutRequest,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("pay.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     provider = await _provider(principal)
@@ -174,6 +181,7 @@ async def request_payout(
 async def submit_credit_transfer(
     body: CreditTransferSubmit,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("pay.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     provider = await _provider(principal)
@@ -207,6 +215,7 @@ async def _get_owned_transaction(session: AsyncSession, principal: Principal, tx
 async def refresh_transaction_status(
     txn_id: uuid.UUID,
     principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("pay.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
     txn = await _get_owned_transaction(session, principal, txn_id)

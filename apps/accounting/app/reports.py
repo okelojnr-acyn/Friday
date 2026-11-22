@@ -16,6 +16,7 @@ from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from friday_common import Principal, get_current_principal, get_org_session
+from friday_common.access import Scope, require, whole_business
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,11 +83,13 @@ async def _account_amounts(
 async def vat_ledger(
     month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("books.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """The month's movement on VAT Output (2200) and VAT Input (1500),
     posted entries only. Business settings > Tax puts it next to the VAT
     return's files: the same sales and purchases, so the two must agree."""
+    whole_business(scope)
     year, mon = (int(x) for x in month.split("-"))
     if not 1 <= mon <= 12:
         raise HTTPException(422, "month is YYYY-MM")
@@ -107,8 +110,10 @@ async def profit_and_loss(
     start_date: date = Query(...),
     end_date: date = Query(...),
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("books.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    whole_business(scope)
     org_id = _org(principal)
     await ensure_default_accounts(session, org_id)
     rows = await _account_amounts(session, org_id, ("income", "expense"), start_date, end_date)
@@ -142,12 +147,14 @@ async def profit_and_loss(
 async def balance_sheet(
     as_of_date: date = Query(...),
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("books.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Cash-basis, no closing entries ever zero out income/expense
     accounts -- so net income since inception is folded into Equity here
     the same way a real close would, keeping Assets == Liabilities +
     Equity by construction (every journal entry already balances)."""
+    whole_business(scope)
     org_id = _org(principal)
     await ensure_default_accounts(session, org_id)
 
@@ -188,12 +195,14 @@ async def cash_flow(
     start_date: date = Query(...),
     end_date: date = Query(...),
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("books.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Direct method, grouped by the source that moved the cash (manual /
     invoicing / pos / payroll) -- a real indirect-method statement with
     operating/investing/financing categorization is a documented stretch
     goal, same tier as the Chart of Accounts tree view."""
+    whole_business(scope)
     org_id = _org(principal)
     await ensure_default_accounts(session, org_id)
     cash = await get_account_by_code(session, org_id, "1010")
@@ -243,6 +252,7 @@ async def account_ledger(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("books.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Every posted line against one account, oldest first, with a
@@ -250,6 +260,7 @@ async def account_ledger(
     that point rather than carrying a true opening balance -- a documented
     gap for v1; the full (no date filter) ledger is the primary view and
     isn't affected."""
+    whole_business(scope)
     org_id = _org(principal)
     account = await session.get(Account, account_id)
     if account is None or str(account.org_id) != str(org_id):
