@@ -12,7 +12,7 @@ from app import main as main_mod
 def events(monkeypatch):
     captured = []
 
-    async def fake_publish_event(event_type, org_id, payload):
+    async def fake_publish_event(event_type, org_id, payload, **_):
         captured.append((event_type, payload))
 
     async def no_vat(org_id):

@@ -33,7 +33,7 @@ async def test_a_guss_sale_gets_its_vat_here_and_reaches_accounting_like_a_till_
 
     captured = []
 
-    async def fake_publish_event(event_type, org_id, payload):
+    async def fake_publish_event(event_type, org_id, payload, **_):
         captured.append((event_type, payload))
 
     monkeypatch.setattr(main_mod, "get_etims_config", cfg)
@@ -84,7 +84,7 @@ async def test_a_business_not_registered_for_vat_books_no_vat_on_guss_sales(clie
 
     captured = []
 
-    async def fake_publish_event(event_type, org_id, payload):
+    async def fake_publish_event(event_type, org_id, payload, **_):
         captured.append((event_type, payload))
 
     monkeypatch.setattr(main_mod, "get_etims_config", cfg)

@@ -130,7 +130,7 @@ async def test_a_till_sale_event_carries_its_vat_and_how_it_was_paid(client, mon
     # up to the amount, rounding line included, or it all falls back to cash.
     captured = []
 
-    async def fake_publish_event(event_type, org_id, payload):
+    async def fake_publish_event(event_type, org_id, payload, **_):
         captured.append((event_type, payload))
 
     monkeypatch.setattr("app.events.publish_event", fake_publish_event)
@@ -168,7 +168,7 @@ async def test_a_till_return_event_reverses_the_vat(client, monkeypatch):
     ).json()
     captured = []
 
-    async def fake_publish_event(event_type, org_id, payload):
+    async def fake_publish_event(event_type, org_id, payload, **_):
         captured.append((event_type, payload))
 
     monkeypatch.setattr("app.events.publish_event", fake_publish_event)

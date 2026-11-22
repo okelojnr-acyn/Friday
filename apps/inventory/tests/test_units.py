@@ -211,7 +211,7 @@ async def test_paying_a_supplier_once_for_what_came_in(client, as_principal, pri
 
     sent = []
 
-    async def fake_publish(event_type, org_id, payload):
+    async def fake_publish(event_type, org_id, payload, **_):
         sent.append((event_type, payload))
 
     monkeypatch.setattr(purchases, "get_etims_config", no_kernel)

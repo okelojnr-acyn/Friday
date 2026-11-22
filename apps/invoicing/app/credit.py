@@ -148,12 +148,15 @@ async def apply_debt_payment(
             inv.status = "paid"
             inv.updated_at = now
             settled.append(inv)
-    await session.commit()
+    await session.flush()
     for inv in settled:
         await session.refresh(inv, attribute_names=["lines", "payments"])
         await publish_invoice_paid(
-            org_id, inv, inv.paid_cents, invoice_lines_payload(inv), posting_ref=rebook_ref(inv, ref)
+            org_id, inv, inv.paid_cents, invoice_lines_payload(inv), posting_ref=rebook_ref(inv, ref), session=session
         )
+    await session.commit()
+    for inv in settled:
+        await session.refresh(inv, attribute_names=["lines", "payments"])
     return settled
 
 
@@ -264,14 +267,22 @@ async def reverse_debt_payment(
                 client_ref=ref + REVERSED,
             )
         )
-    await session.commit()
+    await session.flush()
     for inv, booked in to_unbook:
         await session.refresh(inv, attribute_names=["lines", "payments"])
         total = sum(b.amount_cents for b in booked)
         lines = [{**line, "quantity": -line["quantity"]} for line in invoice_lines_payload(inv)]
         await publish_invoice_paid(
-            principal.org_id, inv, -total, lines, posting_ref=f"{inv.id}{REVERSED}:{ref}", sign=-1, payments=booked
+            principal.org_id,
+            inv,
+            -total,
+            lines,
+            posting_ref=f"{inv.id}{REVERSED}:{ref}",
+            sign=-1,
+            payments=booked,
+            session=session,
         )
+    await session.commit()
     return {
         "reversed_cents": sum(p.amount_cents for p in paid),
         "reopened": [inv.number for inv, _ in to_unbook],

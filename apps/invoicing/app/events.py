@@ -34,7 +34,7 @@ def invoice_lines_payload(inv: Invoice) -> list[dict]:
     ]
 
 
-async def publish_pos_sale_recorded(org_id: str, inv: Invoice, charged_cents: int) -> None:
+async def publish_pos_sale_recorded(org_id: str, inv: Invoice, charged_cents: int, *, session=None) -> None:
     """Shared by record_pos_sale, return_pos_sale, and pay_with_pesapal's
     webhook confirmation -- previously built inline at each call site
     (slightly differently: record_pos_sale read raw client-supplied
@@ -68,6 +68,7 @@ async def publish_pos_sale_recorded(org_id: str, inv: Invoice, charged_cents: in
                 if line.product_id
             ],
         },
+        **({"session": session} if session is not None else {}),
     )
 
 
@@ -94,6 +95,7 @@ async def publish_invoice_paid(
     posting_ref: str | None = None,
     sign: int = 1,
     payments: list | None = None,
+    session=None,
 ) -> None:
     """sign=-1 publishes the exact mirror of an earlier booking (a reversed
     payment), with `payments` as they were when it was booked. posting_ref
@@ -125,4 +127,5 @@ async def publish_invoice_paid(
             "lines": lines_payload,
             **({"posting_ref": posting_ref} if posting_ref else {}),
         },
+        **({"session": session} if session is not None else {}),
     )

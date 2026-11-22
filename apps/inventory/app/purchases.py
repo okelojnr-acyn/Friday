@@ -72,6 +72,7 @@ async def publish_purchase_received(session: AsyncSession, org_id: str, po: Purc
             "net_cents": net,
             "vat_cents": vat,
         },
+        session=session,  # saved with the receipt, in its transaction (plan 19.2)
     )
 
 
@@ -99,7 +100,7 @@ async def pay_purchase_order(
     po.paid_method = method
     po.paid_reference = body.reference.strip()
     po.updated_at = po.paid_at
-    await session.commit()
+    await session.flush()
     await session.refresh(po, attribute_names=["lines"])
     supplier = await session.get(Supplier, po.supplier_id) if po.supplier_id else None
     await publish_event(
@@ -113,7 +114,10 @@ async def pay_purchase_order(
             "method": method,
             "reference": po.paid_reference,
         },
+        session=session,  # saved with the payment (plan 19.2)
     )
+    await session.commit()
+    await session.refresh(po, attribute_names=["lines"])
     return PurchaseOrderOut.from_model(po)
 
 
