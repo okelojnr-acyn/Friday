@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
@@ -51,6 +51,8 @@ class InvoiceCreate(BaseModel):
     currency: str = "USD"
     lines: list[LineIn] = []
     recurring_interval: str = ""
+    # Chosen in the invoice editor ("in 7 days"); None = the customer's terms.
+    due_at: date | None = None
 
 
 class InvoiceStatusUpdate(BaseModel):

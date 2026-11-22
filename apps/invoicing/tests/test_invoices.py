@@ -36,6 +36,23 @@ async def test_invoice_due_at_set_from_customer_payment_terms(client):
     assert body["due_at"] is not None
 
 
+async def test_invoice_due_at_chosen_in_the_editor_wins(client):
+    from datetime import date, timedelta
+
+    day = (date.today() + timedelta(days=7)).isoformat()
+    customer = (await client.post("/customers", json={"name": "Jane", "payment_terms_days": 30})).json()
+    resp = await client.post(
+        "/invoices",
+        json={"customer_id": customer["id"], "due_at": day, "lines": [{"description": "x", "unit_price_cents": 100}]},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["due_at"].startswith(day)
+    past = await client.post(
+        "/invoices", json={"due_at": "2020-01-01", "lines": [{"description": "x", "unit_price_cents": 100}]}
+    )
+    assert past.status_code == 422
+
+
 async def test_invoice_without_customer_has_no_due_at(client):
     resp = await client.post("/invoices", json={"lines": [{"description": "x", "unit_price_cents": 100}]})
     assert resp.json()["due_at"] is None

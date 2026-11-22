@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { fetchSchema } from "../lib/schema";
 import { appPath } from "./appNav";
+import { AppHint, useActiveNav } from "./AppFrame";
 import { listRecords, updateRecord } from "../lib/resourceApi";
 import type { RecordRow, ResourceSpec, ViewKind } from "../lib/types";
 import { ApiError } from "../lib/api";
@@ -24,6 +25,9 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
   const resource = params.resource ?? "";
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<string | null>(null);
+  // Invoices: till receipts are hidden unless asked for (plan 18).
+  const [showTill, setShowTill] = useState(false);
+  const nav = useActiveNav();
   const [searchParams] = useSearchParams();
   const [schema, setSchema] = useState<ResourceSpec[] | null>(null);
   const [records, setRecords] = useState<RecordRow[] | null>(null);
@@ -35,6 +39,7 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
   // Inventory products show as photo cards by category; the table stays
   // one click away.
   const isProducts = app === "inventory" && resource === "product";
+  const isInvoices = app === "invoicing" && resource === "invoice";
   const [productCards, setProductCards] = useState(true);
 
   useEffect(() => {
@@ -51,6 +56,12 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
   // so any open record modal has to be closed by hand, or the next
   // resource's FormView would render bound to the previous resource's
   // record.
+  // "?new=1" (e.g. Receivables' New invoice) opens the create screen.
+  useEffect(() => {
+    if (searchParams.get("new") === "1") setEditing("new");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     setEditing(null);
     setQuery("");
@@ -90,9 +101,10 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
       (r) =>
         (!activeFilter || r[activeFilter.field.name] === activeFilter.value) &&
         (!status || !statusField || r[statusField.name] === status) &&
+        (showTill || !isInvoices || r.source !== "pos") &&
         (!q || Object.values(r).some((v) => typeof v === "string" && v.toLowerCase().includes(q))),
     );
-  }, [records, activeFilter, query, status, statusField]);
+  }, [records, activeFilter, query, status, statusField, showTill, isInvoices]);
 
   if (error) return <div className="page error-banner">{error}</div>;
   if (!schema) return <div className="page spinner">Loading...</div>;
@@ -129,7 +141,8 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">{spec.labelPlural}</h1>
+          <h1 className="page-title">{nav?.label && !nav.external ? nav.label : spec.labelPlural}</h1>
+          <AppHint />
           {activeFilter ? (
             <div className="field-label" style={{ marginTop: 4 }}>
               Filtered by {activeFilter.field.label} ·{" "}
@@ -138,6 +151,7 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
               </Link>
             </div>
           ) : null}
+          {isProducts && productCards ? null : (
           <label className="hub-search" style={{ marginTop: 10 }}>
             <Icon name="search" size={16} />
             <input
@@ -148,6 +162,7 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
               onChange={(e) => setQuery(e.target.value)}
             />
           </label>
+          )}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           {nonFormViews.length > 1
@@ -178,11 +193,17 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
               <Icon name="barcode" size={14} /> Bulk add
             </Button>
           ) : null}
-          <Button variant="secondary" size="sm" className="btn-pill" onClick={() => setImportingCsv(true)}>
-            <Icon name="upload" size={14} /> Import CSV
+          {isInvoices ? (
+            <Button variant="ghost" size="sm" className="btn-pill" onClick={() => setShowTill((v) => !v)}>
+              {showTill ? "Hide till receipts" : "Show till receipts"}
+            </Button>
+          ) : null}
+          {/* Rarely used: kept quiet so New is the one clear action. */}
+          <Button variant="ghost" size="sm" className="btn-pill" onClick={() => setImportingCsv(true)} title="Import from a CSV file">
+            <Icon name="upload" size={14} /> Import
           </Button>
           <Button variant="primary" size="sm" className="btn-pill" onClick={() => setEditing("new")}>
-            <Icon name="plus" size={14} /> New
+            <Icon name="plus" size={14} /> New {spec.label.toLowerCase()}
           </Button>
         </div>
       </div>
@@ -218,7 +239,17 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
       ) : view === "kanban" ? (
         <KanbanView spec={spec} records={visibleRecords} onCardClick={setEditing} onMove={handleMove} />
       ) : (
-        <ListView spec={spec} records={visibleRecords} onRowClick={setEditing} />
+        <ListView
+          spec={spec}
+          records={visibleRecords}
+          onRowClick={setEditing}
+          filtered={(records?.length ?? 0) > 0}
+          emptyAction={
+            <Button variant="primary" size="sm" className="btn-pill" onClick={() => setEditing("new")}>
+              <Icon name="plus" size={14} /> New {spec.label.toLowerCase()}
+            </Button>
+          }
+        />
       )}
 
       {editing && isProducts ? (

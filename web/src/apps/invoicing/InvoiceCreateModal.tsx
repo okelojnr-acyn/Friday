@@ -1,3 +1,4 @@
+import { currentOrgSettings } from "../../lib/orgSettings";
 import { useState } from "react";
 import { Modal } from "../../ui/Modal";
 import { Button } from "../../ui/Button";
@@ -60,12 +61,12 @@ interface DocumentCreateModalProps {
  *
  * Per-line tax % was missing entirely before 2026-11-10 -- every manual
  * invoice went out at 0% tax, unusable for a VAT-registered business.
- * Defaults stay neutral (USD, 0%) until per-org defaults exist (the P4
- * setup wizard in ROADMAP.md). */
+ * The currency starts as the business's own (Business settings); it was
+ * USD for everyone until 2026-11-22, so KES shops issued USD invoices. */
 export function InvoiceCreateModal({ onClose, onSaved, kind = "invoice" }: DocumentCreateModalProps) {
   const isQuote = kind === "quote";
   const [customerId, setCustomerId] = useState<unknown>(null);
-  const [currency, setCurrency] = useState("USD");
+  const [currency, setCurrency] = useState(() => currentOrgSettings().currency || "KES");
   const [recurringInterval, setRecurringInterval] = useState("");
   const [validDays, setValidDays] = useState("30");
   const [defaultTax, setDefaultTax] = useState("");

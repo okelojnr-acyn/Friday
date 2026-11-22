@@ -25,6 +25,7 @@ import {
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Drawer } from "../ui/Drawer";
+import { AppHint } from "./AppFrame";
 import { Checkbox, FieldWrap, Input, Select } from "../ui/Field";
 
 const TABS = [
@@ -91,10 +92,13 @@ export function PeoplePage() {
   return (
     <div className="page" style={{ maxWidth: 1080 }}>
       <div className="page-header">
-        <h1 className="page-title">
-          {TABS.find(([id]) => id === tab)?.[1]}
-          {tab === "invites" && pending.length ? ` (${pending.length} waiting)` : ""}
-        </h1>
+        <div>
+          <h1 className="page-title">
+            {TABS.find(([id]) => id === tab)?.[1]}
+            {tab === "invites" && pending.length ? ` (${pending.length} waiting)` : ""}
+          </h1>
+          <AppHint />
+        </div>
         {isAdmin || isManager ? (
           <Button variant="primary" onClick={() => setInviting(true)}>
             Invite someone

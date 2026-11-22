@@ -3,7 +3,9 @@ import type { FieldSpec, RecordRow, ResourceSpec } from "../../lib/types";
 import { Avatar } from "../Avatar";
 import { Badge } from "../Badge";
 import { PriorityFlag } from "../PriorityFlag";
+import type { ReactNode } from "react";
 import { formatCellValue, initials, isOverdue, isPersonField, isPriorityField, sumCents } from "./fieldFormat";
+import { statusTone } from "../Badge";
 import { resolveReferenceLabel } from "../../lib/referenceCache";
 import { formatMoney } from "../../lib/orgSettings";
 
@@ -11,7 +13,17 @@ interface ListViewProps {
   spec: ResourceSpec;
   records: RecordRow[];
   onRowClick: (record: RecordRow) => void;
+  /** A search or tab hides everything (say so) vs. truly nothing yet. */
+  filtered?: boolean;
+  /** The way to start, shown when there's nothing yet. */
+  emptyAction?: ReactNode;
 }
+
+// Numbers, money, dates and statuses never break across lines.
+const NOWRAP = new Set(["currency", "date", "datetime", "select", "number"]);
+const cellClass = (f: FieldSpec) =>
+  [f.type === "currency" ? "cell-currency" : "", NOWRAP.has(f.type) || f.name === "number" ? "cell-nowrap" : ""].filter(Boolean).join(" ") ||
+  undefined;
 
 function ReferenceCell({ field, value }: { field: FieldSpec; value: unknown }) {
   const [label, setLabel] = useState<string | null>(null);
@@ -37,7 +49,7 @@ function Cell({ field, value, record }: { field: FieldSpec; value: unknown; reco
   if (isOverdue(field, record)) {
     return (
       <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        {formatCellValue(field, value)}
+        {formatCellValue(field, value, record)}
         <Badge tone="danger">Overdue</Badge>
       </span>
     );
@@ -57,15 +69,25 @@ function Cell({ field, value, record }: { field: FieldSpec; value: unknown; reco
   if (field.type === "reference") {
     return <ReferenceCell field={field} value={value} />;
   }
-  return <>{formatCellValue(field, value)}</>;
+  if (field.type === "select" && (field.name === "status" || field.name === "stage") && value) {
+    return <Badge tone={statusTone(String(value))}>{String(value).replace(/_/g, " ")}</Badge>;
+  }
+  return <>{formatCellValue(field, value, record)}</>;
 }
 
-export function ListView({ spec, records, onRowClick }: ListViewProps) {
+export function ListView({ spec, records, onRowClick, filtered, emptyAction }: ListViewProps) {
   const columns = spec.fields.filter((f) => f.listVisible);
   const currencyColumns = columns.filter((f) => f.type === "currency");
 
   if (records.length === 0) {
-    return <div className="empty-state">No {spec.labelPlural.toLowerCase()} yet.</div>;
+    return filtered ? (
+      <div className="empty-state">Nothing matches. Clear the search or pick another tab.</div>
+    ) : (
+      <div className="empty-state" style={{ display: "grid", gap: 12, justifyItems: "center" }}>
+        <span>No {spec.labelPlural.toLowerCase()} yet.</span>
+        {emptyAction}
+      </div>
+    );
   }
 
   return (
@@ -74,7 +96,7 @@ export function ListView({ spec, records, onRowClick }: ListViewProps) {
         <thead>
           <tr>
             {columns.map((f) => (
-              <th key={f.name} className={f.type === "currency" ? "col-currency" : undefined}>
+              <th key={f.name} className={f.type === "currency" ? "col-currency cell-nowrap" : undefined}>
                 {f.label}
               </th>
             ))}
@@ -84,7 +106,7 @@ export function ListView({ spec, records, onRowClick }: ListViewProps) {
           {records.map((record) => (
             <tr key={record.id} onClick={() => onRowClick(record)}>
               {columns.map((f) => (
-                <td key={f.name} className={f.type === "currency" ? "cell-currency" : undefined}>
+                <td key={f.name} className={cellClass(f)}>
                   <Cell field={f} value={record[f.name]} record={record} />
                 </td>
               ))}

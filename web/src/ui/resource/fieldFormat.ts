@@ -15,11 +15,15 @@ export function amountInputToCents(value: string): number {
   return Number.isFinite(n) ? Math.round(n * 100) : 0;
 }
 
-export function formatCellValue(field: FieldSpec, value: unknown): string {
+/** `record` lets money show in the document's own currency (an invoice in
+ * USD in a KES business shows USD, not Ksh). */
+export function formatCellValue(field: FieldSpec, value: unknown, record?: Record<string, unknown>): string {
   if (value === null || value === undefined || value === "") return "—";
   switch (field.type) {
     case "currency":
-      return typeof value === "number" ? formatMoney(value) : String(value);
+      return typeof value === "number"
+        ? formatMoney(value, { currency: typeof record?.currency === "string" ? record.currency : undefined })
+        : String(value);
     case "boolean":
       return value ? "Yes" : "No";
     case "date":

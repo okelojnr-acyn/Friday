@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import type { RecordRow } from "../lib/types";
-import { InvoiceCreateModal, QuoteCreateModal } from "../apps/invoicing/InvoiceCreateModal";
+import { QuoteCreateModal } from "../apps/invoicing/InvoiceCreateModal";
+import { GoToInvoiceEditor } from "../apps/invoicing/InvoiceEditorPage";
 import { PurchaseOrderCreateModal } from "../apps/inventory/PurchaseOrderCreateModal";
 
 export interface CustomCreateProps {
@@ -15,7 +16,8 @@ export interface CustomCreateProps {
  * instead -- keyed by "app.resource" so ResourcePage can look one up
  * without every app needing to know about this mechanism. */
 export const CUSTOM_CREATE_SCREENS: Record<string, ComponentType<CustomCreateProps>> = {
-  "invoicing.invoice": InvoiceCreateModal,
+  // Invoices get the full editor with a live preview (plan 18.4 step 4).
+  "invoicing.invoice": GoToInvoiceEditor,
   "invoicing.quote": QuoteCreateModal,
   "inventory.purchase_order": PurchaseOrderCreateModal,
 };
