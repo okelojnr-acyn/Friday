@@ -139,7 +139,7 @@ async def test_business_paid_claim_is_recorded_never_paid_out(client, as_princip
 
 
 async def test_receipt_photo_by_the_claimant_seen_by_approvers(client, as_principal, principal):
-    admin = _as_admin(as_principal, principal)
+    _as_admin(as_principal, principal)
     await client.post("/employees", json={"name": "Jane", "email": principal.email})
 
     as_principal(principal)
@@ -152,7 +152,8 @@ async def test_receipt_photo_by_the_claimant_seen_by_approvers(client, as_princi
     mine = await client.get(f"/expense_claims/{claim['id']}/receipt")
     assert mine.status_code == 200 and mine.content == png
 
-    # An approver sees it; only the claimant adds or changes it.
+    # An approver (someone else) sees it; only the claimant adds or changes it.
+    admin = make_principal(org_id=principal.org_id, role="admin", email="boss@example.com")
     as_principal(admin)
     assert (await client.get(f"/expense_claims/{claim['id']}/receipt")).content == png
     again = await client.put(f"/expense_claims/{claim['id']}/receipt", content=png, headers={"content-type": "image/png"})
