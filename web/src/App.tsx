@@ -11,6 +11,8 @@ import { StepUpPage } from "./shell/StepUpPage";
 import { DashboardPage } from "./shell/DashboardPage";
 import { AppsIntegrationsPage } from "./shell/AppsIntegrationsPage";
 import { PeoplePage } from "./shell/PeoplePage";
+import { AppFrame } from "./shell/AppFrame";
+import { StorePage } from "./shell/StorePage";
 import { ImportPage } from "./shell/ImportPage";
 import { BusinessSettingsPage } from "./shell/BusinessSettingsPage";
 import { EtimsFilingPage } from "./shell/EtimsFilingPage";
@@ -47,24 +49,30 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/apps" element={<AppsIntegrationsPage />} />
           <Route path="/settings/integrations" element={<IntegrationsRedirect />} />
-          <Route path="/settings/people" element={<PeoplePage />} />
-          <Route path="/settings/members" element={<Navigate to="/settings/people" replace />} />
+          <Route path="/store" element={<StorePage />} />
+          <Route path="/settings/people" element={<Navigate to="/people" replace />} />
+          <Route path="/settings/members" element={<Navigate to="/people" replace />} />
           <Route path="/settings/import" element={<ImportPage />} />
           <Route path="/settings/business" element={<BusinessSettingsPage />} />
-          <Route path="/etims" element={<EtimsFilingPage />} />
-          <Route path="/inventory/unit_of_measure" element={<UnitsPage />} />
-          {/* POS moved to its own installable mini-app (web/pos.html,
-              apps/pos/PosApp.tsx) -- gated behind a biometric cashier
-              clock-in that only makes sense as a dedicated entry, same
-              reasoning Minions already has its own entry. Reachable from
-              the dashboard tile (external link, not this route table). */}
-          <Route path="/crm" element={<PipelinePage />} />
-          <Route path="/invoicing" element={<ReceivablesPage />} />
-          <Route path="/web3/treasury" element={<TreasuryPage />} />
-          <Route path="/accounting/reports" element={<ReportsPage />} />
-          <Route path="/web3/market" element={<MarketPage />} />
-          <Route path="/:app" element={<AppIndexRedirect />} />
-          <Route path="/:app/:resource" element={<ResourcePage />} />
+          <Route element={<AppFrame />}>
+            <Route path="/etims" element={<EtimsFilingPage />} />
+            <Route path="/inventory/unit_of_measure" element={<UnitsPage />} />
+            {/* POS moved to its own installable mini-app (web/pos.html,
+                apps/pos/PosApp.tsx) -- gated behind a biometric cashier
+                clock-in that only makes sense as a dedicated entry, same
+                reasoning Minions already has its own entry. Reachable from
+                the dashboard tile (external link, not this route table). */}
+            <Route path="/crm" element={<PipelinePage />} />
+            <Route path="/invoicing" element={<ReceivablesPage />} />
+            <Route path="/web3/treasury" element={<TreasuryPage />} />
+            <Route path="/accounting/reports" element={<ReportsPage />} />
+            <Route path="/web3/market" element={<MarketPage />} />
+            {/* People is Minions' admin side (owner, 2026-11-22); /minions/ is the staff app. */}
+            <Route path="/people" element={<PeoplePage />} />
+            <Route path="/people/:resource" element={<ResourcePage app="minions" />} />
+            <Route path="/:app" element={<AppIndexRedirect />} />
+            <Route path="/:app/:resource" element={<ResourcePage />} />
+          </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

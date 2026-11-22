@@ -78,7 +78,7 @@ export function AppsIntegrationsPage() {
   const items: Item[] = useMemo(
     () => [
       ...(apps ?? []).map(
-        (app): Item => ({ kind: "app", key: app.name, label: app.label, group: APPS_GROUP, enabled: app.installed, app }),
+        (app): Item => ({ kind: "app", key: app.name, label: APP_ICONS[app.name]?.label ?? app.label, group: APPS_GROUP, enabled: app.installed, app }),
       ),
       ...PROVIDERS.map(
         (p): Item => ({

@@ -76,14 +76,13 @@ history log) — not as a general dark-mode toggle for the whole app.
 
 ## Patterns reused deliberately (proven, not reinvented)
 
-- **Dashboard home, app launcher underneath** — logging in lands on
-  `DashboardPage.tsx`: a hero gauge (CRM win rate), a `StatCard` grid pulled
-  from whatever apps are installed (pipeline value, outstanding/collected
-  invoicing, open tasks/tickets, low stock), a `.band-ink` recent-activity
-  feed, then the familiar app-tile grid below. Each stat card is a real
-  number from that app's own list endpoint, computed client-side the same
-  way a kanban column's dollar sum already was — no new backend aggregation
-  endpoint, and a card simply doesn't render if its app isn't installed.
+- **Home is the launcher; My Store is the overview** (owner, 2026-11-22)
+  — logging in lands on `DashboardPage.tsx`: only the apps, as large
+  phone-launcher tiles (the app's colour as a gradient, a white glyph;
+  `APP_ICONS` in `ui/AppTile.tsx` holds each app's glyph, colour and any
+  renamed label). The gauge, stat cards and recent activity live in
+  `StorePage.tsx` (`/store`, the "My Store" tile), with the store's
+  settings one click away.
 - **Consistent top bar** — search, notifications, workspace switcher, user
   menu never move between apps.
 - **List / Kanban / Form, one switcher** — every resource in every app gets
@@ -112,6 +111,32 @@ history log) — not as a general dark-mode toggle for the whole app.
   `INTEGRATIONS.md`), each with a connect/edit form shaped by that
   provider's own config fields, backed by the kernel's credential store
   rather than a page per vendor.
+
+## The app frame: every app looks like Apps & integrations (owner, 2026-11-22)
+
+The owner's Apps & integrations page is the foundation every app builds
+on. `shell/AppFrame.tsx` wraps every app route:
+
+- **Left rail** with the app's icon and name, then its sections. On a
+  phone the rail becomes one scrolling row. No pill-button navs inside
+  pages; the rail is the only navigation within an app.
+- **Sections follow the trade**, defined in `shell/appNav.ts`, one entry
+  per app, with the pattern it follows named at the top: CRM after
+  Pipedrive/HubSpot (pipeline first), Invoicing after Xero/QuickBooks
+  (receivables, sales, the till, tax), Inventory after Shopify/Zoho
+  (stock, purchasing, setup), Accounting after Xero/QuickBooks (reports,
+  books, banking, close & tax), Projects after Linear/Jira/Zendesk,
+  Fleets after Fleetio/Samsara, People after BambooHR/Gusto (team, pay,
+  work). A new screen is added there, not as a link inside a page.
+- **Search in the page head** (`.hub-search`), next to the title, on
+  every list.
+- **Hints are one small muted line** (`NavItem.hint`, shown above the
+  page), only where a screen needs explaining. Never a banner.
+- **Pickers never dead-end**: a reference picker with no match offers
+  "+ Add … as a new …" and picks it (Xero/QuickBooks quick-create).
+- **People is an app**: Minions' admin side (pay details, payroll,
+  claims, staff sales, meetings) sits in People's rail at `/people/*`.
+  `/minions/` is only ever the staff PWA, which staff are sent to.
 
 ## What we explicitly did not copy
 

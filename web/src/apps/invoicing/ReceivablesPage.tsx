@@ -60,23 +60,6 @@ export function ReceivablesPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Receivables</h1>
-          <nav style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-            <Link to="/etims" className="btn btn-sm btn-pill btn-secondary">
-              eTIMS filing
-            </Link>
-            <Link to="/invoicing/quote" className="btn btn-sm btn-pill btn-secondary">
-              Quotes
-            </Link>
-            <Link to="/invoicing/invoice" className="btn btn-sm btn-pill btn-secondary">
-              Invoices
-            </Link>
-            <Link to="/invoicing/customer" className="btn btn-sm btn-pill btn-secondary">
-              Customers
-            </Link>
-            <Link to="/invoicing/pos_shift" className="btn btn-sm btn-pill btn-secondary">
-              POS shifts
-            </Link>
-          </nav>
         </div>
       </div>
 

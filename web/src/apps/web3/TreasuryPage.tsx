@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { ApiError } from "../../lib/api";
 import { getIntegration, setIntegration } from "../../lib/integrations";
 import {
@@ -118,17 +117,6 @@ export function TreasuryPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Treasury</h1>
-          <nav style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <Link to="/web3/wallet" className="btn btn-sm btn-pill btn-secondary">
-              Wallets
-            </Link>
-            <Link to="/web3/transaction" className="btn btn-sm btn-pill btn-secondary">
-              Transactions
-            </Link>
-            <Link to="/web3/market" className="btn btn-sm btn-pill btn-secondary">
-              Market
-            </Link>
-          </nav>
         </div>
       </div>
 

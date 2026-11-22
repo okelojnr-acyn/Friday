@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { ApiError } from "../../lib/api";
 import { fetchMarketPrices, fetchTrending, type CoinPrice } from "../../lib/web3";
 import { getIntegration, setIntegration } from "../../lib/integrations";
@@ -61,18 +60,6 @@ export function MarketPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Market</h1>
-          <nav style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <Link to="/web3/treasury" className="btn btn-sm btn-pill btn-secondary">
-              Treasury
-            </Link>
-            <Link to="/web3/wallet" className="btn btn-sm btn-pill btn-secondary">
-              Wallets
-            </Link>
-            <Link to="/web3/transaction" className="btn btn-sm btn-pill btn-secondary">
-              Transactions
-            </Link>
-            <span className="btn btn-sm btn-pill btn-primary">Market</span>
-          </nav>
         </div>
         <Button size="sm" variant="secondary" onClick={openEditor}>
           Edit watchlist

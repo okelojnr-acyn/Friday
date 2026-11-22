@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FieldSpec, RecordRow } from "../../lib/types";
 import { getReferenceLabelField, getReferenceOptions, labelForRecord } from "../../lib/referenceCache";
+import { createRecord } from "../../lib/resourceApi";
+import { ApiError } from "../../lib/api";
 import { Input } from "../Field";
 
 interface ReferenceInputProps {
@@ -19,6 +21,8 @@ export function ReferenceInput({ field, value, onChange }: ReferenceInputProps) 
   const [labelField, setLabelField] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!targetApp || !targetResource) return;
@@ -38,6 +42,31 @@ export function ReferenceInput({ field, value, onChange }: ReferenceInputProps) 
     if (!q) return options.slice(0, 20);
     return options.filter((o) => labelForRecord(o, labelField).toLowerCase().includes(q)).slice(0, 20);
   }, [options, query, labelField]);
+
+  // Not in the list? Add it right here (the Xero/QuickBooks pattern), so a
+  // new customer doesn't mean leaving the invoice. An email typed for a
+  // customer becomes their email, its name part their name.
+  async function addNew() {
+    const q = query.trim();
+    if (!q || !labelField) return;
+    const body: Record<string, unknown> = { [labelField]: q };
+    if (targetResource === "customer" && q.includes("@")) {
+      body.email = q;
+      if (labelField !== "email") body[labelField] = q.split("@")[0];
+    }
+    setAdding(true);
+    setAddError(null);
+    try {
+      const row = await createRecord(targetApp, targetResource, body);
+      setOptions((cur) => [row, ...(cur ?? [])]);
+      onChange(row.id);
+      setOpen(false);
+    } catch (err) {
+      setAddError(err instanceof ApiError ? err.message : `Could not add this ${targetResource}`);
+    } finally {
+      setAdding(false);
+    }
+  }
 
   if (!targetApp || !targetResource) {
     return <Input type="text" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value)} />;
@@ -63,6 +92,11 @@ export function ReferenceInput({ field, value, onChange }: ReferenceInputProps) 
       />
       {open && options !== null ? (
         <div className="ref-picker-results">
+          {query.trim() && labelField && !filtered.some((o) => labelForRecord(o, labelField).toLowerCase() === query.trim().toLowerCase()) ? (
+            <button type="button" className="ref-picker-row ref-picker-add" disabled={adding} onMouseDown={(e) => (e.preventDefault(), addNew())}>
+              {adding ? "Adding…" : `+ Add “${query.trim()}” as a new ${targetResource.replace(/_/g, " ")}`}
+            </button>
+          ) : null}
           {filtered.length === 0 ? (
             <div className="ref-picker-empty">No matches</div>
           ) : (
@@ -82,6 +116,7 @@ export function ReferenceInput({ field, value, onChange }: ReferenceInputProps) 
           )}
         </div>
       ) : null}
+      {addError ? <div className="error-banner" role="alert" style={{ marginTop: 6 }}>{addError}</div> : null}
       {selected && !field.required ? (
         <button type="button" className="ref-picker-clear" onClick={() => onChange(null)}>
           Clear

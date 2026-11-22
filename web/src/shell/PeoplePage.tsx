@@ -28,10 +28,10 @@ import { Drawer } from "../ui/Drawer";
 import { Checkbox, FieldWrap, Input, Select } from "../ui/Field";
 
 const TABS = [
-  ["people", "People"],
+  ["people", "Everyone"],
   ["invites", "Invites"],
   ["locations", "Locations"],
-  ["roles", "What each role can do"],
+  ["roles", "Roles & access"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
@@ -91,27 +91,15 @@ export function PeoplePage() {
   return (
     <div className="page" style={{ maxWidth: 1080 }}>
       <div className="page-header">
-        <h1 className="page-title">People</h1>
+        <h1 className="page-title">
+          {TABS.find(([id]) => id === tab)?.[1]}
+          {tab === "invites" && pending.length ? ` (${pending.length} waiting)` : ""}
+        </h1>
         {isAdmin || isManager ? (
           <Button variant="primary" onClick={() => setInviting(true)}>
             Invite someone
           </Button>
         ) : null}
-      </div>
-      <div role="tablist" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-        {TABS.map(([id, label]) => (
-          <Button
-            key={id}
-            role="tab"
-            aria-selected={tab === id}
-            variant={tab === id ? "primary" : "secondary"}
-            size="sm"
-            onClick={() => setParams(id === "people" ? {} : { tab: id }, { replace: true })}
-          >
-            {label}
-            {id === "invites" && pending.length ? ` (${pending.length})` : ""}
-          </Button>
-        ))}
       </div>
       {error ? (
         <div className="error-banner" style={{ marginBottom: 12 }}>

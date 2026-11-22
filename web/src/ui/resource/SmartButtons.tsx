@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { appPath } from "../../shell/appNav";
 import { Link } from "react-router-dom";
 import type { ResourceSpec } from "../../lib/types";
 import { getReferenceOptions } from "../../lib/referenceCache";
@@ -97,7 +98,7 @@ function SmartButton({ targetApp, target, fieldName, recordId }: ReverseRef & { 
   }, [targetApp, target.name, fieldName, recordId]);
 
   return (
-    <Link to={`/${targetApp}/${target.name}?${fieldName}=${recordId}`} className="smart-button">
+    <Link to={`${appPath(targetApp)}/${target.name}?${fieldName}=${recordId}`} className="smart-button">
       <span className="smart-button-count">{count ?? "…"}</span>
       <span className="smart-button-label">{target.labelPlural}</span>
     </Link>
