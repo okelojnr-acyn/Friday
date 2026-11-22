@@ -23,6 +23,7 @@ import { MarketPage } from "./apps/web3/MarketPage";
 import { ReportsPage } from "./apps/accounting/ReportsPage";
 import { PipelinePage } from "./apps/crm/PipelinePage";
 import { ReceivablesPage } from "./apps/invoicing/ReceivablesPage";
+import { InvoiceEditorPage } from "./apps/invoicing/InvoiceEditorPage";
 
 // Integrations moved onto Apps & integrations; Google's OAuth callback
 // still lands here, so its result rides along and opens Google Calendar.
@@ -64,6 +65,7 @@ export default function App() {
                 the dashboard tile (external link, not this route table). */}
             <Route path="/crm" element={<PipelinePage />} />
             <Route path="/invoicing" element={<ReceivablesPage />} />
+            <Route path="/invoicing/invoice/new" element={<InvoiceEditorPage />} />
             <Route path="/web3/treasury" element={<TreasuryPage />} />
             <Route path="/accounting/reports" element={<ReportsPage />} />
             <Route path="/web3/market" element={<MarketPage />} />

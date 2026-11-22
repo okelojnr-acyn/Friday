@@ -335,6 +335,10 @@ async def create_invoice(
         customer = await session.get(Customer, body.customer_id)
         if customer is not None and str(customer.org_id) == principal.org_id:
             due_at = now + timedelta(days=customer.payment_terms_days)
+    if body.due_at is not None:
+        if body.due_at < now.date():
+            raise HTTPException(422, "the due date can't be in the past")
+        due_at = datetime(body.due_at.year, body.due_at.month, body.due_at.day, tzinfo=UTC)
     invoice = Invoice(
         org_id=uuid.UUID(principal.org_id),
         customer_id=body.customer_id,

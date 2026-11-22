@@ -63,7 +63,7 @@ export function ReceivablesPage() {
           <h1 className="page-title">Receivables</h1>
           <AppHint />
         </div>
-        <Link to="/invoicing/invoice?new=1" className="btn btn-primary btn-sm btn-pill">
+        <Link to="/invoicing/invoice/new" className="btn btn-primary btn-sm btn-pill">
           New invoice
         </Link>
       </div>
