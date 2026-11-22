@@ -5,6 +5,7 @@ import type { AppCatalogEntry, RecordRow } from "../lib/types";
 import { ApiError } from "../lib/api";
 import { Gauge } from "../ui/Gauge";
 import { StatCard } from "../ui/StatCard";
+import { useMyPermissions } from "../lib/permissions";
 import { AppTile } from "../ui/AppTile";
 import { Icon, type IconName } from "../ui/Icon";
 import { formatMoney } from "../lib/orgSettings";
@@ -69,24 +70,49 @@ export function DashboardPage() {
     () => new Set((apps ?? []).filter((a) => a.installed).map((a) => a.name)),
     [apps],
   );
+  // Cards follow who-sees-what (plan 12.7): a card someone can't use isn't
+  // shown as zero, it isn't shown. An older kernel can't say: show all.
+  const me = useMyPermissions();
+  const RULE_OF: Record<string, string> = { crm: "crm.read", invoicing: "invoices.read", inventory: "stock.read" };
+  const can = (app: string) => installed.has(app) && (!me || !RULE_OF[app] || !!me.rules[RULE_OF[app]]);
+  // An app's tile shows when the person can open it at all.
+  const OPEN_RULES: Record<string, string[]> = {
+    crm: ["crm.read"],
+    invoicing: ["invoices.read", "sales.read"],
+    inventory: ["stock.read"],
+    accounting: ["books.read"],
+    web3: ["books.read"],
+    fleets: ["deliveries.read"],
+    minions: ["staff.read", "claims.submit"],
+  };
+  const canOpen = (app: string) => !me || !OPEN_RULES[app] || OPEN_RULES[app].some((r) => !!me.rules[r]);
+  const scopeNote = !me
+    ? ""
+    : me.role === "branch_manager"
+      ? "Showing your locations"
+      : me.role === "team_leader"
+        ? "Showing your team"
+        : me.role === "viewer"
+          ? "Read only"
+          : "";
 
   useEffect(() => {
     if (!apps) return;
-    if (installed.has("crm")) {
+    if (can("crm")) {
       listRecords("crm", "opportunity").then(setOpportunities).catch(() => setOpportunities([]));
     }
-    if (installed.has("invoicing")) {
+    if (can("invoicing")) {
       listRecords("invoicing", "invoice").then(setInvoices).catch(() => setInvoices([]));
     }
     if (installed.has("projects")) {
       listRecords("projects", "task").then(setTasks).catch(() => setTasks([]));
       listRecords("projects", "ticket").then(setTickets).catch(() => setTickets([]));
     }
-    if (installed.has("inventory")) {
+    if (can("inventory")) {
       listRecords("inventory", "product").then(setProducts).catch(() => setProducts([]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apps]);
+  }, [apps, me]);
 
   const crmStats = useMemo(() => {
     const rows = opportunities ?? [];
@@ -179,10 +205,11 @@ export function DashboardPage() {
     <div className="page">
       <div className="page-header">
         <h1 className="page-title">Friday</h1>
+        {scopeNote ? <span className="field-label">{scopeNote}</span> : null}
       </div>
 
       <div className="app-grid" style={{ marginBottom: 32 }}>
-        {installedApps.map((a) => (
+        {installedApps.filter((a) => canOpen(a.name)).map((a) => (
           <AppTile
             key={a.name}
             to={a.name === "web3" ? "/web3/treasury" : a.name === "accounting" ? "/accounting/reports" : `/${a.name}`}
@@ -190,7 +217,7 @@ export function DashboardPage() {
             label={a.label}
           />
         ))}
-        {installed.has("invoicing") ? (
+        {can("invoicing") ? (
           <AppTile to="/pos.html" app="pos" label="Point of Sale" external />
         ) : null}
       </div>
@@ -198,7 +225,7 @@ export function DashboardPage() {
       <div className="dashboard-section-title">Overview</div>
       <div className="dashboard-layout" style={{ marginBottom: 24 }}>
         <div className="dashboard-hero">
-          {installed.has("crm") ? (
+          {can("crm") ? (
             <>
               <Gauge percent={crmStats.winRate} empty={crmStats.won + crmStats.lost === 0} />
               <div className="gauge-wrap">
@@ -215,7 +242,7 @@ export function DashboardPage() {
         </div>
 
         <div className="dashboard-grid">
-          {installed.has("crm") ? (
+          {can("crm") ? (
             <StatCard
               to="/crm/opportunity"
               icon="target"
@@ -225,7 +252,7 @@ export function DashboardPage() {
               footer={<span className="field-label">{crmStats.openCount} open opportunities</span>}
             />
           ) : null}
-          {installed.has("invoicing") ? (
+          {can("invoicing") ? (
             <StatCard
               to="/invoicing/invoice"
               icon="receipt"
@@ -234,7 +261,7 @@ export function DashboardPage() {
               footer={<span className="field-label">{invoicingStats.unpaidCount} unpaid invoices</span>}
             />
           ) : null}
-          {installed.has("invoicing") ? (
+          {can("invoicing") ? (
             <StatCard
               to="/invoicing/invoice"
               icon="trend-up"
@@ -243,7 +270,7 @@ export function DashboardPage() {
               footer={<span className="field-label">{invoicingStats.total} invoices total</span>}
             />
           ) : null}
-          {installed.has("invoicing") && invoicingStats.overdueCount > 0 ? (
+          {can("invoicing") && invoicingStats.overdueCount > 0 ? (
             <StatCard
               to="/invoicing/invoice"
               icon="receipt"
@@ -270,7 +297,7 @@ export function DashboardPage() {
               footer={<span className="field-label">{ticketStats.resolved} resolved</span>}
             />
           ) : null}
-          {installed.has("inventory") ? (
+          {can("inventory") ? (
             <StatCard
               to="/inventory/product"
               icon="box"
