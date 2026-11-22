@@ -913,11 +913,25 @@ async def pay_with_paystack(
     lines_in = body.get("lines", [])
     if not lines_in:
         raise HTTPException(422, "sale must have at least one line")
-    shift_id = await shift_for_sale(session, principal, body.get("shift_id"))
+    # Sent again (a retry whose reply was lost): never a second prompt.
+    client_sale_id = body.get("client_sale_id")
+    if client_sale_id:
+        existing = await _pos_sale_by_client_id(session, principal, str(client_sale_id))
+        if existing is not None:
+            return PaystackCheckoutOut(invoice_id=existing.id, prompt="Already sent; waiting for the customer.")
+    # Guss sells with an M-Pesa prompt too: no till shift, VAT from shelf
+    # prices, as record_pos_sale does for its sales.
+    channel = "guss" if body.get("channel") == "guss" else "till"
+    shift_id = None if channel == "guss" else await shift_for_sale(session, principal, body.get("shift_id"))
     location_id = await till_location(session, shift_id)
     at_place(scope, location_id)
+    vat_cfg = None
+    if channel == "guss" and any("vat_cents" not in line for line in lines_in):
+        vat_cfg = await get_etims_config(principal.org_id)
     invoice = Invoice(
         org_id=uuid.UUID(principal.org_id),
+        channel=channel,
+        prices_include_tax=True if channel == "guss" else None,
         number=f"POS-{now:%Y%m%d}-{uuid.uuid4().hex[:6].upper()}",
         status="pending",
         currency=body.get("currency", "USD"),
@@ -933,7 +947,7 @@ async def pay_with_paystack(
     )
     session.add(invoice)
     await session.flush()
-    charged_cents = await _apply_pos_sale_lines(session, principal, invoice, lines_in, body)
+    charged_cents = await _apply_pos_sale_lines(session, principal, invoice, lines_in, body, vat_cfg)
     if charged_cents <= 0:
         raise HTTPException(422, "nothing to charge")
     to_charge = await manual_tenders(session, principal, invoice, body.get("payments") or [], charged_cents)
