@@ -264,56 +264,75 @@
   color: var(--text);
 }
 
-.app-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
-  gap: var(--space-4) var(--space-3);
-  max-width: 960px;
+/* Home (owner, 2026-11-22): the apps only, centred, four to a row (rows
+   grow as apps are added), on the warm ambient gradient, as liquid-glass
+   tiles: frosted, tinted with the app's colour, a light rim, no glow. */
+.home {
+  position: relative;
+  isolation: isolate;
+  min-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 8vh;
+}
+.home::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--gradient-ambient);
+  background-size: 140% 120%;
+  pointer-events: none;
 }
 .home .page-title {
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-6);
+  text-align: center;
+}
+.app-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 132px);
+  justify-content: center;
+  gap: var(--space-5) var(--space-5);
 }
 .app-tile {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  padding: var(--space-3) var(--space-2);
-  background: transparent;
-  border: 1px solid transparent;
+  padding: var(--space-2) 0;
   border-radius: var(--radius-sm);
   text-decoration: none;
   color: var(--text);
   text-align: center;
-  transition: background 0.12s ease, transform 0.1s ease;
+  transition: transform 0.15s ease;
 }
-.app-tile:hover,
-.app-tile:focus-visible {
-  background: var(--glass-bg);
-  border-color: var(--glass-border);
+.app-tile:hover {
   transform: translateY(-2px);
 }
-/* App icons in the phone-launcher style: the app's colour as a soft
-   gradient, a white glyph, a top highlight and a coloured shadow. */
+.app-tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
 .app-tile-icon {
   --tile: var(--accent);
-  position: relative;
-  width: 76px;
-  height: 76px;
+  width: 84px;
+  height: 84px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 22px;
-  color: #fff;
+  border-radius: 24px;
+  color: var(--tile);
   background:
-    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.35), transparent 55%),
-    linear-gradient(150deg, color-mix(in srgb, var(--tile) 78%, #fff), var(--tile) 55%, color-mix(in srgb, var(--tile) 80%, #000));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    0 6px 16px -6px color-mix(in srgb, var(--tile) 70%, transparent);
+    linear-gradient(150deg, color-mix(in srgb, var(--tile) 16%, transparent), color-mix(in srgb, var(--tile) 6%, transparent)),
+    var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-edge), 0 8px 24px -12px rgba(40, 30, 10, 0.25);
 }
-.app-tile-icon svg {
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18));
+.app-tile:hover .app-tile-icon {
+  box-shadow: var(--glass-edge), 0 12px 28px -12px rgba(40, 30, 10, 0.32);
 }
 .app-tile-icon-sm {
   width: 32px;
@@ -325,10 +344,21 @@
   font-weight: 600;
   line-height: 1.25;
 }
+@media (prefers-reduced-transparency: reduce) {
+  .app-tile-icon {
+    background: var(--surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
 @media (max-width: 640px) {
+  .home {
+    padding-top: var(--space-5);
+  }
   .app-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-3) var(--space-1);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-4) var(--space-2);
+    width: 100%;
   }
   .app-tile-icon {
     width: 64px;
@@ -336,7 +366,7 @@
     border-radius: 18px;
   }
   .app-tile-label {
-    font-size: 13px;
+    font-size: 12px;
   }
 }
 
