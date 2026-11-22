@@ -21,6 +21,7 @@ import { ResourcePage, AppIndexRedirect } from "./shell/ResourcePage";
 import { TreasuryPage } from "./apps/web3/TreasuryPage";
 import { MarketPage } from "./apps/web3/MarketPage";
 import { ReportsPage } from "./apps/accounting/ReportsPage";
+import { OverviewPage as AccountingOverviewPage } from "./apps/accounting/OverviewPage";
 import { PipelinePage } from "./apps/crm/PipelinePage";
 import { ReceivablesPage } from "./apps/invoicing/ReceivablesPage";
 import { InvoiceEditorPage } from "./apps/invoicing/InvoiceEditorPage";
@@ -67,6 +68,7 @@ export default function App() {
             <Route path="/invoicing" element={<ReceivablesPage />} />
             <Route path="/invoicing/invoice/new" element={<InvoiceEditorPage />} />
             <Route path="/web3/treasury" element={<TreasuryPage />} />
+            <Route path="/accounting" element={<AccountingOverviewPage />} />
             <Route path="/accounting/reports" element={<ReportsPage />} />
             <Route path="/web3/market" element={<MarketPage />} />
             {/* People is Minions' admin side (owner, 2026-11-22); /minions/ is the staff app. */}
