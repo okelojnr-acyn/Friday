@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { api } from "../lib/api";
 import { saveSession } from "../lib/session";
+import type { Session } from "../lib/types";
 import { Card } from "../ui/Card";
 
 /** Entry point for Friday Host's admin-app SSO bridge: Friday Host
@@ -24,8 +26,15 @@ export function SsoLoginPage() {
       setError("Missing SSO parameters");
       return;
     }
-    saveSession({ token, orgId, role: role as "owner" | "admin" | "member" | "viewer", email });
-    navigate("/", { replace: true });
+    saveSession({ token, orgId, role: role as Session["role"], email });
+    // Host's token names the Host account; trade it for this person's own
+    // Friday session (same email) so links and PINs are saved to them.
+    // An older kernel without /auth/sso keeps the Host token as before.
+    api
+      .post<{ token: string; org_id: string; role: Session["role"]; email: string }>("/auth/sso")
+      .then((s) => saveSession({ token: s.token, orgId: s.org_id, role: s.role, email: s.email }))
+      .catch(() => {})
+      .finally(() => navigate("/", { replace: true }));
     // params is a new URLSearchParams instance each render; read once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
