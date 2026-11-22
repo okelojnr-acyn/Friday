@@ -6,6 +6,7 @@ import { LoginPage } from "./shell/LoginPage";
 import { RegisterPage } from "./shell/RegisterPage";
 import { AcceptInvitePage } from "./shell/AcceptInvitePage";
 import { SsoLoginPage } from "./shell/SsoLoginPage";
+import { StepUpPage } from "./shell/StepUpPage";
 import { DashboardPage } from "./shell/DashboardPage";
 import { AppsIntegrationsPage } from "./shell/AppsIntegrationsPage";
 import { PeoplePage } from "./shell/PeoplePage";
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/join" element={<AcceptInvitePage />} />
         <Route path="/sso" element={<SsoLoginPage />} />
+        <Route path="/step-up" element={<StepUpPage />} />
         <Route element={<RequireAuth />}>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/apps" element={<AppsIntegrationsPage />} />
