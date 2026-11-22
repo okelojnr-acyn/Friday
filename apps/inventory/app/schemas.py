@@ -260,6 +260,10 @@ class PurchaseOrderOut(BaseModel):
     paid_at: datetime | None = None
     paid_method: str = ""
     paid_reference: str = ""
+    supplier_status: str = ""
+    supplier_note: str = ""
+    supplier_updated_at: datetime | None = None
+    invoice_file_sha: str = ""
     created_at: datetime
     updated_at: datetime
     lines: list[PurchaseOrderLineOut]
@@ -283,6 +287,10 @@ class PurchaseOrderOut(BaseModel):
             paid_at=po.paid_at,
             paid_method=po.paid_method,
             paid_reference=po.paid_reference,
+            supplier_status=po.supplier_status,
+            supplier_note=po.supplier_note,
+            supplier_updated_at=po.supplier_updated_at,
+            invoice_file_sha=po.invoice_file_sha,
             created_at=po.created_at,
             updated_at=po.updated_at,
             lines=[

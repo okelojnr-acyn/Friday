@@ -11,6 +11,7 @@ import { PayWithCardPanel } from "../../apps/invoicing/PayWithCardPanel";
 import { DocumentActionsPanel } from "../../apps/invoicing/DocumentActionsPanel";
 import { CreatePurchaseOrderPanel } from "../../apps/inventory/CreatePurchaseOrderPanel";
 import { PayPurchaseOrderPanel } from "../../apps/inventory/PayPurchaseOrderPanel";
+import { SupplierLinkPanel, SupplierStatusPanel } from "../../apps/inventory/SupplierPanels";
 import { amountInputToCents, centsToAmountInput, toDateInputValue, toDatetimeInputValue } from "./fieldFormat";
 
 interface FormViewProps {
@@ -144,8 +145,12 @@ export function FormView({ spec, app, schema, record, onClose, onSaved }: FormVi
         />
       ) : null}
       {isEdit && app === "inventory" && spec.name === "purchase_order" ? (
-        <PayPurchaseOrderPanel record={record!} onChanged={onSaved} />
+        <>
+          <SupplierStatusPanel record={record!} />
+          <PayPurchaseOrderPanel record={record!} onChanged={onSaved} />
+        </>
       ) : null}
+      {isEdit && app === "inventory" && spec.name === "supplier" ? <SupplierLinkPanel record={record!} /> : null}
     </Modal>
   );
 }

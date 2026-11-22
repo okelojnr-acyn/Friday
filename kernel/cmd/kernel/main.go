@@ -113,6 +113,10 @@ func main() {
 
 	// Passwordless throughout: a passkey ceremony or an emailed one-time
 	// code, matching Acyn Wallet's auth model. See internal/auth/handlers.go.
+	// The supplier page (plan 12.6): a link from purchasing, then an email code.
+	mux.Handle("POST /orgs/supplier-links", requireAuth(http.HandlerFunc(authHandlers.CreateSupplierLink)))
+	mux.HandleFunc("POST /supplier/code", authHandlers.SupplierCode)
+	mux.HandleFunc("POST /supplier/verify", authHandlers.SupplierVerify)
 	mux.HandleFunc("POST /auth/register", authHandlers.Register)
 	mux.HandleFunc("POST /auth/otp/request", authHandlers.OtpRequest)
 	mux.HandleFunc("POST /auth/otp/verify", authHandlers.OtpVerify)
