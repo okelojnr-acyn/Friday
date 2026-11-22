@@ -128,6 +128,7 @@ func main() {
 	mux.Handle("POST /auth/passkey/register-options", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterOptions)))
 	mux.Handle("POST /auth/passkey/register-verify", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterVerify)))
 	mux.Handle("GET /auth/me", requireAuth(http.HandlerFunc(authHandlers.Me)))
+	mux.Handle("POST /auth/sso", requireAuth(http.HandlerFunc(authHandlers.SsoExchange)))
 	// Cashier PIN (plan section 11): trusted tills, PINs, lockout.
 	mux.HandleFunc("GET /auth/pos/cashiers", authHandlers.PosCashiers)
 	mux.HandleFunc("POST /auth/pos/pin", authHandlers.PosPinLogin)
