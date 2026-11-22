@@ -158,3 +158,26 @@ async def test_receipt_photo_by_the_claimant_seen_by_approvers(client, as_princi
     assert (await client.get(f"/expense_claims/{claim['id']}/receipt")).content == png
     again = await client.put(f"/expense_claims/{claim['id']}/receipt", content=png, headers={"content-type": "image/png"})
     assert again.status_code in (403, 404)
+
+
+async def test_withdraw_a_waiting_claim_and_payouts_reach_the_books(client, as_principal, principal, monkeypatch):
+    sent = []
+
+    async def fake_publish_event(event_type, org_id, payload):
+        sent.append((event_type, payload))
+
+    monkeypatch.setattr("app.main.publish_event", fake_publish_event)
+    _as_admin(as_principal, principal)
+    await client.post("/employees", json={"name": "Jane", "email": principal.email})
+    as_principal(principal)
+    claim = (await client.post("/expense_claims", json={"description": "fuel (Guss 1a2b3c4d)", "amount_cents": 2500})).json()
+    r = await client.post(f"/expense_claims/{claim['id']}/withdraw")
+    assert r.status_code == 200 and r.json()["status"] == "withdrawn"
+    assert (await client.post(f"/expense_claims/{claim['id']}/withdraw")).status_code == 400
+
+    # Someone else can't withdraw yours.
+    other = (await client.post("/expense_claims", json={"description": "taxi", "amount_cents": 900})).json()
+    boss = make_principal(org_id=principal.org_id, role="admin", email="boss@example.com")
+    as_principal(boss)
+    assert (await client.post(f"/expense_claims/{other['id']}/withdraw")).status_code in (403, 404)
+    assert sent == []

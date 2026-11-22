@@ -12,7 +12,7 @@ class Base(DeclarativeBase):
 
 EMPLOYEE_STATUSES = ("active", "inactive")
 PAY_FREQUENCIES = ("weekly", "biweekly", "monthly")
-EXPENSE_CLAIM_STATUSES = ("submitted", "approved", "rejected", "paid")
+EXPENSE_CLAIM_STATUSES = ("submitted", "approved", "rejected", "paid", "withdrawn")
 PAYROLL_RUN_STATUSES = ("draft", "approved", "paying", "paid")
 PAYOUT_METHODS = ("crypto", "fiat")
 PAYROLL_LINE_STATUSES = ("pending", "blocked", "sent", "confirmed", "failed")

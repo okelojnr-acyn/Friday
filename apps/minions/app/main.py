@@ -1,4 +1,5 @@
 import hashlib
+import re
 import uuid
 from datetime import UTC, datetime
 
@@ -745,6 +746,38 @@ async def pay_expense_claim(
         reason=f"Expense claim: {claim.description}",
     )
     claim.status = "paid"
+    await session.commit()
+    await session.refresh(claim)
+    # The books: a claim Guss booked as owed (its description ends "(Guss
+    # <id>)") clears 2150 Owed to staff; any other is a shop expense now.
+    await publish_event(
+        "minions.expense_claim.paid",
+        principal.org_id,
+        {
+            "claim_id": str(claim.id),
+            "amount_cents": claim.amount_cents,
+            "currency": claim.currency,
+            "owed_booked": bool(re.search(r"\(Guss [0-9a-f]{8}\)$", claim.description)),
+            "description": claim.description,
+        },
+    )
+    return claim
+
+
+@expense_claims_router.post("/{claim_id}/withdraw", response_model=ExpenseClaimOut)
+async def withdraw_expense_claim(
+    claim_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The person who made a claim takes it back while it still waits."""
+    claim = await _get_owned_claim(session, principal, claim_id)
+    me = await _resolve_my_employee(session, principal)
+    if claim.employee_id != me.id:
+        raise HTTPException(403, "only the person who made the claim withdraws it")
+    if claim.status != "submitted":
+        raise HTTPException(400, f"claim is '{claim.status}'; only a waiting claim can be withdrawn")
+    claim.status = "withdrawn"
     await session.commit()
     await session.refresh(claim)
     return claim

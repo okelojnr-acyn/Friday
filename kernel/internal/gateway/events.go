@@ -46,6 +46,7 @@ var subscriptions = []subscription{
 	{Event: "invoicing.pos_sale.recorded", App: "accounting", WebhookPath: "/internal/webhooks/pos-sale-cogs"},
 	{Event: "invoicing.pos_sale.recorded", App: "minions", WebhookPath: "/internal/webhooks/pos-sale"},
 	{Event: "minions.payroll_run.paid", App: "accounting", WebhookPath: "/internal/webhooks/payroll-paid"},
+	{Event: "minions.expense_claim.paid", App: "accounting", WebhookPath: "/internal/webhooks/claim-paid"},
 	{Event: "inventory.purchase.received", App: "accounting", WebhookPath: "/internal/webhooks/purchase-received"},
 	{Event: "inventory.purchase.paid", App: "accounting", WebhookPath: "/internal/webhooks/purchase-paid"},
 }

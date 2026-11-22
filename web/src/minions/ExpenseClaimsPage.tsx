@@ -5,6 +5,7 @@ import {
   openClaimReceipt,
   submitExpenseClaim,
   uploadClaimReceipt,
+  withdrawExpenseClaim,
   type ExpenseClaim,
 } from "../lib/minions";
 import { Card } from "../ui/Card";
@@ -142,6 +143,19 @@ export function ExpenseClaimsPage() {
                   </Button>
                 ) : null}
                 <Badge tone={statusTone(c.status)}>{c.status}</Badge>
+                {c.status === "submitted" ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      withdrawExpenseClaim(c.id)
+                        .then((w) => setClaims((cur) => (cur ?? []).map((x) => (x.id === w.id ? w : x))))
+                        .catch((err) => setError(err instanceof ApiError ? err.message : "Could not withdraw the claim"))
+                    }
+                  >
+                    Withdraw
+                  </Button>
+                ) : null}
               </span>
             </div>
           </Card>
