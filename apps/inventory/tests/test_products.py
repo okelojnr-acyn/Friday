@@ -146,3 +146,27 @@ async def test_products_carry_a_shelf_category(client):
     assert made["category"] == "Dairy"
     moved = (await client.patch(f"/products/{made['id']}", json={"category": "Fresh"})).json()
     assert moved["category"] == "Fresh"
+
+
+async def test_counted_stock_is_sent_to_the_books_and_untracked_sales_move_nothing(client, monkeypatch):
+    """Plan 20.2: stock counted in or out by hand reaches the books at cost
+    (Guss's own restocks, "guss:...", it books itself); a sale of a product
+    that doesn't track stock leaves its count alone."""
+    sent = []
+
+    async def fake_publish(event_type, org_id, payload, **_):
+        sent.append((event_type, payload))
+
+    monkeypatch.setattr("app.main.publish_event", fake_publish)
+    tracked = (await client.post("/products", json={"name": "Yoghurt", "cost_cents": 65000, "track_inventory": True})).json()
+    await client.post(f"/products/{tracked['id']}/adjust-stock", json={"delta": 50, "reason": "received"})
+    await client.post(f"/products/{tracked['id']}/adjust-stock", json={"delta": 2, "reason": "received", "reference": "guss:abc"})
+    await client.post(f"/products/{tracked['id']}/adjust-stock", json={"delta": -2, "reason": "write_off"})
+    assert [(t, p["value_cents"], p["reason"]) for t, p in sent] == [
+        ("inventory.stock.adjusted", 3250000, "received"),
+        ("inventory.stock.adjusted", -130000, "write_off"),
+    ]
+
+    untracked = (await client.post("/products", json={"name": "Rice", "track_inventory": False})).json()
+    resp = await client.post(f"/products/{untracked['id']}/adjust-stock", json={"delta": -8, "reason": "sale"})
+    assert resp.status_code == 200 and resp.json()["on_hand_qty"] == 0

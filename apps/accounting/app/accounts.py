@@ -39,6 +39,8 @@ DEFAULT_ACCOUNTS = (
     ("3000", "Owner's Equity", "equity"),
     ("4000", "Sales Revenue", "income"),
     ("5000", "Cost of Goods Sold", "expense"),
+    # Stock written off or found missing at a count (plan 20.2 #1).
+    ("5100", "Stock losses", "expense"),
     ("6000", "Salary Expense", "expense"),
     ("6900", "Shop expenses", "expense"),
 )
