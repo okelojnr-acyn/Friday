@@ -1,0 +1,51 @@
+# Load-test overrides for deploy/compose.yml: run Friday the way Friday
+# Host runs it on the shared box, not as a superuser straight to Postgres.
+#   - apps and kernel reach Postgres through PgBouncer (transaction mode,
+#     pool 20), as a non-superuser tenant role (so row-level security,
+#     the 20-connection limit and the role timeouts all apply);
+#   - Postgres records statement stats and logs queries over 500 ms;
+#   - every Friday container has Friday Host's memory limit.
+# run.sh creates the tenant role and database before starting the apps.
+services:
+  postgres:
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - log_min_duration_statement=500
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=8MB
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  pgbouncer:
+    image: pgbouncer/pgbouncer:latest
+    restart: unless-stopped
+    mem_limit: 128m
+    environment:
+      DATABASES_HOST: postgres
+      DATABASES_PORT: "5432"
+      PGBOUNCER_LISTEN_PORT: "6432"
+      PGBOUNCER_AUTH_TYPE: scram-sha-256
+      PGBOUNCER_AUTH_FILE: /etc/pgbouncer/userlist.txt
+      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_MAX_CLIENT_CONN: "200"
+      PGBOUNCER_DEFAULT_POOL_SIZE: "20"
+    volumes:
+      - ./loadtest/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  kernel: { mem_limit: 256m, depends_on: { pgbouncer: { condition: service_started } } }
+  crm: { mem_limit: 384m }
+  invoicing: { mem_limit: 384m }
+  projects: { mem_limit: 384m }
+  inventory: { mem_limit: 384m }
+  web3: { mem_limit: 384m }
+  accounting: { mem_limit: 384m }
+  minions: { mem_limit: 384m }
+  fleets: { mem_limit: 384m }
