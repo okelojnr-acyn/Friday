@@ -1,4 +1,6 @@
+import os
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -43,6 +45,22 @@ class FridaySettings(BaseSettings):
     app_public_url: str = ""
 
 
+DEV_SECRET = "dev-only-change-me"
+
+
+def weak_secrets(settings: FridaySettings) -> list[str]:
+    """The secrets still on the development value, unless this is
+    development: FRIDAY_DEV=1, or the database is on this machine."""
+    if os.environ.get("FRIDAY_DEV") == "1":
+        return []
+    if (urlsplit(settings.database_url).hostname or "") in ("localhost", "127.0.0.1", "::1"):
+        return []
+    return [name.upper() for name in ("jwt_secret", "kernel_events_token") if getattr(settings, name) in ("", DEV_SECRET)]
+
+
 @lru_cache
 def get_settings() -> FridaySettings:
-    return FridaySettings()
+    settings = FridaySettings()
+    if weak := weak_secrets(settings):
+        raise RuntimeError(f"set {', '.join(weak)}: the development value isn't safe outside development (or set FRIDAY_DEV=1)")
+    return settings

@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"github.com/acyn-innovation/friday/kernel/internal/svcauth"
 	"log"
 	"net/http"
 	"os"
@@ -64,6 +65,9 @@ func main() {
 	databaseURL := envOr("DATABASE_URL", "postgres://friday:friday@localhost:5432/friday")
 	jwtSecret := envOr("JWT_SECRET", "dev-only-change-me")
 	eventsToken := envOr("KERNEL_EVENTS_TOKEN", "dev-only-change-me")
+	if weak := svcauth.Weak(databaseURL, map[string]string{"JWT_SECRET": jwtSecret, "KERNEL_EVENTS_TOKEN": eventsToken}); len(weak) > 0 {
+		log.Fatalf("set %v: the development value isn't safe outside development (or set FRIDAY_DEV=1)", weak)
+	}
 	addr := ":" + envOr("PORT", "8080")
 	migrationsDir := envOr("MIGRATIONS_DIR", "kernel/migrations")
 	corsOrigin := envOr("CORS_ORIGIN", "http://localhost:5173")
@@ -255,7 +259,10 @@ func main() {
 	handler := withCORS(corsOrigin, mux)
 
 	log.Printf("kernel listening on %s", addr)
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	// Header timeout stops slow-header connections piling up; no whole-request
+	// timeout, so big uploads, exports and slow app replies still finish.
+	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }

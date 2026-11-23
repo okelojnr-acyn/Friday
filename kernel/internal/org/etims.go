@@ -1,8 +1,8 @@
 package org
 
 import (
-	"crypto/subtle"
 	"encoding/json"
+	"github.com/acyn-innovation/friday/kernel/internal/svcauth"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -222,7 +222,7 @@ func (e *Etims) Put(w http.ResponseWriter, r *http.Request) {
 // GetInternal serves the full eTIMS configuration, CMC key included, to
 // Friday's own apps (Bearer KERNEL_EVENTS_TOKEN), never to a browser.
 func (e *Etims) GetInternal(w http.ResponseWriter, r *http.Request) {
-	if e.InternalToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+e.InternalToken)) != 1 {
+	if !svcauth.Bearer(r, e.InternalToken) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

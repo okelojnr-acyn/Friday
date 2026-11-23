@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/acyn-innovation/friday/kernel/internal/svcauth"
 	"io"
 	"log"
 	"net/http"
@@ -65,7 +66,7 @@ func newEventID() string {
 // goroutine, and a failure was only logged.)
 func EventsHandler(pool *pgxpool.Pool, eventsToken string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+eventsToken {
+		if !svcauth.Bearer(r, eventsToken) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

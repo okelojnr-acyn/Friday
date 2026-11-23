@@ -37,6 +37,7 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      FRIDAY_DEV: "1"
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
       CORS_ORIGIN: http://localhost:5173
       WEBAUTHN_RP_ID: localhost
@@ -71,6 +72,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
       DB_SCHEMA: crm
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      FRIDAY_DEV: "1"
       KERNEL_INTERNAL_URL: http://kernel:8080/internal
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
       CORS_ORIGINS: '["http://localhost:5173"]'
@@ -94,6 +96,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
       DB_SCHEMA: invoicing
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      FRIDAY_DEV: "1"
       KERNEL_INTERNAL_URL: http://kernel:8080/internal
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
       CORS_ORIGINS: '["http://localhost:5173"]'
@@ -117,6 +120,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
       DB_SCHEMA: projects
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      FRIDAY_DEV: "1"
       KERNEL_INTERNAL_URL: http://kernel:8080/internal
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
       CORS_ORIGINS: '["http://localhost:5173"]'
@@ -140,6 +144,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
       DB_SCHEMA: inventory
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      FRIDAY_DEV: "1"
       KERNEL_INTERNAL_URL: http://kernel:8080/internal
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
       CORS_ORIGINS: '["http://localhost:5173"]'
@@ -163,6 +168,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
       DB_SCHEMA: web3
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      FRIDAY_DEV: "1"
       KERNEL_INTERNAL_URL: http://kernel:8080/internal
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
       CORS_ORIGINS: '["http://localhost:5173"]'
@@ -186,6 +192,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
       DB_SCHEMA: accounting
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      FRIDAY_DEV: "1"
       KERNEL_INTERNAL_URL: http://kernel:8080/internal
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
       CORS_ORIGINS: '["http://localhost:5173"]'
@@ -209,6 +216,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
       DB_SCHEMA: minions
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      FRIDAY_DEV: "1"
       KERNEL_INTERNAL_URL: http://kernel:8080/internal
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
       CORS_ORIGINS: '["http://localhost:5173"]'
@@ -232,6 +240,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-friday}:${POSTGRES_PASSWORD:-friday}@postgres:5432/${POSTGRES_DB:-friday}
       DB_SCHEMA: fleets
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      FRIDAY_DEV: "1"
       KERNEL_INTERNAL_URL: http://kernel:8080/internal
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:-dev-only-change-me}
       CORS_ORIGINS: '["http://localhost:5173"]'

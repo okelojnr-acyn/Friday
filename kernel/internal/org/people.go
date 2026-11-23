@@ -3,6 +3,7 @@ package org
 import (
 	"encoding/json"
 	"errors"
+	"github.com/acyn-innovation/friday/kernel/internal/svcauth"
 	"net/http"
 	"slices"
 	"strings"
@@ -28,7 +29,7 @@ type People struct {
 // listed (they work at all of them). Apps use it for a branch manager's
 // "loc" scope over people (staff lists, claims). Apps only.
 func (p *People) AtLocations(w http.ResponseWriter, r *http.Request) {
-	if p.InternalToken == "" || r.Header.Get("Authorization") != "Bearer "+p.InternalToken {
+	if !svcauth.Bearer(r, p.InternalToken) {
 		peopleError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
