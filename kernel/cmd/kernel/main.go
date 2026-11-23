@@ -253,6 +253,11 @@ func main() {
 			log.Fatalf("configure proxy for %s: %v", app.Name, err)
 		}
 		mux.Handle("/api/"+app.Name+"/", requireAuth(gateway.EnforceAccess(app.Name, proxy)))
+		if app.Name == "invoicing" {
+			// Payment providers' webhooks (signed, checked by invoicing) at the
+			// kernel's own address, the one owners can see: <kernel>/external/webhooks/paystack.
+			mux.Handle("POST /external/webhooks/", proxy)
+		}
 		log.Printf("routing /api/%s/* -> %s", app.Name, app.BaseURL)
 	}
 

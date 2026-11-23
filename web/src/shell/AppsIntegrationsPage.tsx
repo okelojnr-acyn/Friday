@@ -4,6 +4,7 @@ import { ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { fetchCatalog, installApp, uninstallApp } from "../lib/catalog";
 import { listIntegrations } from "../lib/integrations";
+import { KERNEL_URL } from "../lib/runtimeConfig";
 import type { AppCatalogEntry } from "../lib/types";
 import { APP_ICONS } from "../ui/AppTile";
 import { Badge } from "../ui/Badge";
@@ -246,6 +247,11 @@ export function AppsIntegrationsPage() {
             ) : (
               <>
                 <p style={{ margin: 0 }}>{current.provider.blurb}</p>
+                {current.key === "paystack" ? (
+                  <p style={{ margin: 0 }}>
+                    Webhook URL: <code style={{ userSelect: "all", wordBreak: "break-all" }}>{paystackWebhookUrl()}</code>
+                  </p>
+                ) : null}
                 <ProviderEditor
                   key={current.key}
                   provider={current.provider}
@@ -261,4 +267,9 @@ export function AppsIntegrationsPage() {
       ) : null}
     </div>
   );
+}
+
+/** Where Paystack sends payment events: the kernel passes them to invoicing. */
+function paystackWebhookUrl(): string {
+  return new URL(`${KERNEL_URL.replace(/\/$/, "")}/external/webhooks/paystack`, window.location.origin).href;
 }

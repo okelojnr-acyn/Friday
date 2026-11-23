@@ -1,5 +1,4 @@
 import logging
-import time
 import uuid
 from types import SimpleNamespace
 from decimal import ROUND_HALF_UP, Decimal
@@ -20,7 +19,7 @@ from friday_common import (
     resource,
 )
 from friday_common.integrations import PesapalProvider, ResendProvider, StripeProvider
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -982,23 +981,32 @@ async def pay_with_paystack(
     return PaystackCheckoutOut(invoice_id=invoice.id, redirect_url=redirect_url)
 
 
-# Paystack is asked about a pending sale at most this often; its webhook
-# usually settles it first, and the till polls every few seconds.
-PAYSTACK_VERIFY_EVERY = 20.0
-_last_verify: dict[uuid.UUID, float] = {}
+def _verify_gap(age_seconds: float) -> float:
+    """Seconds between Paystack checks for a pending sale this old: often
+    while the customer is approving on their phone, rarely after. The
+    webhook usually settles it first; this is the backup."""
+    if age_seconds < 120:
+        return 5
+    return 15 if age_seconds < 600 else 60
 
 
-def _verify_due(invoice_id: uuid.UUID) -> bool:
-    """True (and remembered) when Paystack hasn't been asked about this sale
-    in the last PAYSTACK_VERIFY_EVERY seconds."""
-    # shortcut: per process (one uvicorn worker per app); a shared store if apps run several workers.
-    now = time.monotonic()
-    if now - _last_verify.get(invoice_id, -PAYSTACK_VERIFY_EVERY) < PAYSTACK_VERIFY_EVERY:
-        return False
-    if len(_last_verify) > 10_000:
-        _last_verify.clear()
-    _last_verify[invoice_id] = now
-    return True
+async def _claim_verify(session: AsyncSession, invoice: Invoice) -> bool:
+    """True if this poll may ask Paystack now; records the check atomically,
+    so restarts and several workers don't multiply the calls."""
+    age = (datetime.now(UTC) - _utc(invoice.created_at)).total_seconds()
+    gap = timedelta(seconds=_verify_gap(age))
+    claimed = await session.execute(
+        update(Invoice)
+        .where(
+            Invoice.id == invoice.id,
+            (Invoice.paystack_checked_at.is_(None)) | (Invoice.paystack_checked_at < func.now() - gap),
+        )
+        .values(paystack_checked_at=func.now())
+        .returning(Invoice.id)
+    )
+    won = claimed.first() is not None
+    await session.commit()
+    return won
 
 
 @pos_router.get("/sales/{invoice_id}/status", response_model=PosSaleStatusOut)
@@ -1014,7 +1022,7 @@ async def get_pos_sale_status(
     invoice = await session.get(Invoice, invoice_id)
     if invoice is None or str(invoice.org_id) != principal.org_id:
         raise HTTPException(404, "sale not found")
-    if invoice.status != "paid" and invoice.paystack_reference and _verify_due(invoice.id):
+    if invoice.status != "paid" and invoice.paystack_reference and await _claim_verify(session, invoice):
         # Ask Paystack directly, so a sale settles even if its webhook is lost.
         reference = invoice.paystack_reference
         try:

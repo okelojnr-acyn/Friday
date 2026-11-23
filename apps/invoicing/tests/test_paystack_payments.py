@@ -9,6 +9,7 @@ from dataclasses import replace
 
 import pytest
 
+from app.main import _verify_gap as real_verify_gap
 from app.paystack_pay import method_for, parse_debt_reference, parse_reference
 
 SECRET = "sk_test_abc"
@@ -46,8 +47,8 @@ def paystack(monkeypatch):
     monkeypatch.setattr("app.paystack_pay.get_integration_config", _config)
     monkeypatch.setattr("app.paystack_pay.PaystackProvider", FakePaystack)
     monkeypatch.setattr("app.webhooks.get_integration_config", _config)
-    # Each test polls back to back; the 20 s pause between checks is tested below.
-    monkeypatch.setattr("app.main.PAYSTACK_VERIFY_EVERY", 0.0)
+    # Each test polls back to back; the pause between checks is tested below.
+    monkeypatch.setattr("app.main._verify_gap", lambda age: 0)
     return state
 
 
@@ -312,7 +313,10 @@ async def test_a_debt_link_settles_the_oldest_sales_once(client, principal, pays
     # The webhook and further checks record nothing more.
     raw, headers = _signed({"event": "charge.success", "data": {"reference": link["reference"]}})
     assert (await client.post("/external/webhooks/paystack", content=raw, headers=headers)).status_code == 200
-    assert (await client.get(check)).json()["paid_cents"] == 1500
+    asked = len(paystack["verify_calls"])
+    again = (await client.get(check)).json()
+    assert (again["paid_cents"], again["method"]) == (1500, "mpesa")
+    assert len(paystack["verify_calls"]) == asked, "a recorded link doesn't ask Paystack again"
     assert (await client.get("/pos/debts", params={"customer": "Achieng"})).json() == []
 
 
@@ -373,11 +377,12 @@ async def test_guss_sends_an_mpesa_prompt_for_a_scanned_basket_once(client, pays
     assert [(x["channel"], x["status"]) for x in guss_sales] == [("guss", "paid")], "filed as a Guss sale"
 
 
-async def test_the_till_poll_asks_paystack_at_most_every_20_seconds(client, paystack, monkeypatch):
+async def test_the_till_poll_asks_paystack_on_a_schedule_not_every_poll(client, paystack, monkeypatch):
     from app import main as main_mod
 
-    monkeypatch.setattr(main_mod, "PAYSTACK_VERIFY_EVERY", 20.0)
+    monkeypatch.setattr(main_mod, "_verify_gap", real_verify_gap)
     invoice_id, reference = await _start_sale(client, paystack)
     for _ in range(5):
         assert (await client.get(f"/pos/sales/{invoice_id}/status")).json()["status"] == "pending"
     assert paystack["verify_calls"].count(reference) == 1
+    assert [main_mod._verify_gap(a) for a in (10, 300, 900)] == [5, 15, 60]
