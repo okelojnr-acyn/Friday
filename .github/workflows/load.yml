@@ -1,0 +1,51 @@
+name: load
+
+# Friday Host RELIABILITY-PLAN phase D: load at 1x/2x/5x a busy
+# organisation, failure drills and a soak, against the newest released
+# Friday run the way Friday Host runs it (deploy/loadtest). Weekly, and by
+# hand before a big release. Results: the run summary and an artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      version: { description: "Friday commit to test (blank: newest that passed CI)", required: false }
+      mults: { description: "Traffic multiples", default: "1 2 5" }
+      duration: { description: "Each load step", default: "5m" }
+      soak_min: { description: "Soak minutes at 1x (0 skips)", default: "30" }
+  schedule:
+    - cron: "0 1 * * 0" # Sunday 04:00 Nairobi
+  pull_request:
+    paths: ["deploy/loadtest/**", ".github/workflows/load.yml"]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pick the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ inputs.version }}"
+          [ -n "$v" ] || v=$(gh run list --workflow ci.yml --branch main --status success --limit 1 --json headSha -q '.[0].headSha')
+          echo "FRIDAY_VERSION=$v" >> "$GITHUB_ENV"
+      - name: Load, drills, soak
+        env:
+          MULTS: ${{ inputs.mults || '1 2 5' }}
+          DURATION: ${{ inputs.duration || '5m' }}
+          SOAK_MIN: ${{ inputs.soak_min || '30' }}
+        run: deploy/loadtest/run.sh
+      - if: always()
+        run: cat deploy/loadtest/results/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-results
+          path: deploy/loadtest/results
+      - if: failure()
+        working-directory: deploy
+        run: docker compose -f compose.yml -f loadtest/compose.load.yml --env-file .env logs --tail 150
