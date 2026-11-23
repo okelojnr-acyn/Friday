@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import logging
 import uuid
@@ -28,7 +29,8 @@ def require_kernel_token(authorization: str | None = Header(default=None)) -> No
     shared token `publish_event` sends out with."""
     settings = get_settings()
     expected = f"Bearer {settings.kernel_events_token}"
-    if authorization != expected:
+    # Same time whatever the guess (the kernel's svcauth.Bearer does the same).
+    if not settings.kernel_events_token or not hmac.compare_digest((authorization or "").encode(), expected.encode()):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid kernel token")
 
 
