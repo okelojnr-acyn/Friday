@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"github.com/acyn-innovation/friday/kernel/internal/sealed"
 	"github.com/acyn-innovation/friday/kernel/internal/svcauth"
 	"log"
 	"net/http"
@@ -182,8 +183,22 @@ func main() {
 	mux.Handle("POST /orgs/locations", requireAuth(http.HandlerFunc(people.SaveLocation)))
 	mux.Handle("PATCH /orgs/locations/{id}", requireAuth(http.HandlerFunc(people.SaveLocation)))
 
+	// Integration keys encrypted at rest (RELIABILITY-PLAN phase C); rows
+	// stored before the key existed are sealed now.
+	secretsBox, err := sealed.New(os.Getenv("FRIDAY_SECRETS_KEY"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if secretsBox == nil {
+		log.Printf("FRIDAY_SECRETS_KEY not set: integration keys are stored unencrypted")
+	} else if n, err := integrations.SealAll(context.Background(), pool, secretsBox); err != nil {
+		log.Printf("seal stored integration keys: %v", err)
+	} else if n > 0 {
+		log.Printf("sealed %d stored integration configs", n)
+	}
 	integrationHandlers := &integrations.Handlers{
 		Pool:          pool,
+		Box:           secretsBox,
 		InternalToken: eventsToken,
 		JWTSecret:     jwtSecret,
 		PublicURL:     kernelPublicURL,
@@ -199,7 +214,7 @@ func main() {
 	// no Authorization header; see google_oauth.go's oauthStateClaims doc.
 	mux.HandleFunc("GET /orgs/integrations/google_calendar/oauth/callback", integrationHandlers.GoogleOAuthCallback)
 
-	gussHandlers := &guss.Handlers{Pool: pool, Issuer: issuer, WebURL: corsOrigin}
+	gussHandlers := &guss.Handlers{Pool: pool, Box: secretsBox, Issuer: issuer, WebURL: corsOrigin}
 	mux.Handle("GET /guss/status", requireAuth(http.HandlerFunc(gussHandlers.Status)))
 	mux.Handle("GET /guss/access", requireAuth(http.HandlerFunc(gussHandlers.Access)))
 	mux.Handle("PUT /guss/access", requireAuth(http.HandlerFunc(gussHandlers.SetAccess)))

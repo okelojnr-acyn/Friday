@@ -60,6 +60,9 @@ services:
       DATABASE_URL: ${FRIDAY_DATABASE_URL:-postgres://friday:${POSTGRES_PASSWORD:?}@postgres:5432/friday}
       JWT_SECRET: ${JWT_SECRET:?}
       KERNEL_EVENTS_TOKEN: ${KERNEL_EVENTS_TOKEN:?}
+      # Encrypts stored integration keys (openssl rand -base64 32). Keep it:
+      # without it, saved Paystack/Stripe/email keys must be entered again.
+      FRIDAY_SECRETS_KEY: ${FRIDAY_SECRETS_KEY:-}
       MIGRATIONS_DIR: migrations
       FRIDAY_VERSION: ${FRIDAY_VERSION:?}
       CORS_ORIGIN: https://${FRIDAY_DOMAIN:?}

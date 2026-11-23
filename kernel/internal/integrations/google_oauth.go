@@ -80,9 +80,7 @@ func (h *Handlers) loadGoogleConfig(ctx context.Context, orgID string) (map[stri
 	`, orgID).Scan(&raw); err != nil {
 		return nil, err
 	}
-	var cfg map[string]any
-	_ = json.Unmarshal(raw, &cfg)
-	return cfg, nil
+	return h.decode(raw)
 }
 
 // GoogleOAuthStart begins the consent flow for the caller's org.
@@ -150,7 +148,7 @@ func (h *Handlers) GoogleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg["refresh_token"] = refreshToken
-	raw, err := json.Marshal(cfg)
+	raw, err := h.encode(cfg)
 	if err != nil {
 		h.redirectResult(w, r, "error")
 		return

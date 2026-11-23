@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/acyn-innovation/friday/kernel/internal/sealed"
 	"io"
 	"net"
 	"net/http"
@@ -27,6 +28,8 @@ import (
 
 type Handlers struct {
 	Pool *pgxpool.Pool
+	// Box opens the stored Guss connection (sealed with FRIDAY_SECRETS_KEY).
+	Box *sealed.Box
 	// Issuer signs the short-lived tokens Guss gets for linked people.
 	Issuer *auth.Issuer
 	// Client is replaced in tests; nil means the SSRF-safe default.
@@ -60,6 +63,9 @@ func (h *Handlers) load(ctx context.Context, orgID string) (config, error) {
 		return config{}, errNotConnected
 	}
 	if err != nil {
+		return config{}, err
+	}
+	if raw, err = h.Box.Open(raw); err != nil {
 		return config{}, err
 	}
 	var c config
