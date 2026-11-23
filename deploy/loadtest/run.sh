@@ -176,6 +176,12 @@ sql "SELECT round(mean_exec_time::numeric, 1) || ' ms x ' || calls || ': ' || le
 for s in kernel crm invoicing projects inventory web3 accounting minions fleets pgbouncer; do
   printf '%s %s\n' "$s" "$("${DC[@]}" logs "$s" 2>&1 | grep -ciE 'error|traceback|panic')"
 done > "$R/error-lines.txt"
+# What the errors were: each distinct line (timestamps and ids stripped), most frequent first.
+for s in kernel invoicing inventory accounting pgbouncer; do
+  "${DC[@]}" logs --no-log-prefix "$s" 2>&1 | grep -iE 'error|exception|panic' \
+    | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9:.]+( UTC)?//g; s/[0-9a-f]{8}-[0-9a-f-]{27}/<id>/g; s/0x[0-9a-f]+/<p>/g; s/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+/<addr>/g' \
+    | sort | uniq -c | sort -rn | head -15 > "$R/errors-$s.txt"
+done
 
 {
   echo "## Friday load test ($FRIDAY_VERSION)"
