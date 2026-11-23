@@ -9,7 +9,9 @@
 package integrations
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/acyn-innovation/friday/kernel/internal/sealed"
 	"github.com/acyn-innovation/friday/kernel/internal/svcauth"
 	"net/http"
 
@@ -22,6 +24,8 @@ import (
 type Handlers struct {
 	Pool          *pgxpool.Pool
 	InternalToken string
+	// Box encrypts stored configs (FRIDAY_SECRETS_KEY); nil stores plain JSON.
+	Box *sealed.Box
 	// JWTSecret and PublicURL are only used by the Google OAuth flow
 	// (google_oauth.go) -- JWTSecret signs/verifies the state param
 	// (same secret as session JWTs, different claims shape), PublicURL
@@ -103,9 +107,69 @@ func (h *Handlers) Get(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
-	var cfg map[string]any
-	_ = json.Unmarshal(raw, &cfg)
-	writeJSON(w, http.StatusOK, credentialView{Provider: provider, Config: cfg, Connected: true})
+	cfg, err := h.decode(raw)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Secrets never go back to the browser; Set keeps them when the mask returns.
+	writeJSON(w, http.StatusOK, credentialView{Provider: provider, Config: sealed.Masked(cfg), Connected: true})
+}
+
+// decode opens a stored config (sealed or plain) into a map.
+func (h *Handlers) decode(stored []byte) (map[string]any, error) {
+	plain, err := h.Box.Open(stored)
+	if err != nil {
+		return nil, err
+	}
+	cfg := map[string]any{}
+	_ = json.Unmarshal(plain, &cfg)
+	return cfg, nil
+}
+
+// encode is what gets stored for cfg: sealed with a key, plain without.
+func (h *Handlers) encode(cfg map[string]any) ([]byte, error) {
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return h.Box.Seal(raw)
+}
+
+// SealAll encrypts every config still stored in plain JSON (rows written
+// before FRIDAY_SECRETS_KEY was set). Runs at startup; no-op without a key.
+func SealAll(ctx context.Context, pool *pgxpool.Pool, box *sealed.Box) (int, error) {
+	if box == nil {
+		return 0, nil
+	}
+	rows, err := pool.Query(ctx, `SELECT org_id::text, provider, config FROM core.integration_credentials WHERE NOT (config ? 'sealed')`)
+	if err != nil {
+		return 0, err
+	}
+	type row struct {
+		org, provider string
+		raw           []byte
+	}
+	var todo []row
+	for rows.Next() {
+		var x row
+		if err := rows.Scan(&x.org, &x.provider, &x.raw); err == nil {
+			todo = append(todo, x)
+		}
+	}
+	rows.Close()
+	n := 0
+	for _, x := range todo {
+		s, err := box.Seal(x.raw)
+		if err != nil {
+			return n, err
+		}
+		if _, err := pool.Exec(ctx, `UPDATE core.integration_credentials SET config = $3 WHERE org_id = $1 AND provider = $2 AND NOT (config ? 'sealed')`, x.org, x.provider, s); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 // Set upserts a provider's config -- "Connect" or "Save changes" on the
@@ -122,7 +186,18 @@ func (h *Handlers) Set(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	raw, err := json.Marshal(cfg)
+	// The form sends back the masked secrets it was shown: keep the stored ones.
+	var stored []byte
+	if err := h.Pool.QueryRow(r.Context(), `SELECT config FROM core.integration_credentials WHERE org_id = $1 AND provider = $2`,
+		claims.OrgID, provider).Scan(&stored); err == nil {
+		old, err := h.decode(stored)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		cfg = sealed.Merge(cfg, old)
+	}
+	raw, err := h.encode(cfg)
 	if err != nil {
 		http.Error(w, "invalid config", http.StatusBadRequest)
 		return
@@ -136,7 +211,7 @@ func (h *Handlers) Set(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, credentialView{Provider: provider, Config: cfg, Connected: true})
+	writeJSON(w, http.StatusOK, credentialView{Provider: provider, Config: sealed.Masked(cfg), Connected: true})
 }
 
 // Delete disconnects a provider -- "Disconnect" on the settings screen.
@@ -181,8 +256,11 @@ func (h *Handlers) GetInternal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
-	var cfg map[string]any
-	_ = json.Unmarshal(raw, &cfg)
+	cfg, err := h.decode(raw)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	writeJSON(w, http.StatusOK, cfg)
 }
 
