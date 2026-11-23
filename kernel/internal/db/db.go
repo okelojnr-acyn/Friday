@@ -85,6 +85,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, dir string) error {
 		if err != nil {
 			return fmt.Errorf("begin tx for %s: %w", name, err)
 		}
+		// Friday Host gives tenant roles a statement timeout; a migration
+		// on a big table may need longer, and must never stop halfway.
+		if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout = 0`); err != nil {
+			tx.Rollback(ctx)
+			return fmt.Errorf("lift timeout for %s: %w", name, err)
+		}
 		if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
 			tx.Rollback(ctx)
 			return fmt.Errorf("apply %s: %w", name, err)
