@@ -241,6 +241,19 @@ jobs:
           echo "$first / $again"
           [ -n "$first" ] && [ "$first" = "$again" ]
           echo "ORG_ID=$first" >> "$GITHUB_ENV"
+      - name: Every app table keeps businesses apart (row-level security, forced)
+        # A table with org_id in an app schema must have RLS enabled and
+        # forced, or a missed WHERE leaks another business's rows. Kernel
+        # tables (core) and the event plumbing are read across orgs by design.
+        run: |
+          missing=$(docker compose -f compose.yml --env-file .env exec -T postgres psql -U friday -d friday -Atc "
+            SELECT n.nspname || '.' || c.relname FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped
+            WHERE c.relkind = 'r' AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'core')
+              AND c.relname NOT IN ('event_outbox', 'processed_events')
+              AND NOT (c.relrowsecurity AND c.relforcerowsecurity)")
+          [ -z "$missing" ] || { echo "tables without forced row-level security:"; echo "$missing"; exit 1; }
       - name: Export an organisation
         run: |
           docker compose -f compose.yml --env-file .env exec -T kernel ./kernel export "$ORG_ID" > export.zip
