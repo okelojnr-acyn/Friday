@@ -93,3 +93,32 @@ async def test_a_business_not_registered_for_vat_books_no_vat_on_guss_sales(clie
     await client.post("/pos/sales", json=guss_sale())
     paid = [p for t, p in captured if t == "invoicing.invoice.paid"][0]
     assert paid["vat_cents"] == 0
+
+
+async def test_a_periods_sales_add_up_in_one_request_by_item(client, monkeypatch):
+    async def cfg(org_id):
+        return CFG
+
+    monkeypatch.setattr(main_mod, "get_etims_config", cfg)
+    bread = {"lines": [{"description": "Bread", "quantity": 2, "unit_price_cents": 1000}], "amount_cents": 2000, "method": "cash"}
+    first = (await client.post("/pos/sales", json=bread)).json()
+    await client.post("/pos/sales", json=bread)
+    await client.post("/pos/sales", json=guss_sale())
+    window = {"start": first["created_at"][:10] + "T00:00:00Z", "end": "2999-01-01T00:00:00Z"}
+    till = (await client.get("/pos/sales-summary", params={**window, "channel": "till"})).json()
+    assert till == [{"currency": "KES", "total_cents": 4000, "lines": [{"description": "Bread", "quantity": 4.0, "total_cents": 4000}]}]
+    everything = (await client.get("/pos/sales-summary", params=window)).json()
+    assert everything[0]["total_cents"] == 4000 + 121000
+    assert (await client.get("/pos/sales-summary", params={"start": "2000-01-01", "end": "2000-01-02"})).json() == []
+
+
+async def test_payments_on_invoices_add_up_but_pos_sales_dont(client, monkeypatch):
+    async def cfg(org_id):
+        return CFG
+
+    monkeypatch.setattr(main_mod, "get_etims_config", cfg)
+    invoice = (await client.post("/invoices", json={"lines": [{"description": "x", "unit_price_cents": 1000}]})).json()
+    await client.post(f"/invoices/{invoice['id']}/payments", json={"amount_cents": 400})
+    await client.post("/pos/sales", json=guss_sale())
+    window = {"start": "2000-01-01T00:00:00Z", "end": "2999-01-01T00:00:00Z"}
+    assert (await client.get("/reports/payments-received", params=window)).json() == [{"currency": invoice["currency"], "total_cents": 400}]

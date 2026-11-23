@@ -19,7 +19,7 @@ from friday_common import (
     resource,
 )
 from friday_common.integrations import PesapalProvider, ResendProvider, StripeProvider
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1112,6 +1112,52 @@ async def list_pos_sales(
     ]
 
 
+def _utc(at: datetime) -> datetime:
+    return at if at.tzinfo else at.replace(tzinfo=UTC)
+
+
+@pos_router.get("/sales-summary")
+async def pos_sales_summary(
+    start: datetime = Query(..., description="from (ISO time; no zone = UTC)"),
+    end: datetime = Query(..., description="up to, not including"),
+    channel: str | None = Query(None, pattern="^(till|guss)$"),
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("sales.read")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Paid POS sales between start and end added up by item, per
+    currency: Guss's week/month report in one query instead of a day at a
+    time. `total_cents` includes discounts and VAT; returns count negative."""
+    total = InvoiceLine.total_cents + InvoiceLine.tax_cents
+    q = (
+        select(
+            Invoice.currency,
+            InvoiceLine.description,
+            InvoiceLine.is_adjustment,
+            func.sum(InvoiceLine.quantity),
+            func.sum(total),
+        )
+        .join(InvoiceLine, InvoiceLine.invoice_id == Invoice.id)
+        .where(
+            Invoice.org_id == uuid.UUID(principal.org_id),
+            Invoice.source == "pos",
+            Invoice.status == "paid",
+            Invoice.issued_at >= _utc(start),
+            Invoice.issued_at < _utc(end),
+        )
+        .group_by(Invoice.currency, InvoiceLine.description, InvoiceLine.is_adjustment)
+    )
+    if channel:
+        q = q.where(Invoice.channel == channel)
+    out: dict[str, dict] = {}
+    for currency, description, is_adjustment, qty, cents in (await session.execute(_in_scope(q, scope))).all():
+        row = out.setdefault(currency, {"currency": currency, "total_cents": 0, "lines": []})
+        row["total_cents"] += int(cents or 0)
+        if not is_adjustment:
+            row["lines"].append({"description": description, "quantity": float(qty or 0), "total_cents": int(cents or 0)})
+    return list(out.values())
+
+
 @pos_router.get("/sales/{number}", response_model=InvoiceOut)
 async def get_pos_sale(
     number: str,
@@ -1553,6 +1599,32 @@ def _aging_bucket(days_past_due: int) -> str:
         if days_past_due <= limit:
             return name
     return "days_over_90_cents"
+
+
+@reports_router.get("/payments-received")
+async def payments_received(
+    start: datetime = Query(...),
+    end: datetime = Query(...),
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("invoices.read")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Money received on invoices (not POS sales, which /pos/sales-summary
+    covers) between start and end, per currency."""
+    q = (
+        select(Invoice.currency, func.sum(Payment.amount_cents))
+        .join(Payment, Payment.invoice_id == Invoice.id)
+        .where(
+            Invoice.org_id == uuid.UUID(principal.org_id),
+            Invoice.kind == "invoice",
+            Invoice.source.notin_(("pos", "credit_note")),
+            Payment.received_at >= _utc(start),
+            Payment.received_at < _utc(end),
+        )
+        .group_by(Invoice.currency)
+    )
+    rows = (await session.execute(_in_scope(q, scope))).all()
+    return [{"currency": c, "total_cents": int(cents or 0)} for c, cents in rows]
 
 
 @reports_router.get("/ar-aging", response_model=ArAgingOut)
