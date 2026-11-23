@@ -181,6 +181,11 @@ async def run_outbox(interval_seconds: float = 10.0) -> None:
                     await conn.execute(
                         text(f"DELETE FROM {_outbox()} WHERE delivered_at < now() - interval '7 days'")
                     )
+                    # A retried delivery stops within hours; 30 days of ids is plenty.
+                    schema = get_settings().db_schema
+                    await conn.execute(
+                        text(f"DELETE FROM \"{schema}\".processed_events WHERE processed_at < now() - interval '30 days'")
+                    )
                 last_trim = now
         except asyncio.CancelledError:
             raise
