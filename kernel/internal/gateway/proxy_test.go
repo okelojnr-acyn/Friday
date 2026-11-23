@@ -43,3 +43,27 @@ func TestAppProxyStripsUpstreamCORS(t *testing.T) {
 		t.Fatal("non-CORS upstream headers must still pass through")
 	}
 }
+
+// Apps learn this Friday's public addresses from the kernel (payment
+// webhooks and return pages on whatever domain it runs); a caller can't
+// set them.
+func TestAppProxyTellsAppsThePublicAddresses(t *testing.T) {
+	var got [2]string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = [2]string{r.Header.Get("X-Friday-Public-URL"), r.Header.Get("X-Friday-Web-URL")}
+	}))
+	defer upstream.Close()
+	PublicKernelURL, PublicWebURL = "https://shop.example/kernel", "https://shop.example"
+	t.Cleanup(func() { PublicKernelURL, PublicWebURL = "", "" })
+
+	proxy, err := NewAppProxy(registry.App{Name: "invoicing", BaseURL: upstream.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/external/webhooks/pesapal?OrderTrackingId=x", nil)
+	req.Header.Set("X-Friday-Public-URL", "https://evil.example")
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+	if got != [2]string{"https://shop.example/kernel", "https://shop.example"} {
+		t.Fatalf("app saw %v", got)
+	}
+}

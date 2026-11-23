@@ -7,6 +7,7 @@ from sqlalchemy import exc as sa_exc
 from sqlalchemy import text
 
 from .db import make_engine
+from .public import PublicURLMiddleware
 from .resource import all_resources
 from .settings import get_settings
 
@@ -20,6 +21,8 @@ def create_app(service_name: str, version: str = "0.1.0") -> FastAPI:
     settings = get_settings()
     app = FastAPI(title=service_name, version=version)
 
+    # This Friday's public addresses, from the kernel (payment webhooks and return pages).
+    app.add_middleware(PublicURLMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

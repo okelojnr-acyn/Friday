@@ -19,6 +19,7 @@ from friday_common import (
     resource,
 )
 from friday_common.integrations import PesapalProvider, ResendProvider, StripeProvider
+from friday_common.public import paid_page, webhook_url
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
@@ -862,11 +863,9 @@ async def pay_with_pesapal(
     if not config.get("consumer_key"):
         raise HTTPException(400, "Pesapal is not connected -- add a consumer key/secret in Settings > Integrations")
 
-    settings = get_settings()
-    if not settings.app_public_url:
-        raise HTTPException(
-            500, "APP_PUBLIC_URL is not configured for this service -- Pesapal needs a real callback URL"
-        )
+    ipn_url = webhook_url("pesapal")
+    if not ipn_url:
+        raise HTTPException(500, "this Friday doesn't know its public address, so Pesapal can't reach it")
 
     invoice = Invoice(
         org_id=uuid.UUID(principal.org_id),
@@ -891,14 +890,15 @@ async def pay_with_pesapal(
     # for the same reason Stripe's PaymentIntent metadata carries org_id:
     # pesapal_webhook has no Friday JWT to resolve org_id from otherwise,
     # and needs it before it can even open an org-scoped DB session.
-    callback_url = f"{settings.app_public_url.rstrip('/')}/external/webhooks/pesapal"
     try:
         intent = await PesapalProvider(config).create_payment_intent(
             charged_cents,
             invoice.currency,
             {
                 "merchant_reference": f"{principal.org_id}:{invoice.id}",
-                "callback_url": callback_url,
+                # Pesapal tells Friday at ipn_url; the customer comes back to the paid page.
+                "ipn_url": ipn_url,
+                "callback_url": paid_page() or ipn_url,
                 "description": f"POS sale {invoice.number}",
                 "email": principal.email,
             },

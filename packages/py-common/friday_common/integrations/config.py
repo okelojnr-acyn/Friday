@@ -28,3 +28,21 @@ async def get_integration_config(org_id: str, provider: str) -> dict:
     except httpx.HTTPError as exc:
         logger.warning("failed to fetch integration config %s/%s: %s", org_id, provider, exc)
         return {}
+
+
+async def forwarding_configs(provider: str) -> list[dict]:
+    """Every org's config for `provider` that has `forward_to` set, as
+    [{"org_id", "config"}]: who else wants that provider's events (Paystack
+    allows one webhook URL per account). [] on any failure."""
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{settings.kernel_internal_url}/integrations-forwarding/{provider}",
+                headers={"Authorization": f"Bearer {settings.kernel_events_token}"},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPError as exc:
+        logger.warning("failed to fetch forwarding configs for %s: %s", provider, exc)
+        return []

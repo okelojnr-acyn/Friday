@@ -17,6 +17,15 @@ import (
 // NewAppProxy returns a handler that strips the "/api/{app}" prefix and
 // forwards everything else to that app's base URL, passing the caller's
 // bearer token through unchanged so the app can verify it itself.
+// Public addresses the kernel tells every app on each request (set once in
+// main): where this Friday is reachable, on whatever domain it runs, so
+// apps can give payment providers webhook and return URLs without a
+// setting of their own.
+var (
+	PublicKernelURL string
+	PublicWebURL    string
+)
+
 func NewAppProxy(app registry.App) (http.Handler, error) {
 	target, err := url.Parse(app.BaseURL)
 	if err != nil {
@@ -29,6 +38,9 @@ func NewAppProxy(app registry.App) (http.Handler, error) {
 	proxy.Director = func(r *http.Request) {
 		r.URL.Path = trimPrefix(r.URL.Path, prefix)
 		originalDirector(r)
+		// Set here, never taken from the caller.
+		r.Header.Set("X-Friday-Public-URL", PublicKernelURL)
+		r.Header.Set("X-Friday-Web-URL", PublicWebURL)
 	}
 	// The kernel's withCORS owns CORS for every route; drop whatever the
 	// app sent so the browser never sees a doubled or stale-origin header.

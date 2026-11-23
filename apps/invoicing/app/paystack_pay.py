@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from friday_common import Principal, get_current_principal, get_integration_config, get_org_session
+from friday_common.public import paid_page
 from friday_common.integrations import PaystackProvider
 from friday_common.access import Scope, require
 from pydantic import BaseModel, Field
@@ -104,7 +105,9 @@ async def _initialize(org_id: str, reference: str, amount_cents: int, currency: 
         intent = await PaystackProvider(config).create_payment_intent(
             amount_cents,
             currency,
-            {"reference": reference, "email": email, "org_id": org_id, "description": description},
+            # Back to this Friday's paid page, not the Paystack account's default
+            # (an account shared with another system would send them there).
+            {"reference": reference, "email": email, "org_id": org_id, "description": description, "callback_url": paid_page()},
         )
     except (httpx.HTTPError, RuntimeError, ValueError) as exc:
         raise HTTPException(502, f"Could not start Paystack checkout: {exc}") from exc

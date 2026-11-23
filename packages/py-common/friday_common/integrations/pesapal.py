@@ -57,7 +57,9 @@ class PesapalProvider(PaymentProvider):
         return token
 
     async def _ipn_id(self, client: httpx.AsyncClient, token: str, callback_url: str) -> str:
-        cached = _ipn_id_cache.get(self.consumer_key)
+        # Keyed by the URL too: a Friday that moves to another domain registers its new address.
+        cache_key = f"{self.consumer_key}|{callback_url}"
+        cached = _ipn_id_cache.get(cache_key)
         if cached:
             return cached
         resp = await client.post(
@@ -70,7 +72,7 @@ class PesapalProvider(PaymentProvider):
         ipn_id = data.get("ipn_id")
         if not ipn_id:
             raise RuntimeError(f"Pesapal RegisterIPN did not return an ipn_id: {data}")
-        _ipn_id_cache[self.consumer_key] = ipn_id
+        _ipn_id_cache[cache_key] = ipn_id
         return ipn_id
 
     async def create_payment_intent(self, amount_cents: int, currency: str, metadata: dict) -> dict:
@@ -88,7 +90,7 @@ class PesapalProvider(PaymentProvider):
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             token = await self._access_token(client)
-            ipn_id = await self._ipn_id(client, token, callback_url)
+            ipn_id = await self._ipn_id(client, token, metadata.get("ipn_url") or callback_url)
             resp = await client.post(
                 f"{PESAPAL_API_BASE}/api/Transactions/SubmitOrderRequest",
                 json={

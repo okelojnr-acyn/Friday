@@ -26,7 +26,7 @@ async def test_pay_with_pesapal_requires_app_public_url(client, monkeypatch):
         return {"consumer_key": "ck", "consumer_secret": "cs"}
 
     monkeypatch.setattr("app.main.get_integration_config", fake_config)
-    monkeypatch.setattr("app.main.get_settings", lambda: _settings_with_public_url(""))
+    monkeypatch.setattr("friday_common.public.get_settings", lambda: _settings_with_public_url(""))
 
     resp = await client.post("/pos/sales/pay-with-pesapal", json=await _pesapal_sale_body())
     assert resp.status_code == 500
@@ -48,7 +48,7 @@ async def test_pay_with_pesapal_creates_pending_invoice_and_returns_redirect(cli
             return {"id": "ot_123", "redirect_url": "https://pay.pesapal.com/checkout/ot_123"}
 
     monkeypatch.setattr("app.main.get_integration_config", fake_config)
-    monkeypatch.setattr("app.main.get_settings", lambda: _settings_with_public_url())
+    monkeypatch.setattr("friday_common.public.get_settings", lambda: _settings_with_public_url())
     monkeypatch.setattr("app.main.PesapalProvider", FakePesapal)
 
     resp = await client.post("/pos/sales/pay-with-pesapal", json=await _pesapal_sale_body())
@@ -72,7 +72,7 @@ async def test_pay_with_pesapal_voids_invoice_when_gateway_call_fails(client, mo
             raise RuntimeError("Pesapal SubmitOrderRequest failed: boom")
 
     monkeypatch.setattr("app.main.get_integration_config", fake_config)
-    monkeypatch.setattr("app.main.get_settings", lambda: _settings_with_public_url())
+    monkeypatch.setattr("friday_common.public.get_settings", lambda: _settings_with_public_url())
     monkeypatch.setattr("app.main.PesapalProvider", FailingPesapal)
 
     resp = await client.post("/pos/sales/pay-with-pesapal", json=await _pesapal_sale_body())
@@ -91,7 +91,7 @@ async def _start_pending_sale(client, principal, monkeypatch, cents=1000) -> str
             return {"id": "ot_123", "redirect_url": "https://pay.pesapal.com/checkout/ot_123"}
 
     monkeypatch.setattr("app.main.get_integration_config", fake_config)
-    monkeypatch.setattr("app.main.get_settings", lambda: _settings_with_public_url())
+    monkeypatch.setattr("friday_common.public.get_settings", lambda: _settings_with_public_url())
     monkeypatch.setattr("app.main.PesapalProvider", FakePesapal)
 
     resp = await client.post("/pos/sales/pay-with-pesapal", json=await _pesapal_sale_body(cents))
@@ -185,3 +185,29 @@ async def test_pesapal_webhook_rejects_malformed_merchant_reference(client):
         params={"OrderTrackingId": "ot_123", "OrderMerchantReference": "not-a-valid-reference"},
     )
     assert resp.status_code == 400
+
+
+async def test_pesapal_hears_back_at_this_fridays_own_address(client, monkeypatch):
+    """On any domain: the kernel tells the app where it is; Pesapal's IPN
+    goes to <kernel>/external/webhooks/pesapal and the customer returns to
+    the paid page."""
+    seen = {}
+
+    async def fake_config(org_id, provider):
+        return {"consumer_key": "ck", "consumer_secret": "cs"}
+
+    class FakePesapal:
+        def __init__(self, config):
+            pass
+
+        async def create_payment_intent(self, amount_cents, currency, metadata):
+            seen.update(metadata)
+            return {"id": "ot_9", "redirect_url": "https://pay.pesapal.com/checkout/ot_9"}
+
+    monkeypatch.setattr("app.main.get_integration_config", fake_config)
+    monkeypatch.setattr("app.main.PesapalProvider", FakePesapal)
+    headers = {"X-Friday-Public-URL": "https://shop.example/kernel", "X-Friday-Web-URL": "https://shop.example"}
+    resp = await client.post("/pos/sales/pay-with-pesapal", json=await _pesapal_sale_body(), headers=headers)
+    assert resp.status_code == 201, resp.text
+    assert seen["ipn_url"] == "https://shop.example/kernel/external/webhooks/pesapal"
+    assert seen["callback_url"] == "https://shop.example/paid"
