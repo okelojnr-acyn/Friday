@@ -76,6 +76,7 @@ async def test_a_days_sales_list_shows_till_and_guss_sales(client, monkeypatch):
     only = (await client.get("/pos/sales", params={"day": day, "channel": "guss"})).json()
     assert [r["number"] for r in only] == [guss["number"]]
     assert only[0]["total_cents"] == 121000 and only[0]["lines"][0]["description"] == "Cooking oil 1L"
+    assert sum(line["total_cents"] for line in only[0]["lines"]) == 121000
 
 
 async def test_a_business_not_registered_for_vat_books_no_vat_on_guss_sales(client, monkeypatch):

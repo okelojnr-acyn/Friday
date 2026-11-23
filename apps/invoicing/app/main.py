@@ -1098,7 +1098,12 @@ async def list_pos_sales(
             "total_cents": sum(line.total_cents + line.tax_cents for line in inv.lines),
             "payments": [{"method": p.method, "cents": p.amount_cents} for p in inv.payments],
             "lines": [
-                {"description": line.description, "quantity": float(line.quantity), "product_id": line.product_id}
+                {
+                    "description": line.description,
+                    "quantity": float(line.quantity),
+                    "product_id": line.product_id,
+                    "total_cents": line.total_cents + line.tax_cents,
+                }
                 for line in inv.lines
                 if not line.is_adjustment
             ],
