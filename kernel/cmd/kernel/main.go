@@ -191,10 +191,17 @@ func main() {
 	}
 	if secretsBox == nil {
 		log.Printf("FRIDAY_SECRETS_KEY not set: integration keys are stored unencrypted")
-	} else if n, err := integrations.SealAll(context.Background(), pool, secretsBox); err != nil {
-		log.Printf("seal stored integration keys: %v", err)
-	} else if n > 0 {
-		log.Printf("sealed %d stored integration configs", n)
+	} else {
+		// After 10 minutes up: an update that rolls back sooner leaves the
+		// old kernel (which can't open sealed rows) with readable keys.
+		go func() {
+			time.Sleep(10 * time.Minute)
+			if n, err := integrations.SealAll(context.Background(), pool, secretsBox); err != nil {
+				log.Printf("seal stored integration keys: %v", err)
+			} else if n > 0 {
+				log.Printf("sealed %d stored integration configs", n)
+			}
+		}()
 	}
 	integrationHandlers := &integrations.Handlers{
 		Pool:          pool,
