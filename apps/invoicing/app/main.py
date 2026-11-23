@@ -1128,15 +1128,10 @@ async def pos_sales_summary(
     """Paid POS sales between start and end added up by item, per
     currency: Guss's week/month report in one query instead of a day at a
     time. `total_cents` includes discounts and VAT; returns count negative."""
-    total = InvoiceLine.total_cents + InvoiceLine.tax_cents
+    # shortcut: lines are added up here (their totals are Python properties, rounded per line);
+    # one query and one response either way. Move to SQL if a month's lines get too many to load.
     q = (
-        select(
-            Invoice.currency,
-            InvoiceLine.description,
-            InvoiceLine.is_adjustment,
-            func.sum(InvoiceLine.quantity),
-            func.sum(total),
-        )
+        select(Invoice.currency, InvoiceLine)
         .join(InvoiceLine, InvoiceLine.invoice_id == Invoice.id)
         .where(
             Invoice.org_id == uuid.UUID(principal.org_id),
@@ -1145,16 +1140,23 @@ async def pos_sales_summary(
             Invoice.issued_at >= _utc(start),
             Invoice.issued_at < _utc(end),
         )
-        .group_by(Invoice.currency, InvoiceLine.description, InvoiceLine.is_adjustment)
     )
     if channel:
         q = q.where(Invoice.channel == channel)
     out: dict[str, dict] = {}
-    for currency, description, is_adjustment, qty, cents in (await session.execute(_in_scope(q, scope))).all():
+    items: dict[tuple[str, str], dict] = {}
+    for currency, line in (await session.execute(_in_scope(q, scope))).all():
+        cents = line.total_cents + line.tax_cents
         row = out.setdefault(currency, {"currency": currency, "total_cents": 0, "lines": []})
-        row["total_cents"] += int(cents or 0)
-        if not is_adjustment:
-            row["lines"].append({"description": description, "quantity": float(qty or 0), "total_cents": int(cents or 0)})
+        row["total_cents"] += cents
+        if line.is_adjustment:
+            continue
+        item = items.get((currency, line.description))
+        if item is None:
+            item = items[(currency, line.description)] = {"description": line.description, "quantity": 0.0, "total_cents": 0}
+            row["lines"].append(item)
+        item["quantity"] += float(line.quantity)
+        item["total_cents"] += cents
     return list(out.values())
 
 
