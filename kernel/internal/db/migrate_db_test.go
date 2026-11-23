@@ -58,7 +58,11 @@ func TestConcurrentMigratorsApplyOnceAndLeaveNoLock(t *testing.T) {
 		t.Fatalf("applied %d times: %v", rows, err)
 	}
 	var held int
-	pool.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 7302190411 % 4294967296`).Scan(&held)
+	// A leaked lock sits on an idle session; other test packages migrating
+	// right now hold it only inside their own transactions.
+	pool.QueryRow(ctx, `
+		SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+		WHERE l.locktype = 'advisory' AND l.objid = 7302190411 % 4294967296 AND l.granted AND a.state = 'idle'`).Scan(&held)
 	if held != 0 {
 		t.Fatalf("migrations lock still held by %d session(s)", held)
 	}
