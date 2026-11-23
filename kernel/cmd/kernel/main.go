@@ -259,7 +259,10 @@ func main() {
 	handler := withCORS(corsOrigin, mux)
 
 	log.Printf("kernel listening on %s", addr)
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	// Header timeout stops slow-header connections piling up; no whole-request
+	// timeout, so big uploads, exports and slow app replies still finish.
+	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
