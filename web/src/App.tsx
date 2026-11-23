@@ -1,4 +1,5 @@
 import { SupplierPage } from "./shell/SupplierPage";
+import { PaidPage } from "./shell/PaidPage";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider } from "./lib/auth";
 import { OrgSettingsProvider } from "./lib/orgSettings";
@@ -42,6 +43,7 @@ export default function App() {
       <OrgSettingsProvider>
       <Routes>
         <Route path="/supplier" element={<SupplierPage />} />
+        <Route path="/paid" element={<PaidPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/join" element={<AcceptInvitePage />} />

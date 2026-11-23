@@ -14,6 +14,7 @@ import (
 	"github.com/acyn-innovation/friday/kernel/internal/sealed"
 	"github.com/acyn-innovation/friday/kernel/internal/svcauth"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -281,4 +282,38 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// GetForwarding lists every org whose config for {provider} has forward_to
+// set, with that config (GET /internal/integrations-forwarding/{provider},
+// kernel token): invoicing uses it to pass on Paystack events that aren't
+// Friday's, checked against each org's own key first.
+func (h *Handlers) GetForwarding(w http.ResponseWriter, r *http.Request) {
+	if !svcauth.Bearer(r, h.InternalToken) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	rows, err := h.Pool.Query(r.Context(),
+		`SELECT org_id::text, config FROM core.integration_credentials WHERE provider = $1`, r.PathValue("provider"))
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var org string
+		var raw []byte
+		if rows.Scan(&org, &raw) != nil {
+			continue
+		}
+		cfg, err := h.decode(raw)
+		if err != nil {
+			continue
+		}
+		if s, _ := cfg["forward_to"].(string); strings.TrimSpace(s) != "" {
+			out = append(out, map[string]any{"org_id": org, "config": cfg})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }

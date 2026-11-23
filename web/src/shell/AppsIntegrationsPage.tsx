@@ -247,10 +247,12 @@ export function AppsIntegrationsPage() {
             ) : (
               <>
                 <p style={{ margin: 0 }}>{current.provider.blurb}</p>
-                {current.key === "paystack" ? (
+                {current.provider.webhook === "paste" ? (
                   <p style={{ margin: 0 }}>
-                    Webhook URL: <code style={{ userSelect: "all", wordBreak: "break-all" }}>{paystackWebhookUrl()}</code>
+                    Webhook URL: <code style={{ userSelect: "all", wordBreak: "break-all" }}>{webhookUrl(current.key)}</code>
                   </p>
+                ) : current.provider.webhook === "automatic" ? (
+                  <p style={{ margin: 0 }}>Friday gives {current.provider.label} its webhook address itself; nothing to paste.</p>
                 ) : null}
                 <ProviderEditor
                   key={current.key}
@@ -269,7 +271,8 @@ export function AppsIntegrationsPage() {
   );
 }
 
-/** Where Paystack sends payment events: the kernel passes them to invoicing. */
-function paystackWebhookUrl(): string {
-  return new URL(`${KERNEL_URL.replace(/\/$/, "")}/external/webhooks/paystack`, window.location.origin).href;
+/** Where a payment provider sends its events: this Friday's own address,
+ * on whatever domain it runs; the kernel passes them to invoicing. */
+function webhookUrl(provider: string): string {
+  return new URL(`${KERNEL_URL.replace(/\/$/, "")}/external/webhooks/${provider}`, window.location.origin).href;
 }

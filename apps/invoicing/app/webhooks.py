@@ -23,6 +23,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from friday_common import first_delivery, get_integration_config, require_kernel_token, set_org_context
 from friday_common.db import get_session
 from friday_common.integrations import PaystackProvider, PesapalProvider, StripeProvider
+from friday_common.integrations.config import forwarding_configs
+from friday_common.public import forward_in_background, forward_targets
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -250,6 +252,7 @@ async def paystack_webhook(request: Request, session: AsyncSession = Depends(get
     parsed = parse_reference(reference)
     debt = parse_debt_reference(reference)
     if parsed is None and debt is None:
+        await _forward_foreign_paystack(raw_body, request.headers.get("x-paystack-signature", ""))
         return {"ignored": "not a Friday reference"}
     org_id = (parsed or debt)[0]
 
@@ -267,3 +270,23 @@ async def paystack_webhook(request: Request, session: AsyncSession = Depends(get
     else:
         await settle_debt(session, org_id, debt[1], reference)
     return {"ok": True}
+
+
+async def _forward_foreign_paystack(raw_body: bytes, signature: str) -> None:
+    """Paystack allows one webhook URL per account. A business whose account
+    also serves another system (its website) lists that system under
+    "Also send these events to"; an event that isn't Friday's goes there,
+    but only after it checks out against that business's own secret key, so
+    nothing unattributed is ever passed on."""
+    if not signature:
+        return
+    for item in await forwarding_configs("paystack"):
+        config = item.get("config") or {}
+        if config.get("secret_key") and PaystackProvider(config).verify_webhook_signature(raw_body, signature):
+            forward_in_background(
+                forward_targets(config),
+                "POST",
+                raw_body,
+                {"content-type": "application/json", "x-paystack-signature": signature},
+            )
+            return

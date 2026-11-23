@@ -386,3 +386,29 @@ async def test_the_till_poll_asks_paystack_on_a_schedule_not_every_poll(client, 
         assert (await client.get(f"/pos/sales/{invoice_id}/status")).json()["status"] == "pending"
     assert paystack["verify_calls"].count(reference) == 1
     assert [main_mod._verify_gap(a) for a in (10, 300, 900)] == [5, 15, 60]
+
+
+async def test_an_event_that_isnt_fridays_goes_on_only_to_the_business_it_belongs_to(client, monkeypatch):
+    """Paystack allows one webhook URL per account: a business whose account
+    also serves its website lists that site, and only events signed with
+    that business's own key are passed on."""
+    sent = []
+
+    async def configs(provider):
+        assert provider == "paystack"
+        return [
+            {"org_id": "other", "config": {"secret_key": "sk_test_someone_else", "forward_to": "https://elsewhere.example/hook"}},
+            {"org_id": "mine", "config": {"secret_key": SECRET, "forward_to": "https://shop.example/paystack-hook"}},
+        ]
+
+    monkeypatch.setattr("app.webhooks.forwarding_configs", configs)
+    monkeypatch.setattr("app.webhooks.forward_in_background", lambda urls, method, body, headers: sent.append((urls, headers["x-paystack-signature"])))
+    raw, headers = _signed({"event": "charge.success", "data": {"reference": "website-order-42"}})
+    r = await client.post("/external/webhooks/paystack", content=raw, headers=headers)
+    assert r.status_code == 200 and r.json() == {"ignored": "not a Friday reference"}
+    assert sent == [(["https://shop.example/paystack-hook"], headers["x-paystack-signature"])]
+
+    sent.clear()
+    forged = {**headers, "x-paystack-signature": "0" * 128}
+    await client.post("/external/webhooks/paystack", content=raw, headers=forged)
+    assert sent == []

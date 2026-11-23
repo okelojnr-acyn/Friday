@@ -216,6 +216,7 @@ func main() {
 	mux.Handle("PUT /orgs/integrations/{provider}", requireAuth(http.HandlerFunc(integrationHandlers.Set)))
 	mux.Handle("DELETE /orgs/integrations/{provider}", requireAuth(http.HandlerFunc(integrationHandlers.Delete)))
 	mux.HandleFunc("GET /internal/integrations/{org_id}/{provider}", integrationHandlers.GetInternal)
+	mux.HandleFunc("GET /internal/integrations-forwarding/{provider}", integrationHandlers.GetForwarding)
 	mux.Handle("POST /orgs/integrations/google_calendar/oauth/start", requireAuth(http.HandlerFunc(integrationHandlers.GoogleOAuthStart)))
 	// Not behind requireAuth -- Google's redirect back to this URL carries
 	// no Authorization header; see google_oauth.go's oauthStateClaims doc.
@@ -269,6 +270,7 @@ func main() {
 	gateway.WithEventCounts(gateway.EventCounts(pool))
 	mux.Handle("GET /health", gateway.HealthHandler(apps, pool, nil))
 
+	gateway.PublicKernelURL, gateway.PublicWebURL = kernelPublicURL, corsOrigin
 	for _, app := range apps {
 		proxy, err := gateway.NewAppProxy(app)
 		if err != nil {
@@ -276,9 +278,10 @@ func main() {
 		}
 		mux.Handle("/api/"+app.Name+"/", requireAuth(gateway.EnforceAccess(app.Name, proxy)))
 		if app.Name == "invoicing" {
-			// Payment providers' webhooks (signed, checked by invoicing) at the
-			// kernel's own address, the one owners can see: <kernel>/external/webhooks/paystack.
-			mux.Handle("POST /external/webhooks/", proxy)
+			// Payment providers' webhooks (each checks its own signature or asks
+			// the provider) at this Friday's own address, on whatever domain:
+			// <kernel>/external/webhooks/<provider>. Any method: Pesapal calls with GET.
+			mux.Handle("/external/webhooks/", proxy)
 		}
 		log.Printf("routing /api/%s/* -> %s", app.Name, app.BaseURL)
 	}
