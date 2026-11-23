@@ -39,7 +39,7 @@ export const PROVIDERS: ProviderDescriptor[] = [
     icon: "credit-card",
     group: "Get paid",
     blurb:
-      "Card, M-Pesa and bank payments at the till and as invoice pay links, in your own Paystack account. Paystack signs its webhooks with this same secret key, so there's no separate webhook secret. Webhook URL (optional): your Friday address + /external/webhooks/paystack. Paystack emails a receipt for every payment: to the customer when their email is known, else to the receipt email below, else to whoever is at the till.",
+      "Card, M-Pesa and bank payments at the till and as invoice pay links, in your own Paystack account. Paystack signs its webhooks with this same secret key, so there's no separate webhook secret. Add the webhook URL below in Paystack (Settings, API Keys & Webhooks) so payments show at once. Paystack emails a receipt for every payment: to the customer when their email is known, else to the receipt email below, else to whoever is at the till.",
     codeReady: true,
     docAnchor: "paystack",
     fields: [

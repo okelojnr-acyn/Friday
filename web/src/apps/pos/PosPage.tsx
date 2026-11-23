@@ -574,10 +574,13 @@ export function PosPage({
 
   useEffect(() => {
     if (!onlineFlow || onlineFlow.status !== "pending") return;
-    // Every 3 s for 10 minutes, then stop: Cancel still asks for the final word.
+    // Database reads (Friday asks Paystack on its own schedule): every 2 s
+    // while the customer approves, every 6 s after 2 minutes, stop at 10
+    // minutes; Cancel still asks for the final word.
     let polls = 0;
     const interval = setInterval(async () => {
-      if (++polls > 200) return clearInterval(interval);
+      if (++polls > 300) return clearInterval(interval);
+      if (polls > 60 && polls % 3 !== 0) return;
       try {
         const result = await pollPosSaleStatus(onlineFlow.invoiceId);
         if (result.status === "paid") {
@@ -588,7 +591,7 @@ export function PosPage({
       } catch {
         // keep polling
       }
-    }, 3000);
+    }, 2000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onlineFlow?.invoiceId, onlineFlow?.status]);

@@ -397,6 +397,17 @@ async def check_debt_link(
     parsed = parse_debt_reference(reference)
     if parsed is None or parsed[0] != principal.org_id:
         raise HTTPException(404, "not a pay link of this business")
+    # Already recorded (the webhook, or an earlier check): no need to ask Paystack.
+    paid = (
+        await session.execute(
+            select(func.max(Payment.method), func.sum(Payment.amount_cents)).where(
+                Payment.org_id == uuid.UUID(principal.org_id), Payment.client_ref == f"paystack:{reference}"
+            )
+        )
+    ).first()
+    if paid and paid[1]:
+        customer = await session.get(Customer, uuid.UUID(parsed[1]))
+        return {"status": "paid", "customer": customer.name if customer else "", "paid_cents": int(paid[1]), "method": paid[0]}
     try:
         return await settle_debt(session, principal.org_id, parsed[1], reference)
     except httpx.HTTPError as exc:
