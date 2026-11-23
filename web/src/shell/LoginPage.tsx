@@ -13,10 +13,10 @@ import { Icon } from "../ui/Icon";
  * which account, no email prompt), an emailed one-time code is the only
  * fallback. No password field anywhere. */
 export function LoginPage() {
-  const { loginWithPasskey, requestLoginCode, verifyCode } = useAuth();
+  const { loginWithPasskey, requestLoginCode, verifyCode, addPasskey } = useAuth();
   const navigate = useNavigate();
 
-  const [mode, setMode] = useState<"passkey" | "code-email" | "code-entry">(
+  const [mode, setMode] = useState<"passkey" | "code-email" | "code-entry" | "add-passkey">(
     browserSupportsWebAuthn() ? "passkey" : "code-email",
   );
   const [email, setEmail] = useState("");
@@ -57,9 +57,25 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       await verifyCode(email, code);
-      navigate("/");
+      // Signed in with a code: no passkey for this address on this device
+      // (a new phone, or this Friday moved to a new domain). Offer one.
+      if (browserSupportsWebAuthn()) setMode("add-passkey");
+      else navigate("/");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Invalid or expired code");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function onAddPasskey() {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await addPasskey();
+      navigate("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add a passkey");
     } finally {
       setSubmitting(false);
     }
@@ -81,6 +97,18 @@ export function LoginPage() {
                 Use an email code instead
               </a>
             </p>
+          </div>
+        ) : mode === "add-passkey" ? (
+          <div className="form-grid">
+            <p style={{ margin: 0 }}>
+              Signed in. Next time, use your fingerprint or face instead of an email code: add a passkey on this device.
+            </p>
+            <Button type="button" variant="primary" onClick={onAddPasskey} disabled={submitting} autoFocus>
+              <Icon name="key" size={14} /> {submitting ? "Adding..." : "Add a passkey"}
+            </Button>
+            <Button type="button" onClick={() => navigate("/")}>
+              Not now
+            </Button>
           </div>
         ) : mode === "code-email" ? (
           <form onSubmit={onRequestCode} className="form-grid">
