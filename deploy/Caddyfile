@@ -1,3 +1,8 @@
+# Extra sites Friday Host writes, e.g. a redirect from this Friday's old
+# address after it moved to a new domain. None by default (an empty glob
+# is fine).
+import /etc/caddy/sites/*.caddy
+
 {$FRIDAY_DOMAIN} {
 	encode zstd gzip
 	# route keeps the written order, so the firewall runs first.
