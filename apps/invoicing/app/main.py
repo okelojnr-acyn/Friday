@@ -1,4 +1,5 @@
 import logging
+import time
 import uuid
 from types import SimpleNamespace
 from decimal import ROUND_HALF_UP, Decimal
@@ -981,6 +982,25 @@ async def pay_with_paystack(
     return PaystackCheckoutOut(invoice_id=invoice.id, redirect_url=redirect_url)
 
 
+# Paystack is asked about a pending sale at most this often; its webhook
+# usually settles it first, and the till polls every few seconds.
+PAYSTACK_VERIFY_EVERY = 20.0
+_last_verify: dict[uuid.UUID, float] = {}
+
+
+def _verify_due(invoice_id: uuid.UUID) -> bool:
+    """True (and remembered) when Paystack hasn't been asked about this sale
+    in the last PAYSTACK_VERIFY_EVERY seconds."""
+    # shortcut: per process (one uvicorn worker per app); a shared store if apps run several workers.
+    now = time.monotonic()
+    if now - _last_verify.get(invoice_id, -PAYSTACK_VERIFY_EVERY) < PAYSTACK_VERIFY_EVERY:
+        return False
+    if len(_last_verify) > 10_000:
+        _last_verify.clear()
+    _last_verify[invoice_id] = now
+    return True
+
+
 @pos_router.get("/sales/{invoice_id}/status", response_model=PosSaleStatusOut)
 async def get_pos_sale_status(
     invoice_id: uuid.UUID,
@@ -994,7 +1014,7 @@ async def get_pos_sale_status(
     invoice = await session.get(Invoice, invoice_id)
     if invoice is None or str(invoice.org_id) != principal.org_id:
         raise HTTPException(404, "sale not found")
-    if invoice.status != "paid" and invoice.paystack_reference:
+    if invoice.status != "paid" and invoice.paystack_reference and _verify_due(invoice.id):
         # Ask Paystack directly, so a sale settles even if its webhook is lost.
         reference = invoice.paystack_reference
         try:

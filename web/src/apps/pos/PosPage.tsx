@@ -574,7 +574,10 @@ export function PosPage({
 
   useEffect(() => {
     if (!onlineFlow || onlineFlow.status !== "pending") return;
+    // Every 3 s for 10 minutes, then stop: Cancel still asks for the final word.
+    let polls = 0;
     const interval = setInterval(async () => {
+      if (++polls > 200) return clearInterval(interval);
       try {
         const result = await pollPosSaleStatus(onlineFlow.invoiceId);
         if (result.status === "paid") {
@@ -585,7 +588,7 @@ export function PosPage({
       } catch {
         // keep polling
       }
-    }, 2000);
+    }, 3000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onlineFlow?.invoiceId, onlineFlow?.status]);

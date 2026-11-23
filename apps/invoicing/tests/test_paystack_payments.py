@@ -40,11 +40,14 @@ def paystack(monkeypatch):
             return {"status": True}
 
         async def verify(self, reference):
+            state.setdefault("verify_calls", []).append(reference)
             return state["verified"].get(reference, {"status": "abandoned", "amount": 0, "currency": "", "channel": ""})
 
     monkeypatch.setattr("app.paystack_pay.get_integration_config", _config)
     monkeypatch.setattr("app.paystack_pay.PaystackProvider", FakePaystack)
     monkeypatch.setattr("app.webhooks.get_integration_config", _config)
+    # Each test polls back to back; the 20 s pause between checks is tested below.
+    monkeypatch.setattr("app.main.PAYSTACK_VERIFY_EVERY", 0.0)
     return state
 
 
@@ -368,3 +371,13 @@ async def test_guss_sends_an_mpesa_prompt_for_a_scanned_basket_once(client, pays
     today = datetime.now(UTC).date().isoformat()
     guss_sales = (await client.get(f"/pos/sales?day={today}&channel=guss")).json()
     assert [(x["channel"], x["status"]) for x in guss_sales] == [("guss", "paid")], "filed as a Guss sale"
+
+
+async def test_the_till_poll_asks_paystack_at_most_every_20_seconds(client, paystack, monkeypatch):
+    from app import main as main_mod
+
+    monkeypatch.setattr(main_mod, "PAYSTACK_VERIFY_EVERY", 20.0)
+    invoice_id, reference = await _start_sale(client, paystack)
+    for _ in range(5):
+        assert (await client.get(f"/pos/sales/{invoice_id}/status")).json()["status"] == "pending"
+    assert paystack["verify_calls"].count(reference) == 1
