@@ -242,6 +242,7 @@ func (d *Deliverer) Run(ctx context.Context) {
 		}
 		if time.Since(lastTrim) > time.Hour {
 			_, _ = d.Pool.Exec(ctx, `DELETE FROM core.event_deliveries WHERE delivered_at < now() - interval '7 days'`)
+			TrimExpired(ctx, d.Pool)
 			lastTrim = time.Now()
 		}
 		select {
@@ -261,5 +262,26 @@ func EventCounts(pool *pgxpool.Pool) func(ctx context.Context) (pending, stuck i
 			SELECT count(*), count(*) FILTER (WHERE created_at < now() - interval '10 minutes')
 			FROM core.event_deliveries WHERE delivered_at IS NULL`).Scan(&pending, &stuck)
 		return pending, stuck, err
+	}
+}
+
+// Rows that only matter for a short while, cleared hourly so tables don't
+// grow with every sign-in (RELIABILITY-PLAN retention, owner 2026-11-23).
+// Sales, the books and tax records are never cleared here.
+var trimStatements = []string{
+	`DELETE FROM core.otp_codes WHERE expires_at < now() - interval '7 days'`,
+	`DELETE FROM core.webauthn_challenges WHERE expires_at < now() - interval '1 day'`,
+	`DELETE FROM core.step_ups WHERE expires_at < now() - interval '7 days'`,
+	`DELETE FROM core.guss_link_codes WHERE expires_at < now() - interval '1 day'`,
+	`DELETE FROM core.guss_web_codes WHERE expires_at < now() - interval '1 day'`,
+	`DELETE FROM core.pos_pin_events WHERE created_at < now() - interval '2 years'`,
+}
+
+// TrimExpired runs trimStatements; a failure is logged and the rest still run.
+func TrimExpired(ctx context.Context, pool *pgxpool.Pool) {
+	for _, q := range trimStatements {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			log.Printf("trim: %v", err)
+		}
 	}
 }
