@@ -245,7 +245,13 @@ func (h *Handlers) Report(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	reply, status, err := h.call(r.Context(), c, http.MethodGet, "/api/report?window="+window, nil)
+	// Who's asking, so staff get their own report (Guss reads Friday as them).
+	a := actor(claims)
+	if claims.Role == "viewer" {
+		a["role"] = "manager" // read-only here: viewers read the whole shop's report
+	}
+	q := url.Values{"window": {window}, "actor_id": {a["id"]}, "actor_name": {a["name"]}, "actor_role": {a["role"]}}
+	reply, status, err := h.call(r.Context(), c, http.MethodGet, "/api/report?"+q.Encode(), nil)
 	if err != nil {
 		writeError(w, status, err.Error())
 		return
