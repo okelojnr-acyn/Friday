@@ -10,6 +10,7 @@ package integrations
 
 import (
 	"encoding/json"
+	"github.com/acyn-innovation/friday/kernel/internal/svcauth"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -161,7 +162,7 @@ func (h *Handlers) Delete(w http.ResponseWriter, r *http.Request) {
 // kernel event publish), not a per-request JWT, because this is a
 // server-to-server call with no end-user request in flight.
 func (h *Handlers) GetInternal(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer "+h.InternalToken {
+	if !svcauth.Bearer(r, h.InternalToken) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
