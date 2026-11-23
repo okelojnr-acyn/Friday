@@ -100,7 +100,7 @@ async def test_a_periods_sales_add_up_in_one_request_by_item(client, monkeypatch
         return CFG
 
     monkeypatch.setattr(main_mod, "get_etims_config", cfg)
-    bread = {"lines": [{"description": "Bread", "quantity": 2, "unit_price_cents": 1000}], "amount_cents": 2000, "method": "cash"}
+    bread = {"lines": [{"description": "Bread", "quantity": 2, "unit_price_cents": 1000}], "amount_cents": 2000, "method": "cash", "currency": "KES"}
     first = (await client.post("/pos/sales", json=bread)).json()
     await client.post("/pos/sales", json=bread)
     await client.post("/pos/sales", json=guss_sale())
