@@ -1,7 +1,9 @@
 import asyncio
+import logging
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import exc as sa_exc
 from sqlalchemy import text
 
 from .db import make_engine
@@ -67,6 +69,21 @@ def create_app(service_name: str, version: str = "0.1.0") -> FastAPI:
         return [r.to_json() for r in all_resources()]
 
     app.include_router(system)
+
+    @app.exception_handler(sa_exc.DBAPIError)
+    async def _database_unavailable(request, exc: sa_exc.DBAPIError):
+        """The database out of reach (restarting, PgBouncer reconnecting): a
+        503 the till and Guss retry, and one log line, instead of a 500 and
+        a 20-line traceback per request (load-test drills, 2026-11-23).
+        Every other database error (a duplicate, a bad value) stays a 500."""
+        if not (isinstance(exc, (sa_exc.OperationalError, sa_exc.InterfaceError)) or exc.connection_invalidated):
+            raise exc
+        logging.getLogger("friday").warning("%s %s: database unavailable (%s)", request.method, request.url.path, type(exc.orig).__name__)
+        return JSONResponse(
+            status_code=503,
+            content={"error": "the database is unavailable for a moment; try again"},
+            headers={"Retry-After": "5"},
+        )
     # Sends this app's outbox (events.publish_event) and retries anything
     # the kernel didn't take. Not started by test clients (no lifespan).
     @app.on_event("startup")
