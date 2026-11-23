@@ -22,7 +22,7 @@ SOAK_MIN=${SOAK_MIN:-30}
 DRILLS=${DRILLS:-1}
 K6_IMAGE=grafana/k6:0.54.0
 R=loadtest/results
-rm -rf "$R" && mkdir -p "$R"
+rm -rf "$R" && mkdir -p "$R" && chmod 777 "$R" # k6 writes here as its own user
 # Appends to failures.txt (works from subshells too); any line fails the run.
 fail() { echo "FAIL: $*" | tee -a "$R/failures.txt"; }
 
@@ -64,7 +64,9 @@ SQL
 healthy || { "${DC[@]}" logs --tail 80; exit 1; }
 for _ in $(seq 1 30); do curl -skf https://localhost/kernel/healthz >/dev/null && break; sleep 2; done
 
-ORG=$("${DC[@]}" exec -T kernel ./kernel bootstrap "Load Shop" load@example.com | tr -d '\r')
+"${DC[@]}" exec -T kernel ./kernel bootstrap "Load Shop" load@example.com >/dev/null
+ORG=$(sql "SELECT m.org_id FROM core.memberships m JOIN core.users u ON u.id = m.user_id WHERE lower(u.email) = 'load@example.com'")
+[[ "$ORG" =~ ^[0-9a-f-]{36}$ ]] || { echo "no organisation (got '$ORG')"; exit 1; }
 # An owner's sign-in token, signed with this run's JWT_SECRET (owners act
 # by their role, so no permissions list is needed); valid three hours.
 b64() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }

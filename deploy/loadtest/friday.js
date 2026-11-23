@@ -51,6 +51,7 @@ export function setup() {
       { headers },
     );
     check(r, { "product made": (x) => x.status === 201 });
+    if (r.status !== 201 && i === 0) console.error(`product: ${r.status} ${r.body}`);
     if (r.status === 201) products.push({ id: r.json("id"), name: r.json("name"), price: r.json("price_cents") });
   }
   if (products.length === 0) throw new Error("no products: is the token right?");
