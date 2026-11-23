@@ -42,6 +42,9 @@ async def run_migrations(dsn: str, schema: str, migrations_dir: Path) -> list[st
                 # LOCAL: behind PgBouncer transaction pooling a plain SET
                 # would outlive this transaction on the shared server conn.
                 await conn.execute(f'SET LOCAL search_path TO "{schema}", public')
+                # Friday Host gives tenant roles a statement timeout; a
+                # migration on a big table may need longer.
+                await conn.execute("SET LOCAL statement_timeout = 0")
                 await conn.execute(sql)
                 await conn.execute(
                     f'INSERT INTO "{schema}".schema_migrations (filename) VALUES ($1)', name
