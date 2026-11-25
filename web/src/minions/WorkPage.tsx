@@ -1,3 +1,4 @@
+import { SalesWork } from "./SalesWork";
 import { WarehouseWork } from "./WarehouseWork";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "../lib/auth";
@@ -15,14 +16,18 @@ export function WorkPage() {
   const me = useMyPermissions();
   const driver = Boolean(me?.rules["deliveries.write"]);
   const warehouse = Boolean(me?.rules["stock.write"]);
+  const sales = Boolean(me?.rules["crm.write"]);
+  const jobs = [driver, warehouse, sales].filter(Boolean).length;
   return (
     <div className="page minions-page">
       <h1 className="page-title">Work</h1>
-      {driver && warehouse ? <h2 className="minions-h2">Deliveries</h2> : null}
+      {driver && jobs > 1 ? <h2 className="minions-h2">Deliveries</h2> : null}
       {driver ? <DriverWork /> : null}
-      {driver && warehouse ? <h2 className="minions-h2">Stock</h2> : null}
+      {warehouse && jobs > 1 ? <h2 className="minions-h2">Stock</h2> : null}
       {warehouse ? <WarehouseWork /> : null}
-      {me && !driver && !warehouse ? (
+      {sales && jobs > 1 ? <h2 className="minions-h2">Sales</h2> : null}
+      {sales ? <SalesWork /> : null}
+      {me && jobs === 0 ? (
         <div className="minions-empty">
           <p className="minions-empty-title">Nothing here for your job yet</p>
           <p className="field-label">Your manager sets your jobs in People. Tasks given to you are on Today.</p>

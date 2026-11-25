@@ -38,7 +38,7 @@ function tabsFor(me: MyPermissions | null): Tab[] {
       external: true,
     });
   // Jobs with their own screens (HR plan 8.2): drivers, warehouse.
-  if (me?.rules["deliveries.write"] || me?.rules["stock.write"])
+  if (me?.rules["deliveries.write"] || me?.rules["stock.write"] || me?.rules["crm.write"])
     tabs.push({ to: "/work", icon: me?.rules["deliveries.write"] ? "truck" : "box", label: "Work" });
   tabs.push(
     { to: "/expense-claims", icon: "receipt", label: "Claims" },
