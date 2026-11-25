@@ -52,6 +52,8 @@ class Employee(Base):
     national_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
     nssf_number: Mapped[str] = mapped_column(Text, nullable=False, default="")
     sha_number: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Monthly sales target (0015); 0 = none.
+    sales_target_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

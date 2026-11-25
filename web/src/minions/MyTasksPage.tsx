@@ -1,3 +1,4 @@
+import { TeamSales } from "./TeamSales";
 import { UnreadAnnouncements } from "./Announcements";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -134,6 +135,7 @@ export function MyTasksPage() {
       </section>
 
       <UnreadAnnouncements />
+      <TeamSales mine />
 
       {error ? (
         <div className="error-banner" role="alert">
