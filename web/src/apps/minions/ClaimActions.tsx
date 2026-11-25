@@ -12,9 +12,12 @@ const errorText = (err: unknown, fallback: string) =>
 export function ClaimDecision({
   claim,
   onDone,
+  base = "/api/minions/expense_claims",
 }: {
   claim: { id: string };
   onDone: (c: ExpenseClaim) => void;
+  /** Whose route: claims by default, or /api/minions/salary_advances. */
+  base?: string;
 }) {
   const [rejecting, setRejecting] = useState(false);
   const [note, setNote] = useState("");
@@ -27,7 +30,7 @@ export function ClaimDecision({
     try {
       onDone(
         await api.patch<ExpenseClaim>(
-          `/api/minions/expense_claims/${claim.id}/status`,
+          `${base}/${claim.id}/status`,
           { status, note },
         ),
       );
@@ -120,9 +123,12 @@ type Method = (typeof METHODS)[number][0];
 export function ClaimMarkPaid({
   claim,
   onDone,
+  base = "/api/minions/expense_claims",
 }: {
   claim: { id: string };
   onDone: (c: ExpenseClaim) => void;
+  /** Whose route: claims by default, or /api/minions/salary_advances. */
+  base?: string;
 }) {
   const [method, setMethod] = useState<Method>("mpesa");
   const [reference, setReference] = useState("");
@@ -137,7 +143,7 @@ export function ClaimMarkPaid({
     try {
       onDone(
         await api.post<ExpenseClaim>(
-          `/api/minions/expense_claims/${claim.id}/pay`,
+          `${base}/${claim.id}/pay`,
           { method, reference },
         ),
       );

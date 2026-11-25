@@ -405,6 +405,56 @@ async def claim_paid(body: dict, session: AsyncSession = Depends(get_session)):
     await session.commit()
 
 
+@webhooks_router.post("/advance-paid", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def advance_paid(body: dict, session: AsyncSession = Depends(get_session)):
+    """Subscribed to minions.salary_advance.paid: Dr 1210 Staff advances,
+    Cr the account it was paid from (M-Pesa, bank, else cash). Payroll
+    credits 1210 back as it's recovered."""
+    payload = body.get("payload", {})
+    org_id = uuid.UUID(body["org_id"])
+    await set_org_context(session, str(org_id))
+    if not await first_delivery(session, body):
+        return
+    advance_id = payload.get("advance_id") or ""
+    if advance_id and await _already_posted(session, org_id, "advance", advance_id):
+        return
+    amount_cents = int(payload.get("amount_cents") or 0)
+    if amount_cents <= 0:
+        return
+    await ensure_default_accounts(session, org_id)
+    advances = await get_account_by_code(session, org_id, "1210")
+    money = await get_account_by_code(session, org_id, MONEY_ACCOUNT.get(payload.get("method") or "cash", "1010"))
+    now = datetime.now(UTC)
+    entry = JournalEntry(
+        org_id=org_id,
+        number=_new_entry_number(now),
+        entry_date=local_date(now, await business_tz(str(org_id))),
+        memo=f"Salary advance {advance_id} paid",
+        source="advance",
+        source_ref=advance_id,
+        status="posted",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(entry)
+    await session.flush()
+    for account, debit, credit, description in (
+        (advances, amount_cents, 0, "Salary advance (owed by staff)"),
+        (money, 0, amount_cents, "Advance paid out"),
+    ):
+        session.add(
+            JournalLine(
+                org_id=org_id,
+                journal_entry_id=entry.id,
+                account_id=account.id,
+                debit_cents=debit,
+                credit_cents=credit,
+                description=description,
+            )
+        )
+    await session.commit()
+
+
 @webhooks_router.post("/payroll-paid", dependencies=[Depends(require_kernel_token)], status_code=204)
 async def payroll_paid(body: dict, session: AsyncSession = Depends(get_session)):
     """Subscribed to minions.payroll_run.paid -- posts Dr Salary Expense /
@@ -443,6 +493,7 @@ async def payroll_paid(body: dict, session: AsyncSession = Depends(get_session))
             ("2320", 0, p("nssf_cents") + p("employer_nssf_cents"), "NSSF, both shares"),
             ("2330", 0, p("shif_cents"), "SHIF withheld"),
             ("2340", 0, p("levy_cents") + p("employer_levy_cents"), "Housing Levy, both shares"),
+            ("1210", 0, p("advance_cents"), "Salary advances taken back"),
         ]
     else:
         legs = [("6000", amount_cents, 0, "Salary expense"), ("1010", 0, amount_cents, "Cash paid out")]

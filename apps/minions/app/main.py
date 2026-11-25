@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     EMPLOYEE_STATUSES,
+    ADVANCE_STATUSES,
     EXPENSE_CLAIM_STATUSES,
     MEETING_SYNC_STATUSES,
     PAY_FREQUENCIES,
@@ -39,6 +40,7 @@ from .models import (
     ExpenseClaim,
     Meeting,
     MeetingAttendee,
+    SalaryAdvance,
     PayrollLine,
     PayrollRun,
 )
@@ -57,6 +59,8 @@ from .schemas import (
     MeetingResponse,
     MeetingUpdate,
     MyPayrollLineOut,
+    SalaryAdvanceCreate,
+    SalaryAdvanceOut,
     PayrollRunCreate,
     PayrollRunOut,
     WalletLinkOut,
@@ -101,6 +105,27 @@ resource(
             FieldSpec("status", "Status", "select", options=EXPENSE_CLAIM_STATUSES, required=True),
             FieldSpec("receipt_url", "Receipt", "text", list_visible=False),
             FieldSpec("submitted_at", "Submitted", "datetime", form_visible=False),
+        ),
+    )
+)
+
+resource(
+    ResourceSpec(
+        name="salary_advance",
+        app="minions",
+        label="Salary Advance",
+        label_plural="Salary Advances",
+        views=("list", "form"),
+        search_fields=("description",),
+        fields=(
+            FieldSpec("employee_id", "Employee", "reference", reference="minions.employee", form_visible=False),
+            FieldSpec("amount_cents", "Amount", "currency", form_visible=False),
+            FieldSpec("currency", "Currency", "text", form_visible=False),
+            FieldSpec("months", "Paid back over (pay runs)", "number", form_visible=False),
+            FieldSpec("status", "Status", "select", options=ADVANCE_STATUSES, form_visible=False),
+            FieldSpec("description", "What for", "text", form_visible=False),
+            FieldSpec("recovered_cents", "Paid back so far", "currency", form_visible=False),
+            FieldSpec("submitted_at", "Asked", "datetime", form_visible=False),
         ),
     )
 )
@@ -796,6 +821,7 @@ async def my_payroll(
             levy_cents=line.levy_cents,
             paye_cents=line.paye_cents,
             net_cents=line.paid_cents,
+            advance_cents=line.advance_cents,
         )
         for line, run in rows.all()
     ]
@@ -856,10 +882,14 @@ async def create_expense_claim(
 
 
 async def _route_claim(session: AsyncSession, claim: ExpenseClaim, employee: Employee) -> None:
-    """Sends a waiting claim to the nearest person up the claimant's
-    reporting line whose limit covers it, else to the owners and admins,
-    and tells them (minions.approval.needed; Guss delivers it). Published
-    in `session`, so it goes out only if the claim is saved."""
+    await _route_request(session, claim, employee, "expense_claim")
+
+
+async def _route_request(session: AsyncSession, claim, employee: Employee, kind: str) -> None:
+    """Sends a waiting request (a claim, an advance) to the nearest person
+    up the requester's reporting line whose limit covers it, else to the
+    owners and admins, and tells them (minions.approval.needed). Published
+    in `session`, so it goes out only if the request is saved."""
     who = await approvers_for(str(claim.org_id), employee.user_id)
     person = who.pick(claim.amount_cents)
     if person:
@@ -873,8 +903,9 @@ async def _route_claim(session: AsyncSession, claim: ExpenseClaim, employee: Emp
         "minions.approval.needed",
         str(claim.org_id),
         {
-            "kind": "expense_claim",
+            "kind": kind,
             "claim_id": str(claim.id),
+            "item_id": str(claim.id),
             "to_user_ids": to,
             "from_name": employee.name,
             "amount_cents": claim.amount_cents,
@@ -978,24 +1009,7 @@ async def set_expense_claim_status(
     claim = await _get_owned_claim(session, principal, claim_id)
     if claim.status != "submitted":
         raise HTTPException(400, f"claim is '{claim.status}', not 'submitted'")
-    # Who may decide: someone over the claimant (their team, location or
-    # everyone), never the claimant themselves (owners excepted), and
-    # within their approval limit.
-    claimant = await _get_owned_employee(session, principal, claim.employee_id)
-    # The person the claim was sent to (up the claimant's reporting line)
-    # may decide it even outside their usual team or locations.
-    routed_to_me = bool(claim.waiting_on_user_id) and claim.waiting_on_user_id == principal.user_id
-    ids = None if routed_to_me else await _visible_employee_ids(session, principal, scope)
-    if ids is not None and claimant.id not in ids:
-        raise HTTPException(403, f"{claimant.name} isn't in your team or locations; ask {who_can('claims.approve', principal.role)}")
-    if claimant.user_id == principal.user_id and principal.role != "owner":
-        raise HTTPException(403, f"nobody decides their own claim; ask {who_can('claims.approve', principal.role)}")
-    limits = (await approvers_for(principal.org_id, claimant.user_id)).limits
-    limit = None if principal.role in ("owner", "admin") else limits.get(principal.role)
-    if limit is not None and claim.amount_cents > limit:
-        raise HTTPException(
-            403, f"above your approval limit ({limit // 100:,}); ask {who_can('claims.approve', principal.role)}"
-        )
+    claimant = await _check_decider(session, principal, scope, claim, "claim")
     claim.status = body.status
     claim.decision_note = note
     claim.decided_by_name = await _name_of(session, principal)
@@ -1019,6 +1033,29 @@ async def set_expense_claim_status(
     await session.commit()
     await session.refresh(claim)
     return claim
+
+
+async def _check_decider(session: AsyncSession, principal: Principal, scope: Scope, item, what: str) -> Employee:
+    """Who may decide a request: someone over the person (their team,
+    location or everyone) or the one it was sent to, never the person
+    themselves (owners excepted), and within their approval limit.
+    Returns the person who asked."""
+    asker = await _get_owned_employee(session, principal, item.employee_id)
+    # The person it was sent to (up the asker's reporting line) may decide
+    # it even outside their usual team or locations.
+    routed_to_me = bool(item.waiting_on_user_id) and item.waiting_on_user_id == principal.user_id
+    ids = None if routed_to_me else await _visible_employee_ids(session, principal, scope)
+    if ids is not None and asker.id not in ids:
+        raise HTTPException(403, f"{asker.name} isn't in your team or locations; ask {who_can('claims.approve', principal.role)}")
+    if asker.user_id == principal.user_id and principal.role != "owner":
+        raise HTTPException(403, f"nobody decides their own {what}; ask {who_can('claims.approve', principal.role)}")
+    limits = (await approvers_for(principal.org_id, asker.user_id)).limits
+    limit = None if principal.role in ("owner", "admin") else limits.get(principal.role)
+    if limit is not None and item.amount_cents > limit:
+        raise HTTPException(
+            403, f"above your approval limit ({limit // 100:,}); ask {who_can('claims.approve', principal.role)}"
+        )
+    return asker
 
 
 async def _name_of(session: AsyncSession, principal: Principal) -> str:
@@ -1181,7 +1218,7 @@ async def create_payroll_run(
                 to_address=employee.wallet_address,
                 network=employee.wallet_network,
                 status="pending" if employee.wallet_address else "blocked",
-                **_payslip(employee.pay_rate_cents, run.currency, run.period_end),
+                **await _with_advance(session, employee, _payslip(employee.pay_rate_cents, run.currency, run.period_end)),
             )
         )
     await session.commit()
@@ -1210,6 +1247,25 @@ async def approve_payroll_run(
     await session.commit()
     await session.refresh(run, attribute_names=["lines"])
     return PayrollRunOut.from_model(run)
+
+
+async def _with_advance(session: AsyncSession, employee: Employee, slip: dict) -> dict:
+    """Takes this pay's share of the person's open advance off the net:
+    the amount over its months, never more than what's left of it or of
+    the net. Counted as recovered only once this pay is paid out."""
+    adv = await session.scalar(
+        select(SalaryAdvance)
+        .where(SalaryAdvance.employee_id == employee.id, SalaryAdvance.status == "paid")
+        .order_by(SalaryAdvance.submitted_at)
+        .limit(1)
+    )
+    if adv is None or adv.remaining_cents <= 0:
+        return slip
+    share = -(-adv.amount_cents // adv.months)  # rounded up
+    take = min(share, adv.remaining_cents, slip.get("net_cents", 0))
+    if take <= 0:
+        return slip
+    return {**slip, "net_cents": slip["net_cents"] - take, "advance_cents": take, "advance_id": adv.id}
 
 
 def _payslip(gross_cents: int, currency: str, period_end: datetime) -> dict:
@@ -1314,6 +1370,13 @@ async def refresh_payroll_run_status(
 
     if newly_paid:
         paid = [l for l in run.lines if l.status == "confirmed"]
+        for line in paid:
+            if line.advance_id and line.advance_cents:
+                adv = await session.get(SalaryAdvance, line.advance_id)
+                if adv is not None and adv.status == "paid":
+                    adv.recovered_cents += line.advance_cents
+                    if adv.recovered_cents >= adv.amount_cents:
+                        adv.status = "recovered"
         paid_cents = sum(l.paid_cents for l in paid)
         if paid_cents > 0:
             total = lambda f: sum(getattr(l, f) for l in paid)  # noqa: E731
@@ -1334,6 +1397,7 @@ async def refresh_payroll_run_status(
                     "shif_cents": total("shif_cents"),
                     "levy_cents": total("levy_cents"),
                     "employer_levy_cents": total("employer_levy_cents"),
+                    "advance_cents": total("advance_cents"),
                 },
                 session=session,
             )
@@ -1349,3 +1413,204 @@ app.include_router(payroll_router)
 app.include_router(employee_sales_router)
 app.include_router(meetings_router)
 app.include_router(webhooks_router)
+
+
+
+# Salary advances (HR plan phase 2): part of next pay, early. Asked for
+# like a claim and routed up the reporting line; paid like one; taken back
+# from the next 1-3 payslips (owner defaults: at most half of one pay, one
+# open at a time).
+advances_router = APIRouter(prefix="/salary_advances", tags=["salary-advances"])
+OPEN_ADVANCE = ("submitted", "approved", "paid")
+
+
+async def _get_owned_advance(session: AsyncSession, principal: Principal, advance_id: uuid.UUID) -> SalaryAdvance:
+    adv = await session.get(SalaryAdvance, advance_id)
+    if adv is None or str(adv.org_id) != principal.org_id:
+        raise HTTPException(404, "advance not found")
+    return adv
+
+
+@advances_router.get("", response_model=list[SalaryAdvanceOut])
+async def list_advances(
+    mine: bool = False,
+    waiting: bool = False,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("claims.read")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Like claims: mine, waiting for me, or whose I can see."""
+    q = select(SalaryAdvance).where(SalaryAdvance.org_id == _org(principal))
+    if waiting:
+        q = q.where(SalaryAdvance.status == "submitted")
+        if principal.role not in ("owner", "admin"):
+            q = q.where(SalaryAdvance.waiting_on_user_id == principal.user_id)
+    elif mine or scope.kind == "own":
+        me = await _resolve_my_employee(session, principal)
+        q = q.where(SalaryAdvance.employee_id == me.id)
+    else:
+        ids = await _visible_employee_ids(session, principal, scope)
+        if ids is not None:
+            q = q.where(SalaryAdvance.employee_id.in_(ids))
+    return (await session.execute(q.order_by(SalaryAdvance.submitted_at.desc()))).scalars().all()
+
+
+@advances_router.post("", response_model=SalaryAdvanceOut, status_code=201)
+async def ask_for_advance(
+    body: SalaryAdvanceCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Mine only. At most half of one pay, and one open at a time."""
+    me = await _resolve_my_employee(session, principal)
+    if me.pay_rate_cents <= 0:
+        raise HTTPException(400, "your pay isn't set up yet; ask whoever handles pay")
+    cap = me.pay_rate_cents // 2
+    if body.amount_cents > cap:
+        raise HTTPException(422, f"an advance is at most half of your pay ({cap // 100:,})")
+    open_one = await session.scalar(
+        select(SalaryAdvance.id).where(SalaryAdvance.employee_id == me.id, SalaryAdvance.status.in_(OPEN_ADVANCE)).limit(1)
+    )
+    if open_one is not None:
+        raise HTTPException(409, "you already have an advance open; it needs paying back first")
+    adv = SalaryAdvance(
+        org_id=_org(principal),
+        employee_id=me.id,
+        description=body.description.strip(),
+        amount_cents=body.amount_cents,
+        currency=await _business_currency(session, principal, me),
+        months=body.months,
+        status="submitted",
+        submitted_at=datetime.now(UTC),
+    )
+    session.add(adv)
+    await session.flush()
+    await _route_request(session, adv, me, "salary_advance")
+    await session.commit()
+    await session.refresh(adv)
+    return adv
+
+
+async def _business_currency(session: AsyncSession, principal: Principal, me: Employee) -> str:
+    """The currency the person is paid in: their latest payroll run's,
+    else KES. shortcut: read the business's currency once Minions can."""
+    run_currency = await session.scalar(
+        select(PayrollRun.currency)
+        .join(PayrollLine, PayrollLine.payroll_run_id == PayrollRun.id)
+        .where(PayrollLine.employee_id == me.id)
+        .order_by(PayrollRun.period_end.desc())
+        .limit(1)
+    )
+    return run_currency or "KES"
+
+
+@advances_router.post("/{advance_id}/withdraw", response_model=SalaryAdvanceOut)
+async def withdraw_advance(
+    advance_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    adv = await _get_owned_advance(session, principal, advance_id)
+    me = await _resolve_my_employee(session, principal)
+    if adv.employee_id != me.id:
+        raise HTTPException(403, "only the person who asked takes it back")
+    if adv.status != "submitted":
+        raise HTTPException(400, f"the advance is '{adv.status}'; only a waiting one is taken back")
+    adv.status = "withdrawn"
+    adv.waiting_on_user_id = adv.waiting_on_name = ""
+    await session.commit()
+    await session.refresh(adv)
+    return adv
+
+
+@advances_router.patch("/{advance_id}/status", response_model=SalaryAdvanceOut)
+async def decide_advance(
+    advance_id: uuid.UUID,
+    body: ExpenseClaimStatusUpdate,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("claims.approve")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Approve, or reject with a reason; same rules as a claim."""
+    if body.status not in ("approved", "rejected"):
+        raise HTTPException(422, "status must be 'approved' or 'rejected'")
+    note = body.note.strip()
+    if body.status == "rejected" and not note:
+        raise HTTPException(422, "say why it's rejected")
+    adv = await _get_owned_advance(session, principal, advance_id)
+    if adv.status != "submitted":
+        raise HTTPException(400, f"the advance is '{adv.status}', not waiting")
+    asker = await _check_decider(session, principal, scope, adv, "advance")
+    adv.status = body.status
+    adv.decision_note = note
+    adv.decided_by_name = await _name_of(session, principal)
+    adv.decided_at = datetime.now(UTC)
+    adv.waiting_on_user_id = adv.waiting_on_name = ""
+    await publish_event(
+        "minions.salary_advance.decided",
+        principal.org_id,
+        {
+            "advance_id": str(adv.id),
+            "to_user_ids": [asker.user_id] if asker.user_id else [],
+            "status": adv.status,
+            "note": note,
+            "decided_by_name": adv.decided_by_name,
+            "amount_cents": adv.amount_cents,
+            "currency": adv.currency,
+        },
+        session=session,
+    )
+    await session.commit()
+    await session.refresh(adv)
+    return adv
+
+
+@advances_router.post("/{advance_id}/pay", response_model=SalaryAdvanceOut)
+async def pay_advance(
+    advance_id: uuid.UUID,
+    body: ExpenseClaimPay,
+    principal: Principal = Depends(get_current_principal),
+    _pay: Scope = Depends(require("pay.write")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Pays an approved advance (M-Pesa, bank, cash, or crypto through the
+    wallet); the books hold it as owed by the person until recovered."""
+    adv = await _get_owned_advance(session, principal, advance_id)
+    if adv.status != "approved":
+        raise HTTPException(400, f"the advance is '{adv.status}', not 'approved'")
+    reference = body.reference.strip()
+    if body.method in ("mpesa", "bank") and not reference:
+        raise HTTPException(422, "add the M-Pesa code or bank reference")
+    employee = await _get_owned_employee(session, principal, adv.employee_id)
+    if body.method == "crypto":
+        if not employee.wallet_address:
+            raise HTTPException(400, f"{employee.name} hasn't connected a wallet yet")
+        provider = await _provider(principal)
+        await provider.request_payout(
+            to_address=employee.wallet_address,
+            currency=adv.currency,
+            amount=f"{adv.amount_cents / 100:.2f}",
+            network=employee.wallet_network,
+            reason=f"Salary advance {adv.id}",
+        )
+    adv.status = "paid"
+    adv.paid_method, adv.paid_reference, adv.paid_at = body.method, reference, datetime.now(UTC)
+    await publish_event(
+        "minions.salary_advance.paid",
+        principal.org_id,
+        {
+            "advance_id": str(adv.id),
+            "to_user_ids": [employee.user_id] if employee.user_id else [],
+            "amount_cents": adv.amount_cents,
+            "currency": adv.currency,
+            "method": body.method,
+            "months": adv.months,
+        },
+        session=session,
+    )
+    await session.commit()
+    await session.refresh(adv)
+    return adv
+
+
+app.include_router(advances_router)

@@ -1,3 +1,4 @@
+import { Advances } from "./Advances";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { ApiError } from "../lib/api";
@@ -102,6 +103,8 @@ export function PayrollPage() {
         </section>
       ) : null}
 
+      <Advances />
+
       {earlier.length ? (
         <section aria-label="Earlier pay">
           <h2 className="minions-group">Earlier</h2>
@@ -133,6 +136,7 @@ function Payslip({ line: l }: { line: MyPayrollLine }) {
     ["SHIF", l.shif_cents],
     ["Housing Levy", l.levy_cents],
     ["PAYE (income tax)", l.paye_cents],
+    ["Salary advance back", l.advance_cents],
   ].filter(([, v]) => Number(v) > 0) as [string, number][];
   if (!off.length) return null;
   const m = (c: number) => formatMoney(c, { currency: l.currency });

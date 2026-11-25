@@ -80,6 +80,7 @@ export interface MyPayrollLine {
   levy_cents?: number;
   paye_cents?: number;
   net_cents?: number;
+  advance_cents?: number;
 }
 
 export const fetchMyPayroll = () =>
