@@ -173,6 +173,15 @@ class StockAdjust(BaseModel):
     warehouse_id: uuid.UUID | None = None
 
 
+class StockTransfer(BaseModel):
+    """Moving stock from one warehouse to another, in the product's base unit."""
+
+    from_warehouse_id: uuid.UUID
+    to_warehouse_id: uuid.UUID
+    qty: Qty = Field(gt=0)
+    note: str = Field(default="", max_length=120)
+
+
 class StockMoveOut(BaseModel):
     id: uuid.UUID
     org_id: uuid.UUID

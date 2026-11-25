@@ -128,7 +128,7 @@ class Product(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-REASONS = ("manual_adjustment", "pos_sale", "received", "sale", "write_off")
+REASONS = ("manual_adjustment", "pos_sale", "received", "sale", "write_off", "transfer")
 
 
 class ProductImage(Base):
