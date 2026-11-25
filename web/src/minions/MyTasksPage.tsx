@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
 import { api, ApiError } from "../lib/api";
@@ -40,6 +41,19 @@ export function MyTasksPage() {
   const [tasks, setTasks] = useState<RecordRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+
+  const [meetings, setMeetings] = useState<{ id: string; title: string; starts_at: string }[]>([]);
+  useEffect(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start.getTime() + 86_400_000);
+    api
+      .get<{ id: string; title: string; starts_at: string }[]>(
+        `/api/minions/meetings?mine=true&start=${start.toISOString()}&end=${end.toISOString()}`,
+      )
+      .then(setMeetings)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     // Only mine (tasks down the line); an older Projects ignores ?mine and
@@ -104,6 +118,18 @@ export function MyTasksPage() {
               : `${open.length} ${open.length === 1 ? "task" : "tasks"} to do${overdue ? `, ${overdue} overdue` : ""}.`}
           </p>
         ) : null}
+        {meetings.length ? (
+          <ul className="minions-daystrip-meetings" aria-label="Today's meetings">
+            {meetings.map((m) => (
+              <li key={m.id}>
+                <span>{new Date(m.starts_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</span> {m.title}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <Link to="/calendar" className="minions-daystrip-link">
+          Open my calendar
+        </Link>
       </section>
 
       {error ? (

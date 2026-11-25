@@ -38,7 +38,9 @@ func (h *Handlers) Notify(ctx context.Context, orgID, typ string, payload []byte
 	if err := json.Unmarshal(payload, &n); err != nil || len(n.ToUserIDs) == 0 {
 		return nil
 	}
-	m, ok := inbox.Compose(typ, n)
+	var orgTZ string
+	_ = h.Pool.QueryRow(ctx, `SELECT time_zone FROM core.orgs WHERE id::text = $1`, orgID).Scan(&orgTZ)
+	m, ok := inbox.Compose(typ, n, inbox.Zone(orgTZ))
 	if !ok {
 		return nil
 	}

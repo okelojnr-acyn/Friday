@@ -58,6 +58,10 @@ var subscriptions = []subscription{
 	{Event: "projects.task.assigned", App: "notify"},
 	{Event: "projects.task.done", App: "notify"},
 	{Event: "projects.task.overdue", App: "notify"},
+	{Event: "minions.meeting.invited", App: "notify"},
+	{Event: "minions.meeting.changed", App: "notify"},
+	{Event: "minions.meeting.cancelled", App: "notify"},
+	{Event: "minions.meeting.answered", App: "notify"},
 }
 
 // QueueHourly gives each business's Projects its hourly tick (overdue
