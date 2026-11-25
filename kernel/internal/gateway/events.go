@@ -51,6 +51,10 @@ var subscriptions = []subscription{
 	{Event: "inventory.purchase.received", App: "accounting", WebhookPath: "/internal/webhooks/purchase-received"},
 	{Event: "inventory.purchase.paid", App: "accounting", WebhookPath: "/internal/webhooks/purchase-paid"},
 	{Event: "inventory.stock.adjusted", App: "accounting", WebhookPath: "/internal/webhooks/stock-adjusted"},
+	// HR plan phase 1: tell people on Guss (Deliverer.Local["notify"]).
+	{Event: "minions.approval.needed", App: "notify"},
+	{Event: "minions.expense_claim.decided", App: "notify"},
+	{Event: "minions.expense_claim.paid", App: "notify"},
 }
 
 func newEventID() string {
@@ -118,6 +122,9 @@ type Deliverer struct {
 	Client *http.Client
 	// Every is how often the queue is checked (2 s by default).
 	Every time.Duration
+	// Local subscribers the kernel runs itself, by App name ("notify":
+	// Guss notices), with the same retries as an app's webhook.
+	Local map[string]func(ctx context.Context, orgID, typ string, payload []byte) error
 }
 
 func backoff(attempts int) time.Duration {
@@ -177,7 +184,13 @@ func (d *Deliverer) DeliverDue(ctx context.Context) (int, error) {
 	}
 	delivered := 0
 	for _, x := range due {
-		if err := d.send(ctx, client, base[x.app], x); err != nil {
+		var err error
+		if local, ok := d.Local[x.app]; ok {
+			err = local(ctx, x.orgID, x.typ, x.payload)
+		} else {
+			err = d.send(ctx, client, base[x.app], x)
+		}
+		if err != nil {
 			log.Printf("event %s to %s not delivered (try %d): %v", x.typ, x.app, x.attempts, err)
 			_, _ = d.Pool.Exec(ctx, `UPDATE core.event_deliveries SET next_attempt_at = now() + make_interval(secs => $2), last_error = $3 WHERE id = $1`,
 				x.id, backoff(x.attempts).Seconds(), truncate(err.Error(), 500))
