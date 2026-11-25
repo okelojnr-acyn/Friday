@@ -59,6 +59,7 @@ from .schemas import (
 )
 from friday_common.access import APPROVAL_HEADER, Scope, check_approval, require, scope_for
 from friday_common.etims import normalize_pin
+from friday_common.clock import business_tz, day_bounds, local_date, local_midnight
 from friday_common.etims.kernel import get_etims_config
 
 from .etims_routes import router as etims_router
@@ -195,7 +196,8 @@ async def _email_invoice(org_id: str, inv: Invoice, session: AsyncSession) -> No
         f"<strong>{total / 100:.2f} {inv.currency}</strong> is ready."
     )
     if inv.due_at is not None:
-        html += f"<p>Due {inv.due_at:%Y-%m-%d}.</p>"
+        due = local_date(inv.due_at, await business_tz(str(org_id)))
+        html += f"<p>Due {due:%Y-%m-%d}.</p>"
     try:
         await ResendProvider(config).send(customer.email, f"Invoice {inv.number}", html)
     except Exception as exc:  # noqa: BLE001 -- see docstring, this must never propagate
@@ -337,9 +339,11 @@ async def create_invoice(
         if customer is not None and str(customer.org_id) == principal.org_id:
             due_at = now + timedelta(days=customer.payment_terms_days)
     if body.due_at is not None:
-        if body.due_at < now.date():
+        # A date, in the business's calendar: its start, stored in UTC.
+        tz = await business_tz(principal.org_id)
+        if body.due_at < local_date(now, tz):
             raise HTTPException(422, "the due date can't be in the past")
-        due_at = datetime(body.due_at.year, body.due_at.month, body.due_at.day, tzinfo=UTC)
+        due_at = local_midnight(body.due_at, tz)
     invoice = Invoice(
         org_id=uuid.UUID(principal.org_id),
         customer_id=body.customer_id,
@@ -1092,7 +1096,7 @@ async def _get_pos_sale(session: AsyncSession, principal: Principal, number: str
 
 @pos_router.get("/sales")
 async def list_pos_sales(
-    day: date = Query(..., description="YYYY-MM-DD, in UTC"),
+    day: date = Query(..., description="YYYY-MM-DD, the business's own calendar day"),
     channel: str | None = Query(None, pattern="^(till|guss)$"),
     principal: Principal = Depends(get_current_principal),
     scope: Scope = Depends(require("sales.read")),
@@ -1101,12 +1105,12 @@ async def list_pos_sales(
     """One day's sales from every till and Guss, newest first: what Guss
     reads back to answer "what did we sell today". Returns are included
     as negative sales."""
-    start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+    start, end = day_bounds(day, await business_tz(principal.org_id))
     q = select(Invoice).where(
         Invoice.org_id == uuid.UUID(principal.org_id),
         Invoice.source == "pos",
         Invoice.issued_at >= start,
-        Invoice.issued_at < start + timedelta(days=1),
+        Invoice.issued_at < end,
         Invoice.status.in_(("paid", "void")),
     )
     if channel:

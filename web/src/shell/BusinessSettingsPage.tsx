@@ -25,6 +25,15 @@ const CURRENCIES = [
   ["GBP", "British pound"],
 ] as const;
 
+// Every zone the browser knows; a short list if it can't say.
+const ZONES: string[] = (() => {
+  try {
+    return (Intl as unknown as { supportedValuesOf(k: string): string[] }).supportedValuesOf("timeZone");
+  } catch {
+    return ["Africa/Nairobi", "Africa/Kampala", "Africa/Dar_es_Salaam", "Africa/Kigali", "Africa/Lagos", "UTC"];
+  }
+})();
+
 const TABS = [
   ["general", "General"],
   ["tax", "Tax"],
@@ -76,19 +85,25 @@ function GeneralSection({ canEdit }: { canEdit: boolean }) {
   const settings = useOrgSettings();
   const [currency, setCurrency] = useState(settings.currency);
   const [inclusive, setInclusive] = useState(settings.prices_include_tax);
+  const [timeZone, setTimeZone] = useState(settings.time_zone ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setCurrency(settings.currency);
     setInclusive(settings.prices_include_tax);
+    setTimeZone(settings.time_zone ?? "");
   }, [settings]);
 
   async function save() {
     setSaving(true);
     setError(null);
     try {
-      await saveOrgSettings({ currency, prices_include_tax: inclusive });
+      await saveOrgSettings({
+        currency,
+        prices_include_tax: inclusive,
+        ...(timeZone && timeZone !== settings.time_zone ? { time_zone: timeZone } : {}),
+      });
       // Every screen reads these once; reload so all of them pick it up.
       window.location.reload();
     } catch (err) {
@@ -111,6 +126,29 @@ function GeneralSection({ canEdit }: { canEdit: boolean }) {
           {CURRENCIES.some(([c]) => c === currency) ? null : <option value={currency}>{currency}</option>}
         </Select>
       </FieldWrap>
+      {settings.suggested_currency && settings.suggested_currency !== currency && canEdit ? (
+        <p className="field-label" style={{ margin: 0 }}>
+          Most businesses in {settings.time_zone} use {settings.suggested_currency}.{" "}
+          <Button size="sm" variant="ghost" onClick={() => setCurrency(settings.suggested_currency!)}>
+            Use {settings.suggested_currency}
+          </Button>
+          <br />
+          Changing it doesn't convert amounts already recorded.
+        </p>
+      ) : null}
+      {settings.time_zone !== undefined ? (
+        <FieldWrap label="Time zone: when the business's day starts and ends (reports, the books)">
+          <Select value={timeZone} onChange={(e) => setTimeZone(e.target.value)} disabled={!canEdit}>
+            {timeZone ? null : <option value="">Not set (UTC)</option>}
+            {ZONES.map((z) => (
+              <option key={z} value={z}>
+                {z.replace(/_/g, " ")}
+              </option>
+            ))}
+            {!timeZone || ZONES.includes(timeZone) ? null : <option value={timeZone}>{timeZone}</option>}
+          </Select>
+        </FieldWrap>
+      ) : null}
       <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <Checkbox checked={inclusive} onChange={(e) => setInclusive(e.target.checked)} disabled={!canEdit} />
         Shelf prices already include VAT

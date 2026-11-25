@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	_ "time/tzdata" // every IANA zone, whatever the image has
 
 	"github.com/acyn-innovation/friday/kernel/internal/access"
 	"github.com/acyn-innovation/friday/kernel/internal/auth"
@@ -184,6 +185,8 @@ func main() {
 	mux.Handle("DELETE /orgs/members/{user_id}", requireAuth(http.HandlerFunc(members.Remove)))
 	people := &org.People{Pool: pool, InternalToken: eventsToken}
 	mux.HandleFunc("GET /internal/people/{org_id}", people.AtLocations)
+	mux.HandleFunc("GET /internal/orgs/{org_id}/time-zone", people.OrgTimeZone)
+	mux.Handle("PUT /auth/me/time-zone", requireAuth(http.HandlerFunc(people.SetMyTimeZone)))
 	mux.Handle("PATCH /orgs/members/{user_id}", requireAuth(http.HandlerFunc(people.UpdatePerson)))
 	mux.Handle("GET /orgs/me/permissions", requireAuth(http.HandlerFunc(people.MyPermissions)))
 	mux.Handle("GET /orgs/access/rules", requireAuth(http.HandlerFunc(people.AccessRules)))

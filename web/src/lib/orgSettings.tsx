@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api } from "./api";
 import { useAuth } from "./auth";
+import { browserTimeZone } from "./localTime";
 
 /** Organisation settings every screen needs (kernel GET /orgs/settings):
  * the currency money is shown in, and how tax works at the till. */
@@ -50,6 +51,11 @@ export interface OrgSettings {
   payment_methods?: string[];
   /** Missing on a kernel older than Store settings. */
   storefront?: Storefront;
+  /** The business's time zone (its days, months, books); "" = not set yet.
+   * Missing on an older kernel. */
+  time_zone?: string;
+  /** The usual currency in that time zone ("" when none). */
+  suggested_currency?: string;
 }
 
 // Until the org's own settings arrive, money shows in the default the
@@ -71,21 +77,23 @@ function formatter(currency: string, whole: boolean): Intl.NumberFormat {
   let f = formatters.get(key);
   if (!f) {
     try {
-      f = new Intl.NumberFormat("en-KE", {
+      // The viewer's own number style (separators, symbol); the currency
+      // is the record's, never converted.
+      f = new Intl.NumberFormat(undefined, {
         style: "currency",
         currency,
         minimumFractionDigits: whole ? 0 : 2,
         maximumFractionDigits: whole ? 0 : 2,
       });
     } catch {
-      f = new Intl.NumberFormat("en-KE", { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 });
+      f = new Intl.NumberFormat(undefined, { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 });
     }
     formatters.set(key, f);
   }
   return f;
 }
 
-/** "Ksh 1,250.00" in the org's currency (or `currency` when a document
+/** "KES 1,250.00" (in the viewer's style) in the org's currency (or `currency` when a document
  * carries its own). `whole` drops the cents, for headline numbers. */
 export function formatMoney(cents: number, opts?: { currency?: string; whole?: boolean }): string {
   const currency = (opts?.currency || current.currency || "KES").toUpperCase();
@@ -100,15 +108,40 @@ export function OrgSettingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!session) return;
-    api
-      .get<OrgSettings>("/orgs/settings")
-      .then((s) => {
-        current = s;
-        setSettings(s);
-      })
-      .catch(() => {
-        // An older kernel without settings: keep the defaults.
-      });
+    const load = () =>
+      api
+        .get<OrgSettings>("/orgs/settings")
+        .then((s) => {
+          current = s;
+          setSettings(s);
+        })
+        .catch(() => {
+          // An older kernel without settings: keep the defaults.
+        });
+    void load();
+    // Tell the kernel this person's time zone (it also sets a new
+    // business's, from its owner). Once per sign-in; an older kernel 404s.
+    const tz = browserTimeZone();
+    const key = `friday.tz.sent:${session.orgId}`;
+    let sent = "";
+    try {
+      sent = sessionStorage.getItem(key) ?? "";
+    } catch {
+      // storage blocked: send anyway
+    }
+    if (tz && sent !== tz) {
+      api
+        .put<{ org_time_zone: string; currency: string }>("/auth/me/time-zone", { time_zone: tz })
+        .then((r) => {
+          try {
+            sessionStorage.setItem(key, tz);
+          } catch {
+            // fine
+          }
+          if (r.org_time_zone !== current.time_zone || r.currency !== current.currency) void load();
+        })
+        .catch(() => {});
+    }
   }, [session?.orgId, session?.token]);
 
   return <Ctx.Provider value={settings}>{children}</Ctx.Provider>;

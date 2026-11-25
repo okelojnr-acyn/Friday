@@ -27,6 +27,10 @@ type settingsView struct {
 	PaymentMethods []string `json:"payment_methods"`
 	// The online store's look (Store settings).
 	Storefront Storefront `json:"storefront"`
+	// The business's time zone: its days, months and books ("" = not set, UTC).
+	TimeZone string `json:"time_zone"`
+	// The usual currency there ("" when none), for Business settings to offer.
+	SuggestedCurrency string `json:"suggested_currency"`
 }
 
 // PaymentMethods a business can offer; invoicing's registers.py keeps
@@ -187,8 +191,8 @@ func (s *Settings) load(r *http.Request, orgID string) (settingsView, error) {
 	var v settingsView
 	var raw, store []byte
 	err := s.Pool.QueryRow(r.Context(), `
-		SELECT name, currency, tax_rate_bp, prices_include_tax, tax_profile, payment_methods, storefront FROM core.orgs WHERE id = $1`, orgID,
-	).Scan(&v.Name, &v.Currency, &v.TaxRateBP, &v.PricesIncludeTax, &raw, &v.PaymentMethods, &store)
+		SELECT name, currency, tax_rate_bp, prices_include_tax, tax_profile, payment_methods, storefront, time_zone FROM core.orgs WHERE id = $1`, orgID,
+	).Scan(&v.Name, &v.Currency, &v.TaxRateBP, &v.PricesIncludeTax, &raw, &v.PaymentMethods, &store, &v.TimeZone)
 	if err != nil {
 		return v, err
 	}
@@ -199,6 +203,7 @@ func (s *Settings) load(r *http.Request, orgID string) (settingsView, error) {
 	if len(raw) > 0 {
 		json.Unmarshal(raw, &v.Tax) // fields stored win; missing ones keep the default
 	}
+	v.SuggestedCurrency = CurrencyForZone(v.TimeZone)
 	v.Storefront = DefaultStorefront()
 	json.Unmarshal(store, &v.Storefront)
 	return v, nil
@@ -235,6 +240,7 @@ func (s *Settings) Put(w http.ResponseWriter, r *http.Request) {
 		Tax              *TaxProfile `json:"tax"`
 		PaymentMethods   []string    `json:"payment_methods"`
 		Storefront       *Storefront `json:"storefront"`
+		TimeZone         *string     `json:"time_zone"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		writeSettingsJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -259,6 +265,10 @@ func (s *Settings) Put(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.PaymentMethods = methods
+	}
+	if req.TimeZone != nil && !validTimeZone(*req.TimeZone) {
+		writeSettingsJSON(w, http.StatusBadRequest, map[string]string{"error": "the time zone is a place name like Africa/Nairobi"})
+		return
 	}
 	var storeJSON []byte
 	if req.Storefront != nil {
@@ -287,8 +297,9 @@ func (s *Settings) Put(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.Pool.Exec(r.Context(), `
 		UPDATE core.orgs SET currency = COALESCE($2, currency), tax_rate_bp = COALESCE($3, tax_rate_bp),
 		       prices_include_tax = COALESCE($4, prices_include_tax), tax_profile = COALESCE($5, tax_profile),
-		       payment_methods = COALESCE($6, payment_methods), storefront = COALESCE($7, storefront)
-		WHERE id = $1`, claims.OrgID, req.Currency, req.TaxRateBP, req.PricesIncludeTax, taxJSON, req.PaymentMethods, storeJSON); err != nil {
+		       payment_methods = COALESCE($6, payment_methods), storefront = COALESCE($7, storefront),
+		       time_zone = COALESCE($8, time_zone)
+		WHERE id = $1`, claims.OrgID, req.Currency, req.TaxRateBP, req.PricesIncludeTax, taxJSON, req.PaymentMethods, storeJSON, req.TimeZone); err != nil {
 		writeSettingsJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save the settings"})
 		return
 	}

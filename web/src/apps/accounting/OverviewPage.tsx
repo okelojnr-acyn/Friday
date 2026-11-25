@@ -1,3 +1,4 @@
+import { localDay } from "../../lib/localTime";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError } from "../../lib/api";
@@ -6,7 +7,7 @@ import { formatMoney } from "../../lib/orgSettings";
 import { AppHint } from "../../shell/AppFrame";
 import { Card } from "../../ui/Card";
 
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+const iso = (d: Date) => localDay(d); // the viewer's calendar, not UTC's
 
 /** Accounting's front page (plan 18/19.5): what an owner checks first in
  * Xero or QuickBooks: the money you have, who owes you, what you owe, and

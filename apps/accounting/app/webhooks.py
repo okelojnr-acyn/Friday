@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from friday_common import first_delivery, get_session, require_kernel_token, set_org_context
+from friday_common.clock import business_tz, local_date
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -111,7 +112,7 @@ async def invoice_paid(body: dict, session: AsyncSession = Depends(get_session))
     entry = JournalEntry(
         org_id=org_id,
         number=_new_entry_number(now),
-        entry_date=now.date(),
+        entry_date=local_date(now, await business_tz(str(org_id))),
         memo=f"Invoice {payload.get('invoice_number', '')} paid",
         source="invoicing",
         source_ref=posting_ref,
@@ -191,7 +192,7 @@ async def purchase_received(body: dict, session: AsyncSession = Depends(get_sess
     entry = JournalEntry(
         org_id=org_id,
         number=_new_entry_number(now),
-        entry_date=now.date(),
+        entry_date=local_date(now, await business_tz(str(org_id))),
         memo=f"Goods received {payload.get('po_number', '')} from {supplier}"
         + (f", invoice {payload['supplier_invoice_no']}" if payload.get("supplier_invoice_no") else ""),
         source="inventory",
@@ -232,7 +233,7 @@ async def stock_adjusted(body: dict, session: AsyncSession = Depends(get_session
     entry = JournalEntry(
         org_id=org_id,
         number=_new_entry_number(now),
-        entry_date=now.date(),
+        entry_date=local_date(now, await business_tz(str(org_id))),
         memo=f"Stock counted {word}: {abs(payload.get('delta', 0)):g} {name}"
         + (f" ({payload['reference']})" if payload.get("reference") else ""),
         source="inventory",
@@ -279,7 +280,7 @@ async def purchase_paid(body: dict, session: AsyncSession = Depends(get_session)
     entry = JournalEntry(
         org_id=org_id,
         number=_new_entry_number(now),
-        entry_date=now.date(),
+        entry_date=local_date(now, await business_tz(str(org_id))),
         memo=memo,
         source="inventory",
         source_ref=ref,
@@ -331,7 +332,7 @@ async def pos_sale_cogs(body: dict, session: AsyncSession = Depends(get_session)
     entry = JournalEntry(
         org_id=org_id,
         number=_new_entry_number(now),
-        entry_date=now.date(),
+        entry_date=local_date(now, await business_tz(str(org_id))),
         memo=f"Cost of goods sold for {invoice_number}",
         source="pos",
         source_ref=invoice_number,
@@ -389,7 +390,7 @@ async def claim_paid(body: dict, session: AsyncSession = Depends(get_session)):
     entry = JournalEntry(
         org_id=org_id,
         number=_new_entry_number(now),
-        entry_date=now.date(),
+        entry_date=local_date(now, await business_tz(str(org_id))),
         memo=f"Expense claim paid: {payload.get('description') or claim_id}"[:500],
         source="claim",
         source_ref=claim_id,
@@ -435,7 +436,7 @@ async def payroll_paid(body: dict, session: AsyncSession = Depends(get_session))
     entry = JournalEntry(
         org_id=org_id,
         number=_new_entry_number(now),
-        entry_date=now.date(),
+        entry_date=local_date(now, await business_tz(str(org_id))),
         memo=f"Payroll run {payroll_run_id} paid",
         source="payroll",
         source_ref=payroll_run_id,

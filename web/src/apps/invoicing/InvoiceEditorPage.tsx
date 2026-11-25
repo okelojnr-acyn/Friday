@@ -1,3 +1,4 @@
+import { localDay } from "../../lib/localTime";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../../lib/api";
@@ -54,7 +55,7 @@ const addDays = (days: number) => {
   d.setDate(d.getDate() + days);
   return d;
 };
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+const isoDay = (d: Date) => localDay(d); // the viewer's calendar, not UTC's
 
 /** New invoice (owner, 2026-11-22: "issuing an invoice is quite a show";
  * build it the way the best invoicing tools do). The Stripe/Xero

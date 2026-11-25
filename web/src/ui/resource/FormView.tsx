@@ -15,6 +15,7 @@ import { PayPurchaseOrderPanel } from "../../apps/inventory/PayPurchaseOrderPane
 import { SupplierLinkPanel, SupplierStatusPanel } from "../../apps/inventory/SupplierPanels";
 import { ClaimReviewPanel } from "../../apps/minions/ClaimReviewPanel";
 import { amountInputToCents, centsToAmountInput, toDateInputValue, toDatetimeInputValue } from "./fieldFormat";
+import { fromLocalDatetimeInput } from "../../lib/localTime";
 
 interface FormViewProps {
   spec: ResourceSpec;
@@ -64,7 +65,10 @@ export function toWireBody(spec: ResourceSpec, values: Record<string, unknown>):
       body[field.name] = v === "" ? 0 : Number(v);
     } else if (field.type === "reference") {
       body[field.name] = v || null;
-    } else if (field.type === "date" || field.type === "datetime") {
+    } else if (field.type === "datetime") {
+      // The input is local time without a zone; the server keeps UTC.
+      body[field.name] = fromLocalDatetimeInput(String(v ?? ""));
+    } else if (field.type === "date") {
       // An empty <input type="date"> is "" -- a bare empty string isn't a
       // valid value for an Optional[datetime] field server-side, so an
       // unset date must become null, not "".

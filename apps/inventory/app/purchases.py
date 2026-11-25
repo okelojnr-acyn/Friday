@@ -22,6 +22,7 @@ from friday_common import Principal, get_org_session, publish_event
 from friday_common.auth import require_role
 from friday_common.etims.codes import TAX_TYPES
 from friday_common.etims.kernel import get_etims_config
+from friday_common.clock import business_tz, local_date, month_bounds
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -132,10 +133,11 @@ async def vat_purchases_csv(
     type. Purchases without a supplier PIN are listed too, marked, since
     KRA only allows input VAT backed by the supplier's PIN and invoice."""
     try:
-        start = datetime.strptime(month, "%Y-%m").replace(tzinfo=UTC)
+        first = datetime.strptime(month, "%Y-%m")
     except ValueError:
         raise HTTPException(422, "month is YYYY-MM") from None
-    end = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
+    tz = await business_tz(principal.org_id)
+    start, end = month_bounds(first.year, first.month, tz)  # the business's own month
     org = uuid.UUID(principal.org_id)
     pos = (
         await session.execute(
@@ -171,7 +173,7 @@ async def vat_purchases_csv(
             row = by_code.setdefault(line.tax_code or "B", [0, 0])
             row[0] += line.total_cost_cents
             row[1] += line.vat_cents
-        when = po.supplier_invoice_date or (po.received_at or po.updated_at).date()
+        when = po.supplier_invoice_date or local_date(po.received_at or po.updated_at, tz)
         note = []
         if not (supplier and supplier.kra_pin):
             note.append("no supplier PIN")
