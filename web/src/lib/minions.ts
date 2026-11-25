@@ -79,6 +79,9 @@ export async function uploadClaimReceipt(id: string, file: File): Promise<Expens
   return (await res.json()) as ExpenseClaim;
 }
 
+/** A claim's receipt photo (claimant, or whoever can see their claims). */
+export const claimReceiptBlob = async (id: string): Promise<Blob> => (await receiptFetch(id)).blob();
+
 /** Opens a claim's receipt photo in a new tab. */
 export async function openClaimReceipt(id: string): Promise<void> {
   const tab = window.open("", "_blank");

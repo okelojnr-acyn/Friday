@@ -12,7 +12,7 @@ import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { FieldWrap, Input, Select } from "../ui/Field";
 import { Badge, statusTone } from "../ui/Badge";
-import { formatMoney } from "../lib/orgSettings";
+import { formatMoney, useOrgSettings } from "../lib/orgSettings";
 
 export function ExpenseClaimsPage() {
   const [claims, setClaims] = useState<ExpenseClaim[] | null>(null);
@@ -25,17 +25,29 @@ export function ExpenseClaimsPage() {
   // Who paid varies person to person (owner, 2026-11-22), so always ask.
   const [whoPaid, setWhoPaid] = useState<"" | "me" | "business">("");
   const [submitting, setSubmitting] = useState(false);
+  // Claims are in the business's currency (Minions would otherwise store USD).
+  const { currency } = useOrgSettings();
 
   useEffect(() => {
     fetchMyExpenseClaims()
       .then(setClaims)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load expense claims"));
+      .catch((err) =>
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : "Could not load expense claims",
+        ),
+      );
   }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     const amountCents = Math.round(Number.parseFloat(amount || "0") * 100);
-    if (!description.trim() || !Number.isFinite(amountCents) || amountCents <= 0) {
+    if (
+      !description.trim() ||
+      !Number.isFinite(amountCents) ||
+      amountCents <= 0
+    ) {
       setError("A description and a positive amount are required");
       return;
     }
@@ -46,12 +58,19 @@ export function ExpenseClaimsPage() {
     setSubmitting(true);
     setError(null);
     try {
-      let claim = await submitExpenseClaim({ description: description.trim(), amount_cents: amountCents, reimburse: whoPaid === "me" });
+      let claim = await submitExpenseClaim({
+        description: description.trim(),
+        amount_cents: amountCents,
+        currency,
+        reimburse: whoPaid === "me",
+      });
       if (photo) {
         try {
           claim = await uploadClaimReceipt(claim.id, photo);
         } catch (err) {
-          setError(`Claim saved, but the receipt didn't upload: ${err instanceof Error ? err.message : "try again"}`);
+          setError(
+            `Claim saved, but the receipt didn't upload: ${err instanceof Error ? err.message : "try again"}`,
+          );
         }
       }
       setClaims((cur) => [claim, ...(cur ?? [])]);
@@ -61,7 +80,9 @@ export function ExpenseClaimsPage() {
       setPhotoKey((k) => k + 1);
       setWhoPaid("");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not submit claim");
+      setError(
+        err instanceof ApiError ? err.message : "Could not submit claim",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -73,17 +94,33 @@ export function ExpenseClaimsPage() {
         <h1 className="page-title">Expense Claims</h1>
       </div>
 
-      {error ? <div className="error-banner" style={{ marginBottom: 16 }}>{error}</div> : null}
+      {error ? (
+        <div className="error-banner" style={{ marginBottom: 16 }}>
+          {error}
+        </div>
+      ) : null}
 
       <Card style={{ marginBottom: 16 }}>
         <div className="field-label" style={{ marginBottom: 10 }}>
           Submit a new claim
         </div>
-        <form onSubmit={onSubmit} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <form
+          onSubmit={onSubmit}
+          style={{
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            alignItems: "flex-end",
+          }}
+        >
           <FieldWrap label="Description" required>
-            <Input value={description} onChange={(e) => setDescription(e.target.value)} style={{ width: 220 }} />
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              style={{ width: 220 }}
+            />
           </FieldWrap>
-          <FieldWrap label="Amount" required>
+          <FieldWrap label={`Amount (${currency})`} required>
             <Input
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
@@ -93,7 +130,11 @@ export function ExpenseClaimsPage() {
             />
           </FieldWrap>
           <FieldWrap label="Who paid?" required>
-            <Select value={whoPaid} onChange={(e) => setWhoPaid(e.target.value as typeof whoPaid)} style={{ width: 210 }}>
+            <Select
+              value={whoPaid}
+              onChange={(e) => setWhoPaid(e.target.value as typeof whoPaid)}
+              style={{ width: 210 }}
+            >
               <option value="" disabled>
                 Choose…
               </option>
@@ -132,12 +173,24 @@ export function ExpenseClaimsPage() {
                 </span>
               </span>
               <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span>{formatMoney(c.amount_cents, { currency: c.currency })}</span>
-                <span className="field-label">{c.reimburse === false ? "business paid" : "pay back"}</span>
+                <span>
+                  {formatMoney(c.amount_cents, { currency: c.currency })}
+                </span>
+                <span className="field-label">
+                  {c.reimburse === false ? "business paid" : "pay back"}
+                </span>
                 {c.receipt_sha ? (
                   <Button
                     variant="ghost"
-                    onClick={() => openClaimReceipt(c.id).catch((err) => setError(err instanceof Error ? err.message : "Could not open the receipt"))}
+                    onClick={() =>
+                      openClaimReceipt(c.id).catch((err) =>
+                        setError(
+                          err instanceof Error
+                            ? err.message
+                            : "Could not open the receipt",
+                        ),
+                      )
+                    }
                   >
                     Receipt
                   </Button>
@@ -149,8 +202,18 @@ export function ExpenseClaimsPage() {
                     size="sm"
                     onClick={() =>
                       withdrawExpenseClaim(c.id)
-                        .then((w) => setClaims((cur) => (cur ?? []).map((x) => (x.id === w.id ? w : x))))
-                        .catch((err) => setError(err instanceof ApiError ? err.message : "Could not withdraw the claim"))
+                        .then((w) =>
+                          setClaims((cur) =>
+                            (cur ?? []).map((x) => (x.id === w.id ? w : x)),
+                          ),
+                        )
+                        .catch((err) =>
+                          setError(
+                            err instanceof ApiError
+                              ? err.message
+                              : "Could not withdraw the claim",
+                          ),
+                        )
                     }
                   >
                     Withdraw
