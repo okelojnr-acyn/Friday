@@ -34,6 +34,7 @@ async def _staff(client, as_principal, principal):
 
 async def test_to_everyone_and_who_has_seen_it(client, as_principal, principal, events):
     admin = await _staff(client, as_principal, principal)
+    as_principal(admin)
     r = await client.post("/announcements", json={"title": "Stock count Saturday 7am", "body": "Everyone in by 7.", "audience": "everyone"})
     assert r.status_code == 201 and r.json()["recipients"] == 3
     [(kind, told)] = events
