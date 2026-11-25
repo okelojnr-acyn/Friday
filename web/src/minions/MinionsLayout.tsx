@@ -4,6 +4,7 @@ import { useMyPermissions, type MyPermissions } from "../lib/permissions";
 import { Icon, type IconName } from "../ui/Icon";
 import { Avatar } from "../ui/Avatar";
 import { initials } from "../ui/resource/fieldFormat";
+import { useOrgSettings } from "../lib/orgSettings";
 
 /** Minions' own trimmed shell -- reuses useAuth/Icon/Button/Avatar
  * unchanged, but doesn't reuse ui/TopBar: that component's nav links
@@ -26,12 +27,19 @@ type Tab = { to: string; icon: IconName; label: string; external?: boolean };
 function tabsFor(me: MyPermissions | null): Tab[] {
   const tabs: Tab[] = [{ to: "/", icon: "kanban", label: "Today" }];
   // Cashiers sell from the till, its own installable app.
-  if (me?.rules["pos.sell"]) tabs.push({ to: "/pos.html", icon: "storefront", label: "Sell", external: true });
+  if (me?.rules["pos.sell"])
+    tabs.push({
+      to: "/pos.html",
+      icon: "storefront",
+      label: "Sell",
+      external: true,
+    });
   tabs.push(
     { to: "/expense-claims", icon: "receipt", label: "Claims" },
     { to: "/payroll", icon: "wallet", label: "Pay" },
   );
-  if (me?.rules["claims.approve"]) tabs.push({ to: "/team", icon: "users", label: "Team" });
+  if (me?.rules["claims.approve"])
+    tabs.push({ to: "/team", icon: "users", label: "Team" });
   tabs.push({ to: "/me", icon: "user", label: "Me" });
   return tabs;
 }
@@ -39,15 +47,21 @@ function tabsFor(me: MyPermissions | null): Tab[] {
 function MinionsLayout() {
   const { session } = useAuth();
   const me = useMyPermissions();
+  const business = useOrgSettings().name;
   if (!session) return null;
   return (
     <div className="minions-shell">
       <header className="minions-top">
-        <Link to="/" className="topbar-brand">
-          Friday Minions
+        <Link to="/" className="minions-brand">
+          {business || "Friday"}
+          <span className="minions-brand-sub">Staff</span>
         </Link>
         <Link to="/me" className="minions-avatar" aria-label="Me">
-          <Avatar label={initials(session.email)} title={session.email} size={30} />
+          <Avatar
+            label={initials(session.email)}
+            title={session.email}
+            size={30}
+          />
         </Link>
       </header>
       <main className="minions-main">
@@ -61,10 +75,17 @@ function MinionsLayout() {
               <span>{t.label}</span>
             </a>
           ) : (
-          <NavLink key={t.to} to={t.to} end={t.to === "/"} className={({ isActive }) => `minions-tab${isActive ? " active" : ""}`}>
-            <Icon name={t.icon} size={22} />
-            <span>{t.label}</span>
-          </NavLink>
+            <NavLink
+              key={t.to}
+              to={t.to}
+              end={t.to === "/"}
+              className={({ isActive }) =>
+                `minions-tab${isActive ? " active" : ""}`
+              }
+            >
+              <Icon name={t.icon} size={22} />
+              <span>{t.label}</span>
+            </NavLink>
           ),
         )}
       </nav>
