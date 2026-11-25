@@ -15,6 +15,7 @@ import { PayPurchaseOrderPanel } from "../../apps/inventory/PayPurchaseOrderPane
 import { SupplierLinkPanel, SupplierStatusPanel } from "../../apps/inventory/SupplierPanels";
 import { ClaimReviewPanel } from "../../apps/minions/ClaimReviewPanel";
 import { AdvanceReviewPanel } from "../../apps/minions/AdvanceReviewPanel";
+import { ClaimDecision } from "../../apps/minions/ClaimActions";
 import { amountInputToCents, centsToAmountInput, toDateInputValue, toDatetimeInputValue } from "./fieldFormat";
 import { fromLocalDatetimeInput } from "../../lib/localTime";
 
@@ -159,6 +160,12 @@ export function FormView({ spec, app, schema, record, onClose, onSaved }: FormVi
         </>
       ) : null}
       {isEdit && app === "inventory" && spec.name === "supplier" ? <SupplierLinkPanel record={record!} /> : null}
+      {isEdit && app === "minions" && spec.name === "time_off" && record!.status === "submitted" ? (
+        <div className="card card-padded" style={{ marginTop: 16 }}>
+          {record!.waiting_on_name ? <p className="field-label">Waiting for {String(record!.waiting_on_name)}</p> : null}
+          <ClaimDecision claim={record!} onDone={(c) => onSaved(c as unknown as RecordRow)} base="/api/minions/time_off" />
+        </div>
+      ) : null}
       {isEdit && app === "minions" && spec.name === "salary_advance" ? (
         <AdvanceReviewPanel record={record!} onChanged={onSaved} />
       ) : null}

@@ -139,6 +139,7 @@ export const APP_NAV: Record<string, AppNav> = {
         { label: "Pay details", to: "/people/employee", icon: "user", hint: "Pay rate, payout details and start date for each person." },
         { label: "Expense claims", to: "/people/expense_claim", icon: "receipt" },
         { label: "Salary advances", to: "/people/salary_advance", icon: "wallet" },
+        { label: "Time off", to: "/people/time_off", icon: "calendar" },
       ]],
       ["Work", [
         { label: "Staff sales", to: "/people/employee_sale", icon: "trend-up" },

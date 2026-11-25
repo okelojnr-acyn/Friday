@@ -3,7 +3,7 @@ import hashlib
 import io
 import re
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from friday_common import (
@@ -26,12 +26,14 @@ from friday_common.clock import business_tz, month_bounds
 from friday_common.payroll_ke import band_tax_cents, kenya_deductions, nssf_tiers
 from friday_common.access import Scope, approvers_for, people_in, person_in_business, require, scope_for, who_can
 from friday_common.integrations import AcynWalletProvider, GoogleCalendarProvider
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     EMPLOYEE_STATUSES,
     ADVANCE_STATUSES,
+    TIME_OFF_KINDS,
+    TIME_OFF_STATUSES,
     EXPENSE_CLAIM_STATUSES,
     MEETING_SYNC_STATUSES,
     PAY_FREQUENCIES,
@@ -44,6 +46,7 @@ from .models import (
     Meeting,
     MeetingAttendee,
     SalaryAdvance,
+    TimeOff,
     PayrollLine,
     PayrollRun,
 )
@@ -64,6 +67,8 @@ from .schemas import (
     MyPayrollLineOut,
     SalaryAdvanceCreate,
     SalaryAdvanceOut,
+    TimeOffCreate,
+    TimeOffOut,
     PayrollRunCreate,
     PayrollRunOut,
     WalletLinkOut,
@@ -133,6 +138,26 @@ resource(
             FieldSpec("description", "What for", "text", form_visible=False),
             FieldSpec("recovered_cents", "Paid back so far", "currency", form_visible=False),
             FieldSpec("submitted_at", "Asked", "datetime", form_visible=False),
+        ),
+    )
+)
+
+resource(
+    ResourceSpec(
+        name="time_off",
+        app="minions",
+        label="Time off",
+        label_plural="Time off",
+        views=("list", "form"),
+        search_fields=("description",),
+        fields=(
+            FieldSpec("employee_id", "Employee", "reference", reference="minions.employee", form_visible=False),
+            FieldSpec("kind", "Kind", "select", options=TIME_OFF_KINDS, form_visible=False),
+            FieldSpec("starts_on", "From", "date", form_visible=False),
+            FieldSpec("ends_on", "To", "date", form_visible=False),
+            FieldSpec("days", "Working days", "number", form_visible=False),
+            FieldSpec("status", "Status", "select", options=TIME_OFF_STATUSES, form_visible=False),
+            FieldSpec("note", "Note", "text", form_visible=False),
         ),
     )
 )
@@ -1731,3 +1756,210 @@ async def pay_advance(
 
 
 app.include_router(advances_router)
+
+
+
+# Time off (HR plan phase 3): asked for, decided up the reporting line
+# like a claim, shown on calendars. Annual leave: 21 working days a year
+# (owner default; Kenya's minimum); sick and unpaid are recorded.
+time_off_router = APIRouter(prefix="/time_off", tags=["time-off"])
+ANNUAL_DAYS = 21
+KIND_WORDS = {"annual": "Annual leave", "sick": "Sick leave", "unpaid": "Unpaid leave"}
+
+
+def _working_days(start: date, end: date) -> int:
+    """Monday to Friday from start to end, both included.
+    shortcut: public holidays count as working days; subtract them when
+    Friday keeps a holiday calendar."""
+    days, d = 0, start
+    while d <= end:
+        days += d.weekday() < 5
+        d += timedelta(days=1)
+    return days
+
+
+async def _annual_taken(session: AsyncSession, employee_id: uuid.UUID, year: int, but: uuid.UUID | None = None) -> int:
+    """Approved and waiting annual leave days starting in `year`."""
+    q = select(func.coalesce(func.sum(TimeOff.days), 0)).where(
+        TimeOff.employee_id == employee_id,
+        TimeOff.kind == "annual",
+        TimeOff.status.in_(("submitted", "approved")),
+        TimeOff.starts_on >= date(year, 1, 1),
+        TimeOff.starts_on < date(year + 1, 1, 1),
+    )
+    if but is not None:
+        q = q.where(TimeOff.id != but)
+    return int(await session.scalar(q) or 0)
+
+
+@time_off_router.get("/balance")
+async def time_off_balance(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """My annual leave this year: allowed, taken or asked for, left; and
+    sick days taken."""
+    me = await _resolve_my_employee(session, principal)
+    year = datetime.now(UTC).year
+    taken = await _annual_taken(session, me.id, year)
+    sick = int(
+        await session.scalar(
+            select(func.coalesce(func.sum(TimeOff.days), 0)).where(
+                TimeOff.employee_id == me.id, TimeOff.kind == "sick", TimeOff.status == "approved",
+                TimeOff.starts_on >= date(year, 1, 1),
+            )
+        )
+        or 0
+    )
+    return {"year": year, "annual_days": ANNUAL_DAYS, "annual_taken": taken, "annual_left": max(0, ANNUAL_DAYS - taken), "sick_taken": sick}
+
+
+@time_off_router.get("", response_model=list[TimeOffOut])
+async def list_time_off(
+    mine: bool = False,
+    waiting: bool = False,
+    start: date | None = None,
+    end: date | None = None,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("claims.read")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Mine, waiting for me, or whose I can see (a team leader's team, a
+    manager's locations, everyone for owners). `start`/`end` narrow to
+    time off overlapping those days (calendars), with whose it is."""
+    q = select(TimeOff, Employee.name).join(Employee, Employee.id == TimeOff.employee_id).where(TimeOff.org_id == _org(principal))
+    if waiting:
+        q = q.where(TimeOff.status == "submitted")
+        if principal.role not in ("owner", "admin"):
+            q = q.where(TimeOff.waiting_on_user_id == principal.user_id)
+    elif mine or scope.kind == "own":
+        me = await _resolve_my_employee(session, principal)
+        q = q.where(TimeOff.employee_id == me.id)
+    else:
+        ids = await _visible_employee_ids(session, principal, scope)
+        if ids is not None:
+            q = q.where(TimeOff.employee_id.in_(ids))
+    if start is not None:
+        q = q.where(TimeOff.ends_on >= start)
+    if end is not None:
+        q = q.where(TimeOff.starts_on <= end)
+    rows = await session.execute(q.order_by(TimeOff.starts_on))
+    return [TimeOffOut.model_validate(t).model_copy(update={"employee_name": name}) for t, name in rows.all()]
+
+
+@time_off_router.post("", response_model=TimeOffOut, status_code=201)
+async def ask_for_time_off(
+    body: TimeOffCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    if body.ends_on < body.starts_on:
+        raise HTTPException(422, "the last day is before the first")
+    if (body.ends_on - body.starts_on).days > 92:
+        raise HTTPException(422, "at most three months at a time; ask whoever handles pay for longer")
+    days = _working_days(body.starts_on, body.ends_on)
+    if days == 0:
+        raise HTTPException(422, "those days are a weekend; nothing to ask for")
+    me = await _resolve_my_employee(session, principal)
+    overlap = await session.scalar(
+        select(TimeOff.id).where(
+            TimeOff.employee_id == me.id, TimeOff.status.in_(("submitted", "approved")),
+            TimeOff.starts_on <= body.ends_on, TimeOff.ends_on >= body.starts_on,
+        ).limit(1)
+    )
+    if overlap is not None:
+        raise HTTPException(409, "you already have time off asked for or approved on some of those days")
+    if body.kind == "annual":
+        left = ANNUAL_DAYS - await _annual_taken(session, me.id, body.starts_on.year)
+        if days > left:
+            raise HTTPException(422, f"that's {days} working days and you have {max(0, left)} annual days left this year; ask for the rest as unpaid")
+    dm = lambda d: f"{d.day} {d.strftime('%b')}"  # noqa: E731  ("3 Dec")
+    a_, b_ = body.starts_on, body.ends_on
+    span = dm(a_) if a_ == b_ else (f"{a_.day}-{dm(b_)}" if (a_.year, a_.month) == (b_.year, b_.month) else f"{dm(a_)} - {dm(b_)}")
+    t = TimeOff(
+        org_id=_org(principal),
+        employee_id=me.id,
+        kind=body.kind,
+        starts_on=body.starts_on,
+        ends_on=body.ends_on,
+        days=days,
+        note=body.note.strip(),
+        description=f"{KIND_WORDS[body.kind]}, {span}, {days} {'day' if days == 1 else 'days'}"
+        + (f": {body.note.strip()}" if body.note.strip() else ""),
+        status="submitted",
+        submitted_at=datetime.now(UTC),
+    )
+    session.add(t)
+    await session.flush()
+    await _route_request(session, t, me, "time_off")
+    await session.commit()
+    await session.refresh(t)
+    return t
+
+
+@time_off_router.post("/{time_off_id}/withdraw", response_model=TimeOffOut)
+async def withdraw_time_off(
+    time_off_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Mine, while it waits or before it starts."""
+    t = await session.get(TimeOff, time_off_id)
+    if t is None or str(t.org_id) != principal.org_id:
+        raise HTTPException(404, "time off not found")
+    me = await _resolve_my_employee(session, principal)
+    if t.employee_id != me.id:
+        raise HTTPException(403, "only the person who asked takes it back")
+    if t.status not in ("submitted", "approved") or (t.status == "approved" and t.starts_on <= datetime.now(UTC).date()):
+        raise HTTPException(400, "only time off that's waiting or hasn't started is taken back")
+    t.status = "withdrawn"
+    t.waiting_on_user_id = t.waiting_on_name = ""
+    await session.commit()
+    await session.refresh(t)
+    return t
+
+
+@time_off_router.patch("/{time_off_id}/status", response_model=TimeOffOut)
+async def decide_time_off(
+    time_off_id: uuid.UUID,
+    body: ExpenseClaimStatusUpdate,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("claims.approve")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Approve, or turn down with a reason; same rules as a claim."""
+    if body.status not in ("approved", "rejected"):
+        raise HTTPException(422, "status must be 'approved' or 'rejected'")
+    note = body.note.strip()
+    if body.status == "rejected" and not note:
+        raise HTTPException(422, "say why, so they can plan around it")
+    t = await session.get(TimeOff, time_off_id)
+    if t is None or str(t.org_id) != principal.org_id:
+        raise HTTPException(404, "time off not found")
+    if t.status != "submitted":
+        raise HTTPException(400, f"this is '{t.status}', not waiting")
+    asker = await _check_decider(session, principal, scope, t, "time off")
+    t.status = body.status
+    t.decision_note = note
+    t.decided_by_name = await _name_of(session, principal)
+    t.decided_at = datetime.now(UTC)
+    t.waiting_on_user_id = t.waiting_on_name = ""
+    await publish_event(
+        "minions.time_off.decided",
+        principal.org_id,
+        {
+            "time_off_id": str(t.id),
+            "to_user_ids": [asker.user_id] if asker.user_id else [],
+            "status": t.status,
+            "note": note,
+            "decided_by_name": t.decided_by_name,
+            "description": t.description,
+        },
+        session=session,
+    )
+    await session.commit()
+    await session.refresh(t)
+    return t
+
+
+app.include_router(time_off_router)

@@ -97,6 +97,9 @@ func Compose(typ string, n Notice, loc *time.Location) (Message, bool) {
 		}
 		return Message{n.ByName + " " + verb + " your meeting", meeting, "/minions/calendar", "/people/meeting"}, true
 	case "minions.approval.needed":
+		if n.Kind == "time_off" {
+			return Message{n.FromName + " asks for time off", what, "/minions/team", "/people/time_off"}, true
+		}
 		if n.Kind == "salary_advance" {
 			body := amount
 			if what != "" {
@@ -112,6 +115,11 @@ func Compose(typ string, n Notice, loc *time.Location) (Message, bool) {
 				"/minions/payroll", "/minions/payroll"}, true
 		}
 		return Message{n.DecidedByName + " approved your salary advance", amount, "/minions/payroll", "/minions/payroll"}, true
+	case "minions.time_off.decided":
+		if n.Status == "rejected" {
+			return Message{n.DecidedByName + " turned down your time off", what + ": " + n.Note, "/minions/calendar", "/minions/calendar"}, true
+		}
+		return Message{n.DecidedByName + " approved your time off", what, "/minions/calendar", "/minions/calendar"}, true
 	case "minions.salary_advance.paid":
 		how := map[string]string{"mpesa": " by M-Pesa", "bank": " by bank transfer", "cash": " in cash", "crypto": " to your wallet"}[n.Method]
 		return Message{"Your salary advance was paid", amount + how + ". It comes off your next pay.", "/minions/payroll", "/minions/payroll"}, true

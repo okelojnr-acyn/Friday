@@ -41,6 +41,9 @@ func TestComposeAndMoney(t *testing.T) {
 	if m, _ := Compose("minions.approval.needed", Notice{Kind: "salary_advance", FromName: "Sam", AmountCents: 500000, Currency: "KES", Description: "rent"}, nil); m.Title != "Sam asks for a salary advance" || m.Body != "KES 5,000 for rent" || m.Path("owner") != "/people/salary_advance" {
 		t.Errorf("advance asked: %+v", m)
 	}
+	if m, _ := Compose("minions.approval.needed", Notice{Kind: "time_off", FromName: "Sam", Description: "Annual leave, 1-3 Dec, 3 days"}, nil); m.Title != "Sam asks for time off" || m.Body != "Annual leave, 1-3 Dec, 3 days" {
+		t.Errorf("time off asked: %+v", m)
+	}
 	if _, ok := Compose("crm.opportunity.won", Notice{}, nil); ok {
 		t.Error("other events say nothing")
 	}

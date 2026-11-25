@@ -1,3 +1,4 @@
+import { MyTimeOff, WhosAway } from "./TimeOff";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, ApiError } from "../lib/api";
 import { localDay } from "../lib/localTime";
@@ -110,6 +111,9 @@ export function CalendarPage() {
           }}
         />
       ) : null}
+
+      <WhosAway />
+      <MyTimeOff />
 
       {meetings === null && !error ? <div className="spinner">Loading your calendar…</div> : null}
       {meetings && items.length === 0 ? (
