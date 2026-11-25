@@ -151,6 +151,9 @@ class PayrollLine(Base):
     # Taken back towards a salary advance (0010).
     advance_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     advance_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # Unpaid leave in the period (0013): the days, and what came off the pay.
+    unpaid_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unpaid_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
     @property
     def paid_cents(self) -> int:
@@ -315,3 +318,19 @@ class TimeOff(Base):
     # The approval routing and limits work on an amount: time off has none.
     amount_cents = 0
     currency = ""
+
+
+
+class ApprovalCover(Base):
+    """Who decides for an approver while they're away (HR plan phase 3)."""
+
+    __tablename__ = "approval_cover"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    delegate_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    delegate_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    delegate_role: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    starts_on: Mapped[date] = mapped_column(Date, nullable=False)
+    ends_on: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

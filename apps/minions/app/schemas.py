@@ -146,6 +146,8 @@ class PayrollLineOut(BaseModel):
     employer_nssf_cents: int = 0
     employer_levy_cents: int = 0
     advance_cents: int = 0
+    unpaid_days: int = 0
+    unpaid_cents: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -200,6 +202,8 @@ class MyPayrollLineOut(BaseModel):
     paye_cents: int = 0
     net_cents: int = 0
     advance_cents: int = 0
+    unpaid_days: int = 0
+    unpaid_cents: int = 0
 
 
 class MeetingCreate(BaseModel):
@@ -306,3 +310,9 @@ class TimeOffOut(BaseModel):
     employee_name: str = ""
 
     model_config = {"from_attributes": True}
+
+
+class CoverSet(BaseModel):
+    delegate_user_id: str = Field(min_length=1, max_length=64)
+    starts_on: date
+    ends_on: date

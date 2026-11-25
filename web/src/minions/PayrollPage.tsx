@@ -132,6 +132,7 @@ export function PayrollPage() {
 /** Gross, what came off it, and what reaches you. */
 function Payslip({ line: l }: { line: MyPayrollLine }) {
   const off = [
+    [`Unpaid leave, ${l.unpaid_days ?? 0} ${l.unpaid_days === 1 ? "day" : "days"}`, l.unpaid_cents],
     ["NSSF", l.nssf_cents],
     ["SHIF", l.shif_cents],
     ["Housing Levy", l.levy_cents],
@@ -143,7 +144,7 @@ function Payslip({ line: l }: { line: MyPayrollLine }) {
   return (
     <dl className="minions-payslip">
       <dt>Gross pay</dt>
-      <dd>{m(l.gross_amount_cents)}</dd>
+      <dd>{m(l.gross_amount_cents + (l.unpaid_cents ?? 0))}</dd>
       {off.map(([k, v]) => (
         <div key={k} className="minions-payslip-off">
           <dt>{k}</dt>
