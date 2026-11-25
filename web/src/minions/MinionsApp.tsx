@@ -1,4 +1,5 @@
 import { WorkPage } from "./WorkPage";
+import { CalendarPage } from "./CalendarPage";
 import { AccountPage } from "../shell/AccountPage";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "../lib/auth";
@@ -34,6 +35,7 @@ export default function MinionsApp() {
           <Route path="/me" element={<MePage />} />
           <Route path="/work" element={<WorkPage />} />
           <Route path="/devices" element={<AccountPage />} />
+          <Route path="/calendar" element={<CalendarPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

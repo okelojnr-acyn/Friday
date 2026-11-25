@@ -195,9 +195,30 @@ class Meeting(Base):
     # to track yet.
     attendee_emails: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_by_email: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Who organised it (0008); "" on meetings from before.
+    created_by_user_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_by_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     calendar_event_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
     calendar_link: Mapped[str] = mapped_column(Text, nullable=False, default="")
     sync_status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     sync_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+MEETING_RESPONSES = ("invited", "accepted", "declined")
+
+
+class MeetingAttendee(Base):
+    """A member of the business invited to a meeting, and their answer."""
+
+    __tablename__ = "meeting_attendees"
+
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    user_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    email: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    response: Mapped[str] = mapped_column(String(16), nullable=False, default="invited")

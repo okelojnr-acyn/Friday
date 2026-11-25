@@ -9,7 +9,7 @@ import (
 
 func TestTelegramTextAndQuietHours(t *testing.T) {
 	m, _ := inbox.Compose("minions.approval.needed",
-		inbox.Notice{FromName: "Sam", AmountCents: 150000, Currency: "KES", Description: "taxi"})
+		inbox.Notice{FromName: "Sam", AmountCents: 150000, Currency: "KES", Description: "taxi"}, nil)
 	if got := telegramText(m, "team_leader", "https://friday.duka.fridayhost.dev/"); got !=
 		"Sam asks you to approve a claim: KES 1,500 for taxi\nhttps://friday.duka.fridayhost.dev/minions/team" {
 		t.Errorf("staff text: %q", got)

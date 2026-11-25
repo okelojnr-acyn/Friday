@@ -67,6 +67,10 @@ var subscriptions = []subscription{
 	{Event: "projects.task.assigned", App: "notify"},
 	{Event: "projects.task.done", App: "notify"},
 	{Event: "projects.task.overdue", App: "notify"},
+	{Event: "minions.meeting.invited", App: "notify"},
+	{Event: "minions.meeting.changed", App: "notify"},
+	{Event: "minions.meeting.cancelled", App: "notify"},
+	{Event: "minions.meeting.answered", App: "notify"},
 	// Scheduled for a task's due time (and 3 days later): Projects checks it.
 	{Event: "projects.task.due", App: "projects", WebhookPath: "/internal/webhooks/task-due"},
 }
