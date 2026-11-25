@@ -22,23 +22,26 @@ func TestComposeAndMoney(t *testing.T) {
 		t.Error("money")
 	}
 	m, ok := Compose("minions.expense_claim.decided",
-		Notice{Status: "rejected", DecidedByName: "Tom", Note: "photo is blurry", AmountCents: 1000, Currency: "KES", Description: "taxi"})
+		Notice{Status: "rejected", DecidedByName: "Tom", Note: "photo is blurry", AmountCents: 1000, Currency: "KES", Description: "taxi"}, nil)
 	if !ok || m.Title != "Tom rejected your claim" || !strings.Contains(m.Body, "taxi (KES 10): photo is blurry") {
 		t.Errorf("rejected: %+v", m)
 	}
-	if m, _ := Compose("minions.expense_claim.paid", Notice{Method: "mpesa", AmountCents: 1000, Currency: "KES", Description: "taxi"}); !strings.HasSuffix(m.Body, "by M-Pesa.") {
+	if m, _ := Compose("minions.expense_claim.paid", Notice{Method: "mpesa", AmountCents: 1000, Currency: "KES", Description: "taxi"}, nil); !strings.HasSuffix(m.Body, "by M-Pesa.") {
 		t.Errorf("paid: %+v", m)
 	}
-	if m, _ := Compose("projects.task.overdue", Notice{Level: 2, Task: "Count shelf 4", AssigneeName: "Sam"}); m.Title != "A task in your team is 3 days overdue" || m.Body != "Count shelf 4, given to Sam" {
+	if m, _ := Compose("projects.task.overdue", Notice{Level: 2, Task: "Count shelf 4", AssigneeName: "Sam"}, nil); m.Title != "A task in your team is 3 days overdue" || m.Body != "Count shelf 4, given to Sam" {
 		t.Errorf("overdue level 2: %+v", m)
 	}
-	if m, _ := Compose("projects.task.assigned", Notice{FromName: "Tom", Task: "Count shelf 4"}); m.Title != "Tom gave you a task" || m.Path("member") != "/minions/" {
+	if m, _ := Compose("projects.task.assigned", Notice{FromName: "Tom", Task: "Count shelf 4"}, nil); m.Title != "Tom gave you a task" || m.Path("member") != "/minions/" {
 		t.Errorf("assigned: %+v", m)
 	}
-	if _, ok := Compose("crm.opportunity.won", Notice{}); ok {
+	if m, _ := Compose("minions.meeting.invited", Notice{FromName: "Bea", Meeting: "Stock count", StartsAt: "2026-11-27T07:00:00Z"}, Zone("Africa/Nairobi")); m.Title != "Bea invited you to a meeting" || m.Body != "Stock count, Fri 27 Nov, 10:00" || m.Path("member") != "/minions/calendar" {
+		t.Errorf("meeting invite: %+v", m)
+	}
+	if _, ok := Compose("crm.opportunity.won", Notice{}, nil); ok {
 		t.Error("other events say nothing")
 	}
-	needed, _ := Compose("minions.approval.needed", Notice{FromName: "Sam"})
+	needed, _ := Compose("minions.approval.needed", Notice{FromName: "Sam"}, nil)
 	if needed.Path("member") != "/minions/team" || needed.Path("owner") != "/people/expense_claim" {
 		t.Error("staff go to Minions, owners to Friday")
 	}

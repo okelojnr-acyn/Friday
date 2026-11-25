@@ -20,9 +20,9 @@ from friday_common import (
     resource,
     set_org_context,
 )
-from friday_common.access import Scope, approvers_for, people_in, require, scope_for, who_can
+from friday_common.access import Scope, approvers_for, people_in, person_in_business, require, scope_for, who_can
 from friday_common.integrations import AcynWalletProvider, GoogleCalendarProvider
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
@@ -37,6 +37,7 @@ from .models import (
     EmployeeSale,
     ExpenseClaim,
     Meeting,
+    MeetingAttendee,
     PayrollLine,
     PayrollRun,
 )
@@ -49,8 +50,10 @@ from .schemas import (
     ExpenseClaimPay,
     ExpenseClaimResend,
     ExpenseClaimStatusUpdate,
+    MeetingAttendeeOut,
     MeetingCreate,
     MeetingOut,
+    MeetingResponse,
     MeetingUpdate,
     MyPayrollLineOut,
     PayrollRunCreate,
@@ -300,13 +303,135 @@ async def list_employee_sales(
     return rows.scalars().all()
 
 
+# Meetings (HR plan 8.4.3): you see the meetings you organise or are
+# invited to (owners and admins: all); the organiser (or an owner or admin)
+# changes or cancels one; invited members are told and answer.
+
+
+def _sees_all(principal: Principal) -> bool:
+    return principal.role in ("owner", "admin")
+
+
+def _organises(principal: Principal, m: Meeting) -> bool:
+    return m.created_by_user_id == principal.user_id or (not m.created_by_user_id and m.created_by_email == principal.email)
+
+
+async def _attendees(session: AsyncSession, meeting_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[MeetingAttendee]]:
+    out: dict[uuid.UUID, list[MeetingAttendee]] = {}
+    if meeting_ids:
+        rows = await session.execute(select(MeetingAttendee).where(MeetingAttendee.meeting_id.in_(meeting_ids)))
+        for a in rows.scalars().all():
+            out.setdefault(a.meeting_id, []).append(a)
+    return out
+
+
+def _out(principal: Principal, m: Meeting, people: list[MeetingAttendee]) -> MeetingOut:
+    mine = next((a.response for a in people if a.user_id == principal.user_id), "")
+    return MeetingOut.model_validate(m).model_copy(
+        update={
+            "attendees": [MeetingAttendeeOut.model_validate(a) for a in people],
+            "my_role": "organiser" if _organises(principal, m) else mine,
+        }
+    )
+
+
+async def _invite(session: AsyncSession, principal: Principal, m: Meeting, user_ids: list[str]) -> list[str]:
+    """Sets the invited members to `user_ids` (each checked to be in the
+    business); returns the newly invited ones. Their emails join the
+    Google Calendar invite."""
+    want = [u for u in dict.fromkeys(u.strip() for u in user_ids) if u and u != m.created_by_user_id]
+    current = {a.user_id: a for a in (await _attendees(session, [m.id])).get(m.id, [])}
+    for uid, a in current.items():
+        if uid not in want:
+            await session.delete(a)
+    added, emails = [], _attendee_list(m.attendee_emails)
+    for uid in want:
+        if uid in current:
+            continue
+        person = await person_in_business(principal.org_id, user_id=uid)
+        if person is None:
+            raise HTTPException(422, "someone invited isn't in this business")
+        session.add(MeetingAttendee(meeting_id=m.id, org_id=m.org_id, user_id=uid, name=person.get("name") or person["email"], email=person["email"]))
+        added.append(uid)
+        if person["email"] and person["email"] not in emails:
+            emails.append(person["email"])
+    m.attendee_emails = ", ".join(emails)
+    return added
+
+
+async def _tell_meeting(event: str, principal: Principal, m: Meeting, to: list[str], session: AsyncSession, **extra) -> None:
+    to = [u for u in dict.fromkeys(to) if u and u != principal.user_id]
+    if to:
+        await publish_event(
+            event,
+            principal.org_id,
+            {"meeting_id": str(m.id), "meeting": m.title, "starts_at": m.starts_at.isoformat(), "to_user_ids": to,
+             "from_name": m.created_by_name or m.created_by_email, **extra},
+            session=session,
+        )
+
+
+async def _visible_meeting(session: AsyncSession, principal: Principal, meeting_id: uuid.UUID) -> tuple[Meeting, list[MeetingAttendee]]:
+    m = await session.get(Meeting, meeting_id)
+    if m is None or str(m.org_id) != principal.org_id:
+        raise HTTPException(404, "meeting not found")
+    people = (await _attendees(session, [m.id])).get(m.id, [])
+    if not (_sees_all(principal) or _organises(principal, m) or any(a.user_id == principal.user_id for a in people)):
+        raise HTTPException(404, "meeting not found")
+    return m, people
+
+
 @meetings_router.get("", response_model=list[MeetingOut])
 async def list_meetings(
+    mine: bool = False,
+    start: datetime | None = None,
+    end: datetime | None = None,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_org_session),
 ):
-    rows = await session.execute(select(Meeting).where(Meeting.org_id == _org(principal)).order_by(Meeting.starts_at))
-    return rows.scalars().all()
+    """Mine (organised or invited) for everyone; owners and admins see all
+    unless `mine`. `start`/`end` narrow to meetings overlapping that window."""
+    q = select(Meeting).where(Meeting.org_id == _org(principal))
+    if mine or not _sees_all(principal):
+        invited = select(MeetingAttendee.meeting_id).where(MeetingAttendee.user_id == principal.user_id)
+        q = q.where(
+            or_(
+                Meeting.created_by_user_id == principal.user_id,
+                and_(Meeting.created_by_user_id == "", Meeting.created_by_email == principal.email),
+                Meeting.id.in_(invited),
+            )
+        )
+    if start is not None:
+        q = q.where(Meeting.ends_at > start)
+    if end is not None:
+        q = q.where(Meeting.starts_at < end)
+    meetings = (await session.execute(q.order_by(Meeting.starts_at).limit(500))).scalars().all()
+    people = await _attendees(session, [m.id for m in meetings])
+    return [_out(principal, m, people.get(m.id, [])) for m in meetings]
+
+
+@meetings_router.get("/invitable")
+async def invitable_people(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Who I can invite: the people I look after (Minions' staff list for
+    my role) and my reporting line up to the owners."""
+    scope = scope_for(principal, "staff.read")
+    out: dict[str, str] = {}
+    if scope is not None:
+        q = select(Employee).where(Employee.org_id == _org(principal), Employee.user_id != "")
+        ids = await _visible_employee_ids(session, principal, scope)
+        if ids is not None:
+            q = q.where(Employee.id.in_(ids))
+        for e in (await session.execute(q)).scalars().all():
+            out[e.user_id] = e.name
+    line = await approvers_for(principal.org_id, principal.user_id)
+    for p in (*line.chain, *line.top):
+        if p.get("user_id"):
+            out.setdefault(p["user_id"], p.get("name") or p.get("email") or "")
+    out.pop(principal.user_id, None)
+    return sorted(({"user_id": u, "name": n} for u, n in out.items()), key=lambda p: p["name"].lower())
 
 
 @meetings_router.post("", response_model=MeetingOut, status_code=201)
@@ -321,15 +446,21 @@ async def create_meeting(
     meeting = Meeting(
         org_id=_org(principal),
         created_by_email=principal.email,
+        created_by_user_id=principal.user_id,
         created_at=now,
         updated_at=now,
-        **body.model_dump(),
+        **body.model_dump(exclude={"attendee_user_ids"}),
     )
-    await _sync_meeting_to_calendar(meeting)
     session.add(meeting)
+    await session.flush()
+    if body.attendee_user_ids:
+        meeting.created_by_name = await _name_of(session, principal)
+        invited = await _invite(session, principal, meeting, body.attendee_user_ids)
+        await _tell_meeting("minions.meeting.invited", principal, meeting, invited, session)
+    await _sync_meeting_to_calendar(meeting)
     await session.commit()
     await session.refresh(meeting)
-    return meeting
+    return _out(principal, meeting, (await _attendees(session, [meeting.id])).get(meeting.id, []))
 
 
 @meetings_router.patch("/{meeting_id}", response_model=MeetingOut)
@@ -339,14 +470,30 @@ async def update_meeting(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_org_session),
 ):
-    meeting = await session.get(Meeting, meeting_id)
-    if meeting is None or str(meeting.org_id) != principal.org_id:
-        raise HTTPException(404, "meeting not found")
+    meeting, people = await _visible_meeting(session, principal, meeting_id)
+    if not (_organises(principal, meeting) or _sees_all(principal)):
+        raise HTTPException(403, "only whoever organised it changes it; you can accept or decline")
     changes = body.model_dump(exclude_unset=True)
+    new_people = changes.pop("attendee_user_ids", None)
+    moved = any(k in changes and changes[k] != getattr(meeting, k) for k in ("starts_at", "ends_at"))
     for field_name, value in changes.items():
         setattr(meeting, field_name, value)
     if meeting.ends_at <= meeting.starts_at:
         raise HTTPException(422, "ends_at must be after starts_at")
+    if not meeting.created_by_name:
+        meeting.created_by_name = await _name_of(session, principal)
+    invited: list[str] = []
+    if new_people is not None:
+        invited = await _invite(session, principal, meeting, new_people)
+        changes["attendee_emails"] = meeting.attendee_emails
+    if invited:
+        await _tell_meeting("minions.meeting.invited", principal, meeting, invited, session)
+    if moved:
+        # Everyone already invited hears the new time (and answers again).
+        for a in people:
+            if a.user_id not in invited:
+                a.response = "invited"
+        await _tell_meeting("minions.meeting.changed", principal, meeting, [a.user_id for a in people], session)
     # Only re-sync if something Calendar actually cares about changed --
     # an org that hasn't connected Calendar yet shouldn't get a fresh
     # "not connected" error stamped on every unrelated edit.
@@ -355,7 +502,30 @@ async def update_meeting(
     meeting.updated_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(meeting)
-    return meeting
+    return _out(principal, meeting, (await _attendees(session, [meeting.id])).get(meeting.id, []))
+
+
+@meetings_router.post("/{meeting_id}/respond", response_model=MeetingOut)
+async def respond_to_meeting(
+    meeting_id: uuid.UUID,
+    body: MeetingResponse,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """An invited member accepts or declines; the organiser is told."""
+    meeting, people = await _visible_meeting(session, principal, meeting_id)
+    me = next((a for a in people if a.user_id == principal.user_id), None)
+    if me is None:
+        raise HTTPException(403, "you aren't invited to this meeting")
+    if me.response != body.response:
+        me.response = body.response
+        await _tell_meeting(
+            "minions.meeting.answered", principal, meeting, [meeting.created_by_user_id], session,
+            response=body.response, by_name=me.name or principal.email,
+        )
+    await session.commit()
+    await session.refresh(meeting)
+    return _out(principal, meeting, (await _attendees(session, [meeting.id])).get(meeting.id, []))
 
 
 @meetings_router.delete("/{meeting_id}", status_code=204)
@@ -364,9 +534,9 @@ async def delete_meeting(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_org_session),
 ):
-    meeting = await session.get(Meeting, meeting_id)
-    if meeting is None or str(meeting.org_id) != principal.org_id:
-        raise HTTPException(404, "meeting not found")
+    meeting, people = await _visible_meeting(session, principal, meeting_id)
+    if not (_organises(principal, meeting) or _sees_all(principal)):
+        raise HTTPException(403, "only whoever organised it cancels it")
     if meeting.calendar_event_id:
         provider = await _calendar_provider(str(meeting.org_id))
         if provider is not None:
@@ -374,6 +544,7 @@ async def delete_meeting(
                 await provider.delete_event(meeting.calendar_event_id)
             except Exception:  # noqa: BLE001 -- deleting our own record shouldn't hinge on Google's API being up
                 pass
+    await _tell_meeting("minions.meeting.cancelled", principal, meeting, [a.user_id for a in people], session)
     await session.delete(meeting)
     await session.commit()
 
