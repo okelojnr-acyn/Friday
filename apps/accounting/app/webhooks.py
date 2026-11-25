@@ -369,8 +369,8 @@ async def pos_sale_cogs(body: dict, session: AsyncSession = Depends(get_session)
 
 @webhooks_router.post("/claim-paid", dependencies=[Depends(require_kernel_token)], status_code=204)
 async def claim_paid(body: dict, session: AsyncSession = Depends(get_session)):
-    """Subscribed to minions.expense_claim.paid: Cr Cash for what was paid
-    out, Dr 2150 Owed to staff when Guss already booked the expense as
+    """Subscribed to minions.expense_claim.paid: Cr the account it was paid
+    from (M-Pesa, bank, else Cash), Dr 2150 Owed to staff when Guss already booked the expense as
     owed (owed_booked), else Dr 6900 Shop expenses (booked now)."""
     payload = body.get("payload", {})
     org_id = uuid.UUID(body["org_id"])
@@ -385,7 +385,7 @@ async def claim_paid(body: dict, session: AsyncSession = Depends(get_session)):
         return
     await ensure_default_accounts(session, org_id)
     debit = await get_account_by_code(session, org_id, "2150" if payload.get("owed_booked") else "6900")
-    cash = await get_account_by_code(session, org_id, "1010")
+    cash = await get_account_by_code(session, org_id, MONEY_ACCOUNT.get(payload.get("method") or "cash", "1010"))
     now = datetime.now(UTC)
     entry = JournalEntry(
         org_id=org_id,

@@ -69,6 +69,16 @@ class ExpenseClaim(Base):
     # sha of the receipt photo ("" for none); changes when the photo does.
     receipt_sha: Mapped[str] = mapped_column(Text, nullable=False, default="")
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Who a waiting claim waits on ("" = the owners and admins), 0007.
+    waiting_on_user_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    waiting_on_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decision_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decided_by_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # mpesa | bank | cash | crypto, and its code (an M-Pesa code, a bank ref).
+    paid_method: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    paid_reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ClaimReceipt(Base):

@@ -454,12 +454,14 @@ async def test_a_reversed_payment_and_a_repayment_are_separate_postings(client, 
 
 
 async def test_a_claim_payout_clears_owed_to_staff_or_books_a_shop_expense(client, kernel_auth_header, principal):
-    async def paid(owed_booked):
+    async def paid(owed_booked, method=None):
         claim_id = str(uuid.uuid4())
         body = {
             "org_id": principal.org_id,
             "payload": {"claim_id": claim_id, "amount_cents": 250000, "currency": "KES", "owed_booked": owed_booked, "description": "fuel"},
         }
+        if method:
+            body["payload"]["method"] = method
         for _ in range(2):  # a repeat delivery posts once
             assert (await client.post("/internal/webhooks/claim-paid", headers=kernel_auth_header, json=body)).status_code == 204
         [entry] = [e for e in await _journal_entries(client) if e["source_ref"] == claim_id]
@@ -470,6 +472,9 @@ async def test_a_claim_payout_clears_owed_to_staff_or_books_a_shop_expense(clien
     assert lines[await _account_id(client, "1010")]["credit_cents"] == 250000
     lines = await paid(False)
     assert lines[await _account_id(client, "6900")]["debit_cents"] == 250000
+    # Paid by M-Pesa: out of M-Pesa, not the drawer (HR plan phase 1).
+    lines = await paid(False, "mpesa")
+    assert lines[await _account_id(client, "1020")]["credit_cents"] == 250000
 
 
 async def test_stock_counted_in_and_out_reach_the_books_at_cost(client, kernel_auth_header, principal):

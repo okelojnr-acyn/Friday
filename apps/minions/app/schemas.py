@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -55,6 +56,24 @@ class ExpenseClaimCreate(BaseModel):
 
 class ExpenseClaimStatusUpdate(BaseModel):
     status: str
+    # Required when rejecting: what to fix.
+    note: str = Field(default="", max_length=300)
+
+
+class ExpenseClaimResend(BaseModel):
+    """A rejected claim, fixed and sent again (fields left out stay)."""
+
+    description: str | None = Field(default=None, min_length=1)
+    amount_cents: int | None = Field(default=None, gt=0)
+    reimburse: bool | None = None
+
+
+class ExpenseClaimPay(BaseModel):
+    """How it was paid. crypto sends through the wallet; the others record
+    a payment made outside Friday (an M-Pesa code, a bank reference)."""
+
+    method: Literal["crypto", "mpesa", "bank", "cash"] = "crypto"
+    reference: str = Field(default="", max_length=60)
 
 
 class EmployeeSaleOut(BaseModel):
@@ -81,6 +100,14 @@ class ExpenseClaimOut(BaseModel):
     reimburse: bool
     receipt_sha: str = ""
     submitted_at: datetime
+    waiting_on_user_id: str = ""
+    waiting_on_name: str = ""
+    decision_note: str = ""
+    decided_by_name: str = ""
+    decided_at: datetime | None = None
+    paid_method: str = ""
+    paid_reference: str = ""
+    paid_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

@@ -185,6 +185,9 @@ func main() {
 	mux.Handle("DELETE /orgs/members/{user_id}", requireAuth(http.HandlerFunc(members.Remove)))
 	people := &org.People{Pool: pool, InternalToken: eventsToken}
 	mux.HandleFunc("GET /internal/people/{org_id}", people.AtLocations)
+	mux.HandleFunc("GET /internal/people/{org_id}/approvers/{user_id}", people.Approvers)
+	mux.Handle("GET /orgs/approval-limits", requireAuth(http.HandlerFunc(people.GetApprovalLimits)))
+	mux.Handle("PUT /orgs/approval-limits", requireAuth(http.HandlerFunc(people.PutApprovalLimits)))
 	mux.HandleFunc("GET /internal/orgs/{org_id}/time-zone", people.OrgTimeZone)
 	mux.Handle("PUT /auth/me/time-zone", requireAuth(http.HandlerFunc(people.SetMyTimeZone)))
 	mux.Handle("PATCH /orgs/members/{user_id}", requireAuth(http.HandlerFunc(people.UpdatePerson)))
@@ -277,7 +280,9 @@ func main() {
 
 	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(pool, eventsToken))
 	// Sends queued events to subscribers, retrying until each accepts.
-	go (&gateway.Deliverer{Pool: pool, Apps: apps, Token: eventsToken}).Run(ctx)
+	go (&gateway.Deliverer{Pool: pool, Apps: apps, Token: eventsToken, Local: map[string]func(context.Context, string, string, []byte) error{
+		"notify": gussHandlers.Notify,
+	}}).Run(ctx)
 	gateway.WithEventCounts(gateway.EventCounts(pool))
 	mux.Handle("GET /health", gateway.HealthHandler(apps, pool, nil))
 
