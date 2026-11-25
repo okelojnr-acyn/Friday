@@ -24,6 +24,20 @@ export interface TaxProfile {
   receipt_phone?: string;
 }
 
+/** Store settings: the online store's look (kernel core.orgs.storefront). */
+export interface Storefront {
+  store_name: string;
+  tagline: string;
+  logo_url: string;
+  primary_color: string;
+  accent_color: string;
+  background_color: string;
+  text_color: string;
+  heading_font: string;
+  body_font: string;
+  corners: "square" | "soft" | "round";
+}
+
 export interface OrgSettings {
   name: string;
   currency: string;
@@ -34,6 +48,8 @@ export interface OrgSettings {
   /** What the business takes (Business settings > Payment methods).
    * Missing on an older kernel: everything is on. */
   payment_methods?: string[];
+  /** Missing on a kernel older than Store settings. */
+  storefront?: Storefront;
 }
 
 // Until the org's own settings arrive, money shows in the default the
