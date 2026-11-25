@@ -21,7 +21,7 @@ from friday_common import (
     set_org_context,
 )
 from friday_common.access import Scope, require, require_place
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .etims import router as etims_router
@@ -54,6 +54,7 @@ from .schemas import (
     PurchaseOrderOut,
     PurchaseOrderStatusUpdate,
     StockAdjust,
+    StockTransfer,
     StockMoveOut,
     SupplierCreate,
     SupplierOut,
@@ -526,8 +527,8 @@ async def adjust_stock(
 ):
     """The one way on_hand_qty ever changes by hand -- always alongside a
     StockMove row, so the ledger and the cached count never drift apart."""
-    if body.reason not in REASONS:
-        raise HTTPException(422, f"reason must be one of {REASONS}")
+    if body.reason not in REASONS or body.reason == "transfer":
+        raise HTTPException(422, f"reason must be one of {[r for r in REASONS if r != 'transfer']} (move stock with /transfer)")
     product = await _get_owned(session, principal, product_id)
     # A product that doesn't track stock has none to sell from: Guss's
     # "sold 8 rice" took Daawat (untracked) to -8 (plan 20.2 #2).
@@ -569,6 +570,61 @@ async def adjust_stock(
             },
             session=session,
         )
+    await session.commit()
+    await session.refresh(product)
+    return product
+
+
+@products_router.post("/{product_id}/transfer", response_model=ProductOut)
+async def transfer_stock(
+    product_id: uuid.UUID,
+    body: StockTransfer,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("stock.write")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Moves stock from one warehouse to another: two moves in one
+    transaction (never half done), never more than the first one has, and
+    only between warehouses at the caller's locations. The total on hand
+    and the books don't change."""
+    if body.from_warehouse_id == body.to_warehouse_id:
+        raise HTTPException(422, "choose two different places")
+    product = await _get_owned(session, principal, product_id)
+    places = {}
+    for wid in (body.from_warehouse_id, body.to_warehouse_id):
+        w = await session.get(Warehouse, wid)
+        if w is None or w.org_id != product.org_id:
+            raise HTTPException(404, "warehouse not found")
+        if not scope.everywhere:
+            require_place(scope, w.location_id, w.name)
+        places[wid] = w
+    # Lock the product row so two transfers of it can't both spend the same stock.
+    await session.execute(select(Product.id).where(Product.id == product.id).with_for_update())
+    there = await session.scalar(
+        select(func.coalesce(func.sum(StockMove.qty_delta), 0)).where(
+            StockMove.org_id == product.org_id,
+            StockMove.product_id == product.id,
+            StockMove.warehouse_id == body.from_warehouse_id,
+        )
+    )
+    if Decimal(there) < Decimal(body.qty):
+        raise HTTPException(409, f"only {there} at {places[body.from_warehouse_id].name}")
+    now = datetime.now(UTC)
+    ref = body.note.strip() or f"to {places[body.to_warehouse_id].name}"
+    for wid, delta in ((body.from_warehouse_id, -Decimal(body.qty)), (body.to_warehouse_id, Decimal(body.qty))):
+        session.add(
+            StockMove(
+                org_id=product.org_id,
+                product_id=product.id,
+                product_name=product.name,
+                qty_delta=delta,
+                reason="transfer",
+                reference=ref,
+                warehouse_id=wid,
+                created_at=now,
+            )
+        )
+    product.updated_at = now
     await session.commit()
     await session.refresh(product)
     return product
