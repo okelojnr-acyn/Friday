@@ -24,6 +24,11 @@ async def test_the_months_returns_from_the_payslips(client, as_principal, princi
     ).json()
     assert jane["kra_pin"] == "A012345678Z"
     tom = (await client.post("/employees", json={"name": "Tom", "email": "tom@example.com", "pay_rate_cents": 5_000_000})).json()
+    # Lines with nowhere to pay are blocked and never filed; both can be paid.
+    for email in ("jane@example.com", "tom@example.com"):
+        as_principal(make_principal(org_id=principal.org_id, email=email))
+        await client.put("/me/wallet", json={"wallet_address": "0xabc", "wallet_network": "base"})
+    as_principal(admin)
     run = (
         await client.post(
             "/payroll_runs",
