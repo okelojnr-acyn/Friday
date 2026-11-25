@@ -1,7 +1,7 @@
 import hashlib
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from friday_common import (
@@ -359,6 +359,27 @@ async def _invite(session: AsyncSession, principal: Principal, m: Meeting, user_
     return added
 
 
+# How long before a meeting its people are reminded.
+REMIND_BEFORE = timedelta(minutes=30)
+
+
+async def _schedule_reminder(org_id: str, m: Meeting, session: AsyncSession) -> None:
+    """Asks the kernel to deliver minions.meeting.reminder 30 minutes before
+    the meeting (nothing polls). A reminder left behind by a move or a
+    cancellation does nothing when it arrives: it carries the start time."""
+    starts = m.starts_at if m.starts_at.tzinfo else m.starts_at.replace(tzinfo=UTC)
+    at = starts - REMIND_BEFORE
+    if starts <= datetime.now(UTC):
+        return
+    await publish_event(
+        "minions.meeting.reminder",
+        org_id,
+        {"meeting_id": str(m.id), "starts_at": starts.astimezone(UTC).isoformat()},
+        session=session,
+        deliver_at=max(at, datetime.now(UTC)),
+    )
+
+
 async def _tell_meeting(event: str, principal: Principal, m: Meeting, to: list[str], session: AsyncSession, **extra) -> None:
     to = [u for u in dict.fromkeys(to) if u and u != principal.user_id]
     if to:
@@ -457,6 +478,7 @@ async def create_meeting(
         meeting.created_by_name = await _name_of(session, principal)
         invited = await _invite(session, principal, meeting, body.attendee_user_ids)
         await _tell_meeting("minions.meeting.invited", principal, meeting, invited, session)
+    await _schedule_reminder(principal.org_id, meeting, session)
     await _sync_meeting_to_calendar(meeting)
     await session.commit()
     await session.refresh(meeting)
@@ -494,6 +516,8 @@ async def update_meeting(
             if a.user_id not in invited:
                 a.response = "invited"
         await _tell_meeting("minions.meeting.changed", principal, meeting, [a.user_id for a in people], session)
+    if moved:
+        await _schedule_reminder(principal.org_id, meeting, session)
     # Only re-sync if something Calendar actually cares about changed --
     # an org that hasn't connected Calendar yet shouldn't get a fresh
     # "not connected" error stamped on every unrelated edit.
@@ -546,6 +570,36 @@ async def delete_meeting(
                 pass
     await _tell_meeting("minions.meeting.cancelled", principal, meeting, [a.user_id for a in people], session)
     await session.delete(meeting)
+    await session.commit()
+
+
+@webhooks_router.post("/meeting-reminder", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def meeting_reminder(body: dict, session: AsyncSession = Depends(get_session)):
+    """30 minutes before a meeting (scheduled by _schedule_reminder): still
+    on, at the same time? Then its organiser and everyone who hasn't
+    declined hear it's starting soon."""
+    org_id, payload = str(body["org_id"]), body.get("payload") or {}
+    await set_org_context(session, org_id)
+    if not await first_delivery(session, body):
+        return
+    try:
+        m = await session.get(Meeting, uuid.UUID(str(payload.get("meeting_id"))))
+        starts = datetime.fromisoformat(str(payload.get("starts_at")))
+    except (ValueError, TypeError):
+        return
+    if m is None or str(m.org_id) != org_id or m.starts_at.astimezone(UTC) != starts.astimezone(UTC):
+        await session.commit()
+        return
+    people = (await _attendees(session, [m.id])).get(m.id, [])
+    to = [m.created_by_user_id, *(a.user_id for a in people if a.response != "declined")]
+    to = [u for u in dict.fromkeys(to) if u]
+    if to:
+        await publish_event(
+            "minions.meeting.soon",
+            org_id,
+            {"meeting_id": str(m.id), "meeting": m.title, "starts_at": m.starts_at.isoformat(), "to_user_ids": to},
+            session=session,
+        )
     await session.commit()
 
 

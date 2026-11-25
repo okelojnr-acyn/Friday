@@ -22,8 +22,8 @@ def who(principal, uid, role="member"):
 def events(monkeypatch):
     sent = []
 
-    async def fake_publish(event_type, org_id, payload, **_):
-        sent.append((event_type, payload))
+    async def fake_publish(event_type, org_id, payload, deliver_at=None, **_):
+        sent.append((event_type, {**payload, "_at": deliver_at}))
 
     async def person(_org, *, user_id="", email=""):
         return PEOPLE.get(user_id)
@@ -40,7 +40,7 @@ async def test_invited_members_are_told_see_it_and_answer(client, as_principal, 
     m = r.json()
     assert m["my_role"] == "organiser" and [a["user_id"] for a in m["attendees"]] == ["u-sam"]
     assert "sam@x.test" in m["attendee_emails"]  # Google Calendar invites them too
-    [(kind, told)] = events
+    [(kind, told)] = [e for e in events if e[0] != "minions.meeting.reminder"]
     assert kind == "minions.meeting.invited" and told["to_user_ids"] == ["u-sam"] and told["meeting"] == "Stock count"
 
     # Someone outside the business can't be invited.
@@ -87,3 +87,33 @@ async def test_moving_a_meeting_asks_again_and_cancelling_tells_everyone(client,
     assert (await client.delete(f"/meetings/{m['id']}")).status_code == 204
     cancelled = [p for e, p in events if e == "minions.meeting.cancelled"]
     assert sorted(cancelled[0]["to_user_ids"]) == ["u-ann", "u-sam"]
+
+
+async def test_a_reminder_30_minutes_before_to_everyone_still_coming(client, as_principal, principal, events, kernel_auth_header):
+    from datetime import UTC, datetime, timedelta
+
+    starts = datetime.now(UTC) + timedelta(days=1)
+    slot = {"starts_at": starts.isoformat(), "ends_at": (starts + timedelta(hours=1)).isoformat()}
+    as_principal(who(principal, "u-bea", "branch_manager"))
+    m = (await client.post("/meetings", json={"title": "Stock count", **slot, "attendee_user_ids": ["u-sam", "u-ann"]})).json()
+    [reminder] = [p for e, p in events if e == "minions.meeting.reminder"]
+    assert abs((reminder["_at"] - (starts - timedelta(minutes=30))).total_seconds()) < 1
+    as_principal(who(principal, "u-ann"))
+    await client.post(f"/meetings/{m['id']}/respond", json={"response": "declined"})
+
+    def deliver(payload, eid):
+        body = {"id": eid, "org_id": principal.org_id, "payload": {k: v for k, v in payload.items() if k != "_at"}}
+        return client.post("/internal/webhooks/meeting-reminder", json=body, headers=kernel_auth_header)
+
+    assert (await deliver(reminder, "r-1")).status_code == 204
+    await deliver(reminder, "r-1")  # a repeat delivery: once
+    [soon] = [p for e, p in events if e == "minions.meeting.soon"]
+    assert sorted(soon["to_user_ids"]) == ["u-bea", "u-sam"]  # not Ann, who declined
+
+    # Moved: the old reminder does nothing; a new one is scheduled.
+    as_principal(who(principal, "u-bea", "branch_manager"))
+    later = starts + timedelta(hours=2)
+    await client.patch(f"/meetings/{m['id']}", json={"starts_at": later.isoformat(), "ends_at": (later + timedelta(hours=1)).isoformat()})
+    await deliver(reminder, "r-2")
+    assert len([e for e, _ in events if e == "minions.meeting.soon"]) == 1
+    assert len([e for e, _ in events if e == "minions.meeting.reminder"]) == 2
