@@ -336,6 +336,12 @@ func (p *People) UpdatePerson(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Their tokens carry the old access: refuse them from now on; the app
+	// swaps them for fresh ones (POST /auth/refresh).
+	if _, err := tx.Exec(ctx, `UPDATE core.memberships SET access_changed_at = now() WHERE org_id = $1 AND user_id::text = $2`, c.OrgID, target); err != nil {
+		peopleError(w, http.StatusInternalServerError, "couldn't save")
+		return
+	}
 	if err := tx.Commit(ctx); err != nil {
 		peopleError(w, http.StatusInternalServerError, "couldn't save")
 		return

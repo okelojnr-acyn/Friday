@@ -88,7 +88,7 @@ export const ROLE_BLURB: Record<string, string> = {
 export const PERM_LABEL: Record<string, string> = {
   cashier: "Cashier: sells at a till",
   warehouse: "Warehouse: receives, counts and moves stock",
-  logistics: "Logistics: deliveries and parcels",
+  logistics: "Driver: deliveries, parcels and vehicles",
   purchasing: "Purchasing: orders from suppliers",
   sales: "Sales: owns customers and deals",
   accounting: "Accounting: the books, VAT and eTIMS",

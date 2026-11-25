@@ -148,6 +148,7 @@ func main() {
 	mux.Handle("POST /auth/sessions/sign-out-others", requireAuth(http.HandlerFunc(issuer.Sessions.SignOutOthers)))
 	mux.Handle("POST /auth/sessions/sign-out", requireAuth(http.HandlerFunc(issuer.Sessions.SignOutThis)))
 	mux.Handle("GET /auth/me", requireAuth(http.HandlerFunc(authHandlers.Me)))
+	mux.HandleFunc("POST /auth/refresh", authHandlers.Refresh)
 	mux.Handle("POST /auth/sso", requireAuth(http.HandlerFunc(authHandlers.SsoExchange)))
 	// Cashier PIN (plan section 11): trusted tills, PINs, lockout.
 	mux.HandleFunc("GET /auth/pos/cashiers", authHandlers.PosCashiers)

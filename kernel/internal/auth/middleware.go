@@ -28,6 +28,13 @@ func RequireAuth(issuer *Issuer) func(http.Handler) http.Handler {
 				writeError(w, http.StatusUnauthorized, "this device was signed out; sign in again")
 				return
 			}
+			// Their access changed since this token: the app asks for a fresh
+			// one (POST /auth/refresh) and tries again.
+			if claims.Via == "" && claims.IssuedAt != nil && issuer.Sessions != nil &&
+				issuer.Sessions.AccessChangedSince(r.Context(), claims.OrgID, claims.Subject, claims.IssuedAt.Time) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "your access changed; refreshing", "code": "access_changed"})
+				return
+			}
 			// A supplier reaches only Inventory's supplier routes (their own
 			// purchase orders), nothing else in Friday.
 			if claims.Via == SupplierVia && !strings.HasPrefix(r.URL.Path, "/api/inventory/supplier/") {

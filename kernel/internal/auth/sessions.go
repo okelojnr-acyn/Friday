@@ -290,3 +290,52 @@ func (s *Sessions) DeletePasskey(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+
+// accessCache: when each person's access last changed, checked at most
+// every checkEvery (like Active).
+var accessCache = struct {
+	sync.Mutex
+	m map[string]cachedChange
+}{m: map[string]cachedChange{}}
+
+type cachedChange struct {
+	at      time.Time // when access last changed (zero: never)
+	checked time.Time
+}
+
+// AccessChangedSince: the person's role, jobs, locations or manager changed
+// after `issued` (a token from before carries the old access). A database
+// hiccup says no: nobody is locked out by it.
+func (s *Sessions) AccessChangedSince(ctx context.Context, orgID, userID string, issued time.Time) bool {
+	key := orgID + ":" + userID
+	accessCache.Lock()
+	c, ok := accessCache.m[key]
+	accessCache.Unlock()
+	if !ok || time.Since(c.checked) >= checkEvery {
+		var at *time.Time
+		if err := s.Pool.QueryRow(ctx, `SELECT access_changed_at FROM core.memberships WHERE org_id::text = $1 AND user_id::text = $2`,
+			orgID, userID).Scan(&at); err != nil {
+			return false
+		}
+		c = cachedChange{checked: time.Now()}
+		if at != nil {
+			c.at = *at
+		}
+		accessCache.Lock()
+		if len(accessCache.m) > 10000 {
+			accessCache.m = map[string]cachedChange{}
+		}
+		accessCache.m[key] = c
+		accessCache.Unlock()
+	}
+	// Tokens carry whole seconds: a change in the same second as issuing
+	// isn't counted, or a fresh token would look stale.
+	return !c.at.IsZero() && c.at.After(issued.Add(time.Second))
+}
+
+func forgetAccess(orgID, userID string) {
+	accessCache.Lock()
+	delete(accessCache.m, orgID+":"+userID)
+	accessCache.Unlock()
+}
