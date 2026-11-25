@@ -16,6 +16,7 @@ import { AppFrame } from "./shell/AppFrame";
 import { StorePage } from "./shell/StorePage";
 import { ImportPage } from "./shell/ImportPage";
 import { BusinessSettingsPage } from "./shell/BusinessSettingsPage";
+import { StoreSettingsPage } from "./shell/StoreSettingsPage";
 import { EtimsFilingPage } from "./shell/EtimsFilingPage";
 import { UnitsPage } from "./apps/inventory/UnitsPage";
 import { ResourcePage, AppIndexRedirect } from "./shell/ResourcePage";
@@ -58,6 +59,7 @@ export default function App() {
           <Route path="/settings/members" element={<Navigate to="/people" replace />} />
           <Route path="/settings/import" element={<ImportPage />} />
           <Route path="/settings/business" element={<BusinessSettingsPage />} />
+          <Route path="/settings/store" element={<StoreSettingsPage />} />
           <Route element={<AppFrame />}>
             <Route path="/etims" element={<EtimsFilingPage />} />
             <Route path="/inventory/unit_of_measure" element={<UnitsPage />} />

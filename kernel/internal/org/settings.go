@@ -25,6 +25,8 @@ type settingsView struct {
 	Tax              TaxProfile `json:"tax"`
 	// What the business takes; tills offer these unless set otherwise.
 	PaymentMethods []string `json:"payment_methods"`
+	// The online store's look (Store settings).
+	Storefront Storefront `json:"storefront"`
 }
 
 // PaymentMethods a business can offer; invoicing's registers.py keeps
@@ -183,10 +185,10 @@ func writeSettingsJSON(w http.ResponseWriter, status int, v any) {
 
 func (s *Settings) load(r *http.Request, orgID string) (settingsView, error) {
 	var v settingsView
-	var raw []byte
+	var raw, store []byte
 	err := s.Pool.QueryRow(r.Context(), `
-		SELECT name, currency, tax_rate_bp, prices_include_tax, tax_profile, payment_methods FROM core.orgs WHERE id = $1`, orgID,
-	).Scan(&v.Name, &v.Currency, &v.TaxRateBP, &v.PricesIncludeTax, &raw, &v.PaymentMethods)
+		SELECT name, currency, tax_rate_bp, prices_include_tax, tax_profile, payment_methods, storefront FROM core.orgs WHERE id = $1`, orgID,
+	).Scan(&v.Name, &v.Currency, &v.TaxRateBP, &v.PricesIncludeTax, &raw, &v.PaymentMethods, &store)
 	if err != nil {
 		return v, err
 	}
@@ -197,6 +199,8 @@ func (s *Settings) load(r *http.Request, orgID string) (settingsView, error) {
 	if len(raw) > 0 {
 		json.Unmarshal(raw, &v.Tax) // fields stored win; missing ones keep the default
 	}
+	v.Storefront = DefaultStorefront()
+	json.Unmarshal(store, &v.Storefront)
 	return v, nil
 }
 
@@ -230,6 +234,7 @@ func (s *Settings) Put(w http.ResponseWriter, r *http.Request) {
 		PricesIncludeTax *bool       `json:"prices_include_tax"`
 		Tax              *TaxProfile `json:"tax"`
 		PaymentMethods   []string    `json:"payment_methods"`
+		Storefront       *Storefront `json:"storefront"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		writeSettingsJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -255,6 +260,14 @@ func (s *Settings) Put(w http.ResponseWriter, r *http.Request) {
 		}
 		req.PaymentMethods = methods
 	}
+	var storeJSON []byte
+	if req.Storefront != nil {
+		if msg := req.Storefront.normalize(); msg != "" {
+			writeSettingsJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+			return
+		}
+		storeJSON, _ = json.Marshal(req.Storefront)
+	}
 	var taxJSON []byte
 	if req.Tax != nil {
 		currency := ""
@@ -274,8 +287,8 @@ func (s *Settings) Put(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.Pool.Exec(r.Context(), `
 		UPDATE core.orgs SET currency = COALESCE($2, currency), tax_rate_bp = COALESCE($3, tax_rate_bp),
 		       prices_include_tax = COALESCE($4, prices_include_tax), tax_profile = COALESCE($5, tax_profile),
-		       payment_methods = COALESCE($6, payment_methods)
-		WHERE id = $1`, claims.OrgID, req.Currency, req.TaxRateBP, req.PricesIncludeTax, taxJSON, req.PaymentMethods); err != nil {
+		       payment_methods = COALESCE($6, payment_methods), storefront = COALESCE($7, storefront)
+		WHERE id = $1`, claims.OrgID, req.Currency, req.TaxRateBP, req.PricesIncludeTax, taxJSON, req.PaymentMethods, storeJSON); err != nil {
 		writeSettingsJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save the settings"})
 		return
 	}

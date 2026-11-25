@@ -173,7 +173,7 @@ export function StorePage() {
         <h1 className="page-title">My Store</h1>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           {scopeNote ? <span className="field-label">{scopeNote}</span> : null}
-          <Link to="/settings/business" className="btn btn-secondary btn-sm btn-pill">
+          <Link to="/settings/store" className="btn btn-secondary btn-sm btn-pill">
             Store settings
           </Link>
         </div>
