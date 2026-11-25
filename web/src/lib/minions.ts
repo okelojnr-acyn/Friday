@@ -81,6 +81,8 @@ export interface MyPayrollLine {
   paye_cents?: number;
   net_cents?: number;
   advance_cents?: number;
+  unpaid_days?: number;
+  unpaid_cents?: number;
 }
 
 export const fetchMyPayroll = () =>

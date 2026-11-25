@@ -1,3 +1,4 @@
+import { CoverCard } from "./CoverCard";
 import { WaitingTimeOff } from "./TimeOff";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
@@ -83,6 +84,7 @@ export function TeamPage() {
         </ul>
       </section>
 
+      <CoverCard />
       <WaitingAdvances />
       <WaitingTimeOff
         Decision={({ item, onDone }) => <ClaimDecision claim={item} onDone={onDone} base="/api/minions/time_off" />}
