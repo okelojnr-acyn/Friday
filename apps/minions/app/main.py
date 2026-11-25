@@ -22,7 +22,7 @@ from friday_common import (
     resource,
     set_org_context,
 )
-from friday_common.clock import business_tz, month_bounds
+from friday_common.clock import business_tz, local_date, month_bounds
 from friday_common.payroll_ke import band_tax_cents, kenya_deductions, nssf_tiers
 from friday_common.access import Scope, approvers_for, people_in, person_in_business, require, scope_for, who_can
 from friday_common.integrations import AcynWalletProvider, GoogleCalendarProvider
@@ -44,6 +44,7 @@ from .models import (
     EmployeeSale,
     ExpenseClaim,
     Meeting,
+    ApprovalCover,
     MeetingAttendee,
     SalaryAdvance,
     TimeOff,
@@ -54,6 +55,7 @@ from .schemas import (
     EmployeeCreate,
     EmployeeOut,
     EmployeeSaleOut,
+    CoverSet,
     ExpenseClaimCreate,
     ExpenseClaimOut,
     ExpenseClaimPay,
@@ -877,6 +879,8 @@ async def my_payroll(
             paye_cents=line.paye_cents,
             net_cents=line.paid_cents,
             advance_cents=line.advance_cents,
+            unpaid_days=line.unpaid_days,
+            unpaid_cents=line.unpaid_cents,
         )
         for line, run in rows.all()
     ]
@@ -940,13 +944,49 @@ async def _route_claim(session: AsyncSession, claim: ExpenseClaim, employee: Emp
     await _route_request(session, claim, employee, "expense_claim")
 
 
+def _may_decide(who, role: str, amount_cents: int) -> bool:
+    if role in ("owner", "admin"):
+        return True
+    limit = who.limits.get(role)
+    return limit is not None and amount_cents <= limit
+
+
+async def _available_approver(session: AsyncSession, org_id: str, who, amount_cents: int) -> dict | None:
+    """The nearest person up the line who may decide this amount and is
+    here: someone covering for them while they're away, if that person's
+    limit covers it; else, if they're on approved time off today, the next
+    one up. None: the owners and admins.
+    shortcut: requests already waiting aren't moved when someone goes away."""
+    today = local_date(datetime.now(UTC), await business_tz(org_id))
+    for person in who.chain:
+        if not _may_decide(who, person.get("role", ""), amount_cents):
+            continue
+        cover = await session.scalar(
+            select(ApprovalCover).where(
+                ApprovalCover.user_id == person["user_id"], ApprovalCover.starts_on <= today, ApprovalCover.ends_on >= today
+            )
+        )
+        if cover is not None and _may_decide(who, cover.delegate_role, amount_cents):
+            return {"user_id": cover.delegate_user_id, "name": cover.delegate_name, "role": cover.delegate_role}
+        away = await session.scalar(
+            select(TimeOff.id)
+            .join(Employee, Employee.id == TimeOff.employee_id)
+            .where(Employee.user_id == person["user_id"], TimeOff.status == "approved",
+                   TimeOff.starts_on <= today, TimeOff.ends_on >= today)
+            .limit(1)
+        )
+        if away is None:
+            return person
+    return None
+
+
 async def _route_request(session: AsyncSession, claim, employee: Employee, kind: str) -> None:
     """Sends a waiting request (a claim, an advance) to the nearest person
     up the requester's reporting line whose limit covers it, else to the
     owners and admins, and tells them (minions.approval.needed). Published
     in `session`, so it goes out only if the request is saved."""
     who = await approvers_for(str(claim.org_id), employee.user_id)
-    person = who.pick(claim.amount_cents)
+    person = await _available_approver(session, str(claim.org_id), who, claim.amount_cents)
     if person:
         claim.waiting_on_user_id = person["user_id"]
         claim.waiting_on_name = person.get("name") or person.get("email") or "your manager"
@@ -1269,11 +1309,10 @@ async def create_payroll_run(
                 payroll_run_id=run.id,
                 employee_id=employee.id,
                 employee_name=employee.name,
-                gross_amount_cents=employee.pay_rate_cents,
                 to_address=employee.wallet_address,
                 network=employee.wallet_network,
                 status="pending" if employee.wallet_address else "blocked",
-                **await _with_advance(session, employee, _payslip(employee.pay_rate_cents, run.currency, run.period_end)),
+                **{"gross_amount_cents": employee.pay_rate_cents, **await _with_advance(session, employee, await _with_unpaid(session, employee, run))},
             )
         )
     await session.commit()
@@ -1302,6 +1341,24 @@ async def approve_payroll_run(
     await session.commit()
     await session.refresh(run, attribute_names=["lines"])
     return PayrollRunOut.from_model(run)
+
+
+async def _with_unpaid(session: AsyncSession, employee: Employee, run: PayrollRun) -> dict:
+    """The payslip after approved unpaid leave in the run's period: the pay
+    less its share for those working days (pay x unpaid days / the
+    period's working days), statutory deductions on what's left."""
+    first, last = run.period_start.date(), run.period_end.date()
+    rows = await session.execute(
+        select(TimeOff.starts_on, TimeOff.ends_on).where(
+            TimeOff.employee_id == employee.id, TimeOff.kind == "unpaid", TimeOff.status == "approved",
+            TimeOff.starts_on <= last, TimeOff.ends_on >= first,
+        )
+    )
+    unpaid = sum(_working_days(max(a, first), min(b, last)) for a, b in rows.all())
+    period_days = _working_days(first, last)
+    off = min(employee.pay_rate_cents, round(employee.pay_rate_cents * unpaid / period_days)) if unpaid and period_days else 0
+    slip = _payslip(employee.pay_rate_cents - off, run.currency, run.period_end)
+    return {**slip, "gross_amount_cents": employee.pay_rate_cents - off, "unpaid_days": unpaid, "unpaid_cents": off} if off else slip
 
 
 async def _with_advance(session: AsyncSession, employee: Employee, slip: dict) -> dict:
@@ -1546,6 +1603,62 @@ async def payroll_return_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{kind}-{month}.csv"'},
     )
+
+
+# Cover while away (HR plan phase 3): an approver names who decides for
+# them between two dates; requests skip someone on approved time off.
+APPROVER_ROLES = ("team_leader", "branch_manager", "admin", "owner")
+
+
+@me_router.get("/cover")
+async def my_cover(principal: Principal = Depends(get_current_principal), session: AsyncSession = Depends(get_org_session)):
+    c = await session.get(ApprovalCover, (_org(principal), principal.user_id))
+    if c is None or c.ends_on < datetime.now(UTC).date():
+        return None
+    return {"delegate_user_id": c.delegate_user_id, "delegate_name": c.delegate_name,
+            "starts_on": c.starts_on.isoformat(), "ends_on": c.ends_on.isoformat()}
+
+
+@me_router.put("/cover")
+async def set_my_cover(
+    body: CoverSet,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Approvers only; the cover must be able to approve too, and not you."""
+    if principal.role not in APPROVER_ROLES:
+        raise HTTPException(403, "only people who approve requests name cover")
+    if body.ends_on < body.starts_on or (body.ends_on - body.starts_on).days > 92:
+        raise HTTPException(422, "pick a last day on or after the first, at most three months on")
+    if body.delegate_user_id == principal.user_id:
+        raise HTTPException(422, "choose someone else")
+    person = await person_in_business(principal.org_id, user_id=body.delegate_user_id)
+    if person is None or person.get("role") not in APPROVER_ROLES:
+        raise HTTPException(422, "your cover must be a team leader, manager, admin or owner here")
+    c = await session.get(ApprovalCover, (_org(principal), principal.user_id))
+    if c is None:
+        c = ApprovalCover(org_id=_org(principal), user_id=principal.user_id, created_at=datetime.now(UTC))
+        session.add(c)
+    c.delegate_user_id, c.delegate_name, c.delegate_role = person["user_id"], person.get("name") or person["email"], person["role"]
+    c.starts_on, c.ends_on = body.starts_on, body.ends_on
+    await publish_event(
+        "minions.cover.set",
+        principal.org_id,
+        {"to_user_ids": [person["user_id"]], "from_name": await _name_of(session, principal),
+         "description": f"{body.starts_on.day} {body.starts_on.strftime('%b')} to {body.ends_on.day} {body.ends_on.strftime('%b')}"},
+        session=session,
+    )
+    await session.commit()
+    return {"delegate_user_id": c.delegate_user_id, "delegate_name": c.delegate_name,
+            "starts_on": c.starts_on.isoformat(), "ends_on": c.ends_on.isoformat()}
+
+
+@me_router.delete("/cover", status_code=204)
+async def end_my_cover(principal: Principal = Depends(get_current_principal), session: AsyncSession = Depends(get_org_session)):
+    c = await session.get(ApprovalCover, (_org(principal), principal.user_id))
+    if c is not None:
+        await session.delete(c)
+        await session.commit()
 
 
 app.include_router(employees_router)
