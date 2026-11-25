@@ -1,3 +1,4 @@
+import { SendAnnouncements } from "./Announcements";
 import { WhosIn } from "./WhosIn";
 import { CoverCard } from "./CoverCard";
 import { WaitingTimeOff } from "./TimeOff";
@@ -53,6 +54,7 @@ export function TeamPage() {
     <div className="page minions-page">
       <h1 className="page-title">Team</h1>
       <WhosIn />
+      <SendAnnouncements />
       {error ? (
         <div className="error-banner" role="alert">
           {error}

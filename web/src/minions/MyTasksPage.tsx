@@ -1,3 +1,4 @@
+import { UnreadAnnouncements } from "./Announcements";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
@@ -131,6 +132,8 @@ export function MyTasksPage() {
           Open my calendar
         </Link>
       </section>
+
+      <UnreadAnnouncements />
 
       {error ? (
         <div className="error-banner" role="alert">

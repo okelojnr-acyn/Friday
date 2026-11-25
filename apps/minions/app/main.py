@@ -2081,3 +2081,8 @@ app.include_router(time_off_router)
 from .presence import router as presence_router  # noqa: E402
 
 app.include_router(presence_router)
+
+# Announcements (announcements.py), in its own file like presence.py.
+from .announcements import router as announcements_router  # noqa: E402
+
+app.include_router(announcements_router)
