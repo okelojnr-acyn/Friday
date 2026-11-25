@@ -1963,3 +1963,8 @@ async def decide_time_off(
 
 
 app.include_router(time_off_router)
+
+# Who's in today (presence.py): its own file, so it rarely meets other changes.
+from .presence import router as presence_router  # noqa: E402
+
+app.include_router(presence_router)

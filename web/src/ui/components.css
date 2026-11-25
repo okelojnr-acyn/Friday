@@ -2868,3 +2868,18 @@
   font-weight: 700;
   color: var(--text) !important;
 }
+
+/* Who's in today (minions/WhosIn). */
+.minions-presence {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.minions-presence.in {
+  background: var(--success);
+}
+.minions-presence.away {
+  background: var(--accent);
+}

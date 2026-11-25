@@ -1,3 +1,4 @@
+import { WhosIn } from "./WhosIn";
 import { WaitingTimeOff } from "./TimeOff";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
@@ -50,6 +51,7 @@ export function TeamPage() {
   return (
     <div className="page minions-page">
       <h1 className="page-title">Team</h1>
+      <WhosIn />
       {error ? (
         <div className="error-banner" role="alert">
           {error}
