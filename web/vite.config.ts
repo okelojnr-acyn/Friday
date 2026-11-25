@@ -103,6 +103,8 @@ export default defineConfig({
         navigateFallbackAllowlist: [/^\/minions/],
         globIgnores: ["index.html", "pos.html"],
         cleanupOutdatedCaches: true,
+        // Phone notifications: the push and tap handlers (public/minions-push.js).
+        importScripts: ["/minions-push.js"],
       },
       manifest: {
         name: "Friday Minions",
