@@ -1,4 +1,5 @@
-import { loadSession, clearSession } from "./session";
+import { loadSession, clearSession, saveSession } from "./session";
+import type { Session } from "./types";
 
 // Everything goes through the kernel (ARCHITECTURE.md: "web/ ... talks
 // only to the kernel"). /api/{app}/* is reverse-proxied by
@@ -14,6 +15,20 @@ export class ApiError extends Error {
     super(message);
     this.status = status;
     this.data = data;
+  }
+}
+
+/** Swaps the token for a fresh one with the person's access as it is now
+ * (kernel POST /auth/refresh); false when the kernel says sign in again. */
+async function refreshSession(token: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${KERNEL_URL}/auth/refresh`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return false;
+    const r = (await res.json()) as { token: string; org_id: string; role: Session["role"]; email: string };
+    saveSession({ token: r.token, orgId: r.org_id, role: r.role, email: r.email });
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -35,6 +50,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(0, `Can't reach the Friday server (${path.split("?")[0]}) — network or CORS problem`);
   }
 
+  if (res.status === 401 && session && path !== "/auth/refresh") {
+    const body = await res.clone().json().catch(() => ({}));
+    if (body?.code === "access_changed" && (await refreshSession(session.token))) {
+      // Their role or jobs changed: every screen reads them once, so reload.
+      window.location.reload();
+      return new Promise<T>(() => {}); // the page is going away
+    }
+  }
   if (res.status === 401) {
     clearSession();
   }

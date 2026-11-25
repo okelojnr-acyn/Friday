@@ -523,3 +523,39 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
+
+
+// Refresh (POST /auth/refresh): a fresh token for the same device, with
+// the person's access as it is now (after their role, jobs, locations or
+// manager changed). Takes the current token even if it's now refused for
+// stale access, but not a signed-out device's, an expired one, or an
+// assistant's; and only while they still belong to the business.
+func (h *Handlers) Refresh(w http.ResponseWriter, r *http.Request) {
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		writeError(w, http.StatusUnauthorized, "missing bearer token")
+		return
+	}
+	claims, err := h.Issuer.Verify(strings.TrimPrefix(header, "Bearer "))
+	if err != nil || claims.Via != "" {
+		writeError(w, http.StatusUnauthorized, "sign in again")
+		return
+	}
+	if claims.Sid != "" && h.Issuer.Sessions != nil && !h.Issuer.Sessions.Active(r.Context(), claims.Sid, claims.Subject) {
+		writeError(w, http.StatusUnauthorized, "this device was signed out; sign in again")
+		return
+	}
+	var role string
+	if err := h.Pool.QueryRow(r.Context(), `SELECT role FROM core.memberships WHERE org_id::text = $1 AND user_id::text = $2`,
+		claims.OrgID, claims.Subject).Scan(&role); err != nil {
+		writeError(w, http.StatusUnauthorized, "you're no longer in this business")
+		return
+	}
+	token, err := h.Issuer.issue(claims.Subject, claims.OrgID, role, claims.Email, claims.Sid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not issue token")
+		return
+	}
+	forgetAccess(claims.OrgID, claims.Subject)
+	writeJSON(w, http.StatusOK, authResponse{Token: token, OrgID: claims.OrgID, Role: role, Email: claims.Email})
+}
