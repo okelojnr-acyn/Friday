@@ -25,7 +25,7 @@ function ago(iso: string): string {
 /** The notification inbox (kernel /me/notifications), the same in Friday
  * and in Minions: a bell with the unread count, a list that opens on tap,
  * each notice leading to where it's about. Checked on each page change,
- * when the app comes back to the front, and every minute. Hidden on a
+ * when the app comes back to the front, and every minute while on screen. Hidden on a
  * kernel without the inbox. */
 export function NotificationBell() {
   const [items, setItems] = useState<Notice[]>([]);
@@ -51,7 +51,8 @@ export function NotificationBell() {
   useEffect(() => {
     const onShow = () => document.visibilityState === "visible" && load();
     document.addEventListener("visibilitychange", onShow);
-    const t = window.setInterval(load, 60_000);
+    // Only while it's on screen: a tab in the background asks nothing.
+    const t = window.setInterval(() => document.visibilityState === "visible" && load(), 60_000);
     return () => {
       document.removeEventListener("visibilitychange", onShow);
       window.clearInterval(t);

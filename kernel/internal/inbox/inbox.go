@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -32,6 +33,23 @@ type Notice struct {
 	Task         string `json:"task"`
 	AssigneeName string `json:"assignee_name"`
 	Level        int    `json:"level"` // overdue: 1 on the due day, 2 three days later
+	// Meetings (minions.meeting.*).
+	Meeting  string `json:"meeting"`
+	StartsAt string `json:"starts_at"`
+	Response string `json:"response"`
+	ByName   string `json:"by_name"`
+}
+
+// When: "Thu 27 Nov, 10:00" in loc (the business's zone; UTC if nil).
+func When(iso string, loc *time.Location) string {
+	t, err := time.Parse(time.RFC3339Nano, iso)
+	if err != nil {
+		return ""
+	}
+	if loc == nil {
+		loc = time.UTC
+	}
+	return t.In(loc).Format("Mon 2 Jan, 15:04")
 }
 
 // Message is one notice in words, with where it leads: StaffPath in
@@ -59,9 +77,22 @@ func Money(cents int64, currency string) string {
 // Compose turns an event into its message; ok=false for events that say
 // nothing to people. shortcut: English only; follow the business's
 // language when asked.
-func Compose(typ string, n Notice) (Message, bool) {
+func Compose(typ string, n Notice, loc *time.Location) (Message, bool) {
 	amount, what := Money(n.AmountCents, n.Currency), strings.TrimSpace(n.Description)
+	meeting := strings.TrimSpace(n.Meeting) + ", " + When(n.StartsAt, loc)
 	switch typ {
+	case "minions.meeting.invited":
+		return Message{n.FromName + " invited you to a meeting", meeting, "/minions/calendar", "/people/meeting"}, true
+	case "minions.meeting.changed":
+		return Message{"A meeting moved", strings.TrimSpace(n.Meeting) + ", now " + When(n.StartsAt, loc), "/minions/calendar", "/people/meeting"}, true
+	case "minions.meeting.cancelled":
+		return Message{n.FromName + " cancelled a meeting", meeting, "/minions/calendar", "/people/meeting"}, true
+	case "minions.meeting.answered":
+		verb := map[string]string{"accepted": "accepted", "declined": "declined"}[n.Response]
+		if verb == "" {
+			return Message{}, false
+		}
+		return Message{n.ByName + " " + verb + " your meeting", meeting, "/minions/calendar", "/people/meeting"}, true
 	case "minions.approval.needed":
 		return Message{n.FromName + " asks you to approve a claim", amount + " for " + what,
 			"/minions/team", "/people/expense_claim"}, true
@@ -91,6 +122,18 @@ func Compose(typ string, n Notice) (Message, bool) {
 	return Message{}, false
 }
 
+// Zone is the named time zone, or nil (UTC) for "" or an unknown name.
+func Zone(name string) *time.Location {
+	if name == "" {
+		return nil
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil
+	}
+	return loc
+}
+
 // deskRoles work in Friday's own screens; everyone else in Minions.
 var deskRoles = map[string]bool{"owner": true, "admin": true, "branch_manager": true, "viewer": true}
 
@@ -106,7 +149,9 @@ func (in *Inbox) Deliver(ctx context.Context, eventID, orgID, typ string, payloa
 	if json.Unmarshal(payload, &n) != nil || len(n.ToUserIDs) == 0 {
 		return nil
 	}
-	m, ok := Compose(typ, n)
+	var tz string
+	_ = in.Pool.QueryRow(ctx, `SELECT time_zone FROM core.orgs WHERE id::text = $1`, orgID).Scan(&tz)
+	m, ok := Compose(typ, n, Zone(tz))
 	if !ok {
 		return nil
 	}

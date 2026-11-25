@@ -180,17 +180,34 @@ class MyPayrollLineOut(BaseModel):
 
 
 class MeetingCreate(BaseModel):
-    title: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=200)
     starts_at: datetime
     ends_at: datetime
+    # Outside guests for Google Calendar (comma-separated emails).
     attendee_emails: str = ""
+    # Members of the business invited (they're told, and answer).
+    attendee_user_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class MeetingUpdate(BaseModel):
-    title: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=200)
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     attendee_emails: str | None = None
+    attendee_user_ids: list[str] | None = Field(default=None, max_length=100)
+
+
+class MeetingResponse(BaseModel):
+    response: Literal["accepted", "declined"]
+
+
+class MeetingAttendeeOut(BaseModel):
+    user_id: str
+    name: str
+    email: str
+    response: str
+
+    model_config = {"from_attributes": True}
 
 
 class MeetingOut(BaseModel):
@@ -207,5 +224,10 @@ class MeetingOut(BaseModel):
     sync_error: str
     created_at: datetime
     updated_at: datetime
+    created_by_user_id: str = ""
+    created_by_name: str = ""
+    attendees: list[MeetingAttendeeOut] = []
+    # Mine: organiser, or my answer (invited, accepted, declined); "" = neither.
+    my_role: str = ""
 
     model_config = {"from_attributes": True}
