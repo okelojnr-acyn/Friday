@@ -37,6 +37,8 @@ class TaskCreate(BaseModel):
     status: str = "todo"
     priority: str = "medium"
     assignee_email: str = ""
+    # Who it's for, by Friday user id (Minions' team picker); or by email.
+    assignee_user_id: str = ""
     due_at: datetime | None = None
 
 
@@ -47,6 +49,7 @@ class TaskUpdate(BaseModel):
     status: str | None = None
     priority: str | None = None
     assignee_email: str | None = None
+    assignee_user_id: str | None = None
     due_at: datetime | None = None
 
 
@@ -62,6 +65,11 @@ class TaskOut(BaseModel):
     due_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    assignee_user_id: str = ""
+    assignee_name: str = ""
+    assigned_by_user_id: str = ""
+    assigned_by_name: str = ""
+    done_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

@@ -126,6 +126,8 @@ export const RULE_LABEL: Record<string, string> = {
   "integrations.write": "Apps & integrations",
   "people.read": "See people",
   "people.write": "Invite and change people",
+  "tasks.read": "See tasks",
+  "tasks.assign": "Give tasks",
   "host.manage": "Friday Host: billing, servers, updates",
 };
 

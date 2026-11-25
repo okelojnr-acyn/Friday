@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -50,6 +50,14 @@ class Task(Base):
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Down the reporting line (0005): the person it's for and who gave it.
+    assignee_user_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    assignee_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    assigned_by_user_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    assigned_by_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 0 not overdue yet; 1 told on the due day; 2 told the next person up.
+    overdue_level: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Ticket(Base):

@@ -55,6 +55,23 @@ var subscriptions = []subscription{
 	{Event: "minions.approval.needed", App: "notify"},
 	{Event: "minions.expense_claim.decided", App: "notify"},
 	{Event: "minions.expense_claim.paid", App: "notify"},
+	{Event: "projects.task.assigned", App: "notify"},
+	{Event: "projects.task.done", App: "notify"},
+	{Event: "projects.task.overdue", App: "notify"},
+}
+
+// QueueHourly gives each business's Projects its hourly tick (overdue
+// tasks; HR plan 8.4.2) through the delivery queue, so it retries like any
+// event. One per business per hour, however many kernels run.
+func QueueHourly(ctx context.Context, pool *pgxpool.Pool) {
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO core.event_deliveries (event_id, type, org_id, payload, app, webhook_path)
+		SELECT 'hourly-' || org_id::text || '-' || to_char(now() AT TIME ZONE 'UTC', 'YYYYMMDDHH24'), 'kernel.hourly', org_id::text, '{}',
+		       'projects', '/internal/webhooks/hourly'
+		FROM core.app_installs WHERE app_name = 'projects'
+		ON CONFLICT (event_id, app, webhook_path) DO NOTHING`); err != nil {
+		log.Printf("hourly ticks: %v", err)
+	}
 }
 
 func newEventID() string {
@@ -256,6 +273,7 @@ func (d *Deliverer) Run(ctx context.Context) {
 		if time.Since(lastTrim) > time.Hour {
 			_, _ = d.Pool.Exec(ctx, `DELETE FROM core.event_deliveries WHERE delivered_at < now() - interval '7 days'`)
 			TrimExpired(ctx, d.Pool)
+			QueueHourly(ctx, d.Pool)
 			lastTrim = time.Now()
 		}
 		select {

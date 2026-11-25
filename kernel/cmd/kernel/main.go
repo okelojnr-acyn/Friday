@@ -187,6 +187,7 @@ func main() {
 	people := &org.People{Pool: pool, InternalToken: eventsToken}
 	mux.HandleFunc("GET /internal/people/{org_id}", people.AtLocations)
 	mux.HandleFunc("GET /internal/people/{org_id}/approvers/{user_id}", people.Approvers)
+	mux.HandleFunc("GET /internal/people/{org_id}/person", people.Person)
 	mux.Handle("GET /orgs/approval-limits", requireAuth(http.HandlerFunc(people.GetApprovalLimits)))
 	mux.Handle("PUT /orgs/approval-limits", requireAuth(http.HandlerFunc(people.PutApprovalLimits)))
 	mux.HandleFunc("GET /internal/orgs/{org_id}/time-zone", people.OrgTimeZone)

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
-import { ApiError } from "../lib/api";
-import { listRecords, updateRecord } from "../lib/resourceApi";
+import { api, ApiError } from "../lib/api";
+import { updateRecord } from "../lib/resourceApi";
 import type { RecordRow } from "../lib/types";
 
 /** Next step for a task, tapped from the list: to do -> doing -> done. */
@@ -42,7 +42,10 @@ export function MyTasksPage() {
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
-    listRecords("projects", "task")
+    // Only mine (tasks down the line); an older Projects ignores ?mine and
+    // the email match below narrows it.
+    api
+      .get<RecordRow[]>("/api/projects/tasks?mine=true")
       .then(setTasks)
       .catch((err) =>
         setError(
@@ -156,6 +159,10 @@ export function MyTasksPage() {
                               undefined,
                               { day: "numeric", month: "short" },
                             )
+                          : null}
+                        {t.assigned_by_name &&
+                        String(t.assigned_by_name).toLowerCase() !== email
+                          ? `${t.due_at || t.status === "in_progress" ? ", " : ""}from ${String(t.assigned_by_name)}`
                           : null}
                         {t.priority === "high" || t.priority === "urgent" ? (
                           <span className="minions-flag">

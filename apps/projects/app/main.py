@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from friday_common import (
@@ -9,9 +9,15 @@ from friday_common import (
     create_app,
     get_current_principal,
     get_org_session,
+    get_session,
+    publish_event,
+    require_kernel_token,
     resource,
+    set_org_context,
 )
-from sqlalchemy import select
+from friday_common.clock import business_tz, local_midnight
+from friday_common.access import Scope, approvers_for, people_in, person_in_business, require, scope_for, who_can
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
@@ -76,6 +82,7 @@ resource(
             FieldSpec("status", "Status", "select", options=TASK_STATUSES, required=True),
             FieldSpec("priority", "Priority", "select", options=TASK_PRIORITIES, required=True),
             FieldSpec("assignee_email", "Assignee", "email"),
+            FieldSpec("assigned_by_name", "Given by", "text", form_visible=False),
             FieldSpec("due_at", "Due", "date"),
             FieldSpec("description", "Description", "textarea", list_visible=False),
         ),
@@ -126,6 +133,7 @@ projects_router = APIRouter(prefix="/projects", tags=["projects"])
 tasks_router = APIRouter(prefix="/tasks", tags=["tasks"])
 time_entries_router = APIRouter(prefix="/time_entries", tags=["time-entries"])
 tickets_router = APIRouter(prefix="/tickets", tags=["tickets"])
+webhooks_router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
 
 
 def _org(principal: Principal) -> uuid.UUID:
@@ -171,13 +179,93 @@ async def update_project(
     return project
 
 
+# Tasks down the reporting line (HR plan 8.4.2): everyone sees the tasks
+# they were given and the ones they gave; team leaders their team's,
+# branch managers their locations', owners and admins all. Giving a task
+# follows the same line (tasks.assign); staff only give themselves one.
+
+
+async def _people_over(principal: Principal, scope: Scope | None) -> set[str] | None:
+    """Whose tasks `scope` covers (None = everyone's): own, the team (down
+    the line), or everyone at the caller's locations plus their team."""
+    if scope is None:
+        return {principal.user_id}
+    who = await people_in(scope, principal.org_id)
+    if who is None:
+        return None
+    return {principal.user_id, *who, *(principal.team if scope.kind == "loc" else ())}
+
+
+def _mine(principal: Principal):
+    """Given to me: by user id, or (tasks from before person links) by email."""
+    return or_(
+        Task.assignee_user_id == principal.user_id,
+        and_(Task.assignee_user_id == "", func.lower(Task.assignee_email) == principal.email.lower()),
+    )
+
+
+async def _assignee(principal: Principal, user_id: str, email: str) -> dict | None:
+    """Who a task is for, checked: a member of the business whom the caller
+    may give tasks to (themselves, or someone down their line)."""
+    user_id, email = (user_id or "").strip(), (email or "").strip()
+    if not user_id and not email:
+        return None
+    if user_id == principal.user_id or (not user_id and email.lower() == principal.email.lower()):
+        return {"user_id": principal.user_id, "name": "", "email": principal.email}
+    person = await person_in_business(principal.org_id, user_id=user_id, email=email)
+    if person is None:
+        raise HTTPException(422, "nobody in this business has that email" if email and not user_id else "that person isn't in this business")
+    scope = scope_for(principal, "tasks.assign")
+    over = await _people_over(principal, scope) if scope and scope.kind != "own" else {principal.user_id}
+    if over is not None and person["user_id"] not in over:
+        raise HTTPException(
+            403, f"{person.get('name') or person['email']} isn't in your team; ask {who_can('tasks.assign', principal.role)}"
+        )
+    return person
+
+
+async def _due(org_id: str, due: datetime | None) -> datetime | None:
+    """A due date picked as a day (midnight) means that day's close of
+    business, 17:00 in the business's time zone; a time is kept as it is."""
+    if due is None or (due.hour, due.minute, due.second) != (0, 0, 0):
+        return due
+    return local_midnight(due.date(), await business_tz(org_id)) + timedelta(hours=17)
+
+
+async def _my_name(principal: Principal) -> str:
+    me = await person_in_business(principal.org_id, user_id=principal.user_id)
+    return (me or {}).get("name") or principal.email
+
+
+async def _tell(event: str, principal_or_org, task: Task, to: list[str], session: AsyncSession, **extra) -> None:
+    to = [u for u in dict.fromkeys(to) if u]
+    if not to:
+        return
+    org_id = principal_or_org if isinstance(principal_or_org, str) else principal_or_org.org_id
+    await publish_event(
+        event,
+        org_id,
+        {"task_id": str(task.id), "task": task.title, "to_user_ids": to, "assignee_name": task.assignee_name or task.assignee_email, **extra},
+        session=session,
+    )
+
+
 @tasks_router.get("", response_model=list[TaskOut])
 async def list_tasks(
     project_id: uuid.UUID | None = None,
+    mine: bool = False,
     principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("tasks.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
+    """`mine`: only the tasks given to me (Minions' Today)."""
     query = select(Task).where(Task.org_id == _org(principal))
+    if mine:
+        query = query.where(_mine(principal))
+    else:
+        who = await _people_over(principal, scope)
+        if who is not None:
+            query = query.where(or_(Task.assignee_user_id.in_(who), Task.assigned_by_user_id == principal.user_id, _mine(principal)))
     if project_id is not None:
         query = query.where(Task.project_id == project_id)
     rows = await session.execute(query.order_by(Task.created_at.desc()))
@@ -194,9 +282,22 @@ async def create_task(
         raise HTTPException(422, f"status must be one of {TASK_STATUSES}")
     if body.priority not in TASK_PRIORITIES:
         raise HTTPException(422, f"priority must be one of {TASK_PRIORITIES}")
+    person = await _assignee(principal, body.assignee_user_id, body.assignee_email)
     now = datetime.now(UTC)
-    task = Task(org_id=_org(principal), created_at=now, updated_at=now, **body.model_dump())
+    task = Task(org_id=_org(principal), created_at=now, updated_at=now, **body.model_dump(exclude={"assignee_user_id"}))
+    task.due_at = await _due(principal.org_id, task.due_at)
+    task.assigned_by_user_id = principal.user_id
+    for_someone_else = person is not None and person["user_id"] != principal.user_id
+    task.assigned_by_name = await _my_name(principal) if for_someone_else else principal.email
+    if person:
+        task.assignee_user_id, task.assignee_email = person["user_id"], person["email"]
+        task.assignee_name = person.get("name") or person["email"]
+    if task.status == "done":
+        task.done_at = now
     session.add(task)
+    await session.flush()
+    if for_someone_else:
+        await _tell("projects.task.assigned", principal, task, [task.assignee_user_id], session, from_name=task.assigned_by_name)
     await session.commit()
     await session.refresh(task)
     return task
@@ -209,20 +310,93 @@ async def update_task(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_org_session),
 ):
+    """Whoever gave a task, or anyone over its person, may change it; the
+    person it was given to changes its status."""
     task = await session.get(Task, task_id)
     if task is None or str(task.org_id) != principal.org_id:
+        raise HTTPException(404, "task not found")
+    mine = task.assignee_user_id == principal.user_id or (
+        not task.assignee_user_id and task.assignee_email.lower() == principal.email.lower()
+    )
+    gave = task.assigned_by_user_id == principal.user_id
+    assign = scope_for(principal, "tasks.assign")
+    # Over the person: someone up their line (not the person themselves),
+    # or anyone for an old task that belongs to nobody yet.
+    unowned = not (task.assignee_user_id or task.assigned_by_user_id)
+    covers = unowned
+    if assign and assign.kind != "own" and not mine:
+        over = await _people_over(principal, assign)
+        covers = covers or over is None or task.assignee_user_id in over
+    if not (mine or gave or covers):
         raise HTTPException(404, "task not found")
     changes = body.model_dump(exclude_unset=True)
     if "status" in changes and changes["status"] not in TASK_STATUSES:
         raise HTTPException(422, f"status must be one of {TASK_STATUSES}")
     if "priority" in changes and changes["priority"] not in TASK_PRIORITIES:
         raise HTTPException(422, f"priority must be one of {TASK_PRIORITIES}")
+    if not (gave or covers) and set(changes) - {"status"}:
+        raise HTTPException(403, "you can change its status; the person who gave it changes the rest")
+
+    new_person = None
+    if "assignee_user_id" in changes or "assignee_email" in changes:
+        uid, email = changes.pop("assignee_user_id", None) or "", changes.pop("assignee_email", None) or ""
+        if uid != task.assignee_user_id and (uid or email.lower() != task.assignee_email.lower()):
+            new_person = await _assignee(principal, uid, email)
+            task.assignee_user_id = (new_person or {}).get("user_id", "")
+            task.assignee_email = (new_person or {}).get("email", "")
+            task.assignee_name = (new_person or {}).get("name") or task.assignee_email
+            task.overdue_level = 0
+    was_done = task.status == "done"
     for field_name, value in changes.items():
         setattr(task, field_name, value)
-    task.updated_at = datetime.now(UTC)
+    now = datetime.now(UTC)
+    if "due_at" in changes:
+        task.due_at = await _due(principal.org_id, task.due_at)
+        task.overdue_level = 0
+    if task.status == "done" and not was_done:
+        task.done_at = now
+        if task.assigned_by_user_id != principal.user_id:
+            await _tell("projects.task.done", principal, task, [task.assigned_by_user_id], session, from_name=await _my_name(principal))
+    elif task.status != "done" and was_done:
+        task.done_at, task.overdue_level = None, 0
+    if new_person and new_person["user_id"] != principal.user_id:
+        await _tell("projects.task.assigned", principal, task, [new_person["user_id"]], session, from_name=await _my_name(principal))
+    task.updated_at = now
     await session.commit()
     await session.refresh(task)
     return task
+
+
+@webhooks_router.post("/hourly", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def hourly(body: dict, session: AsyncSession = Depends(get_session)):
+    """The kernel's hourly tick for one business: overdue tasks. On the due
+    day, the person and whoever gave it are told; three days later, the
+    next person up the giver's line (owner default, 2026-11-25)."""
+    org_id = str(body["org_id"])
+    await set_org_context(session, org_id)
+    now = datetime.now(UTC)
+    rows = await session.execute(
+        select(Task)
+        .where(
+            Task.org_id == uuid.UUID(org_id),
+            Task.status != "done",
+            Task.due_at.is_not(None),
+            Task.due_at < now,
+            Task.overdue_level < 2,
+            Task.assignee_user_id != "",
+        )
+        .with_for_update(skip_locked=True)
+    )
+    for task in rows.scalars().all():
+        if task.overdue_level == 0:
+            await _tell("projects.task.overdue", org_id, task, [task.assignee_user_id, task.assigned_by_user_id], session, level=1)
+            task.overdue_level = 1
+        elif task.due_at < now - timedelta(days=3):
+            line = await approvers_for(org_id, task.assigned_by_user_id or task.assignee_user_id)
+            up = (line.chain or line.top or ({},))[0].get("user_id", "")
+            await _tell("projects.task.overdue", org_id, task, [up], session, level=2)
+            task.overdue_level = 2
+    await session.commit()
 
 
 @tickets_router.get("", response_model=list[TicketOut])
@@ -308,3 +482,4 @@ app.include_router(projects_router)
 app.include_router(tasks_router)
 app.include_router(tickets_router)
 app.include_router(time_entries_router)
+app.include_router(webhooks_router)

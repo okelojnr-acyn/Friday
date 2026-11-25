@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -110,5 +111,28 @@ func TestApproversAndLimits(t *testing.T) {
 	}
 	if l := get(sam).Limits; l.TeamLeader != 500000 || l.BranchManager != 5000000 {
 		t.Fatalf("limits saved: %+v", l)
+	}
+
+	// Person: a member by id or email; a stranger is 404.
+	lookup := func(q string) (int, Approver) {
+		req := httptest.NewRequest("GET", "/internal/people/"+orgID+"/person?"+q, nil)
+		req.SetPathValue("org_id", orgID)
+		req.Header.Set("Authorization", "Bearer tok")
+		rec := httptest.NewRecorder()
+		p.Person(rec, req)
+		var a Approver
+		json.Unmarshal(rec.Body.Bytes(), &a)
+		return rec.Code, a
+	}
+	if code, a := lookup("user_id=" + lead); code != http.StatusOK || a.Name != "Tom" || a.Role != "team_leader" {
+		t.Fatalf("person by id: %d %+v", code, a)
+	}
+	var email string
+	must(pool.QueryRow(ctx, `SELECT email FROM core.users WHERE id::text = $1`, sam).Scan(&email))
+	if code, a := lookup("email=" + strings.ToUpper(email)); code != http.StatusOK || a.UserID != sam {
+		t.Fatalf("person by email: %d %+v", code, a)
+	}
+	if code, _ := lookup("email=nobody@x.test"); code != http.StatusNotFound {
+		t.Fatalf("a stranger: %d", code)
 	}
 }

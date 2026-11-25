@@ -29,6 +29,12 @@ func TestComposeAndMoney(t *testing.T) {
 	if m, _ := Compose("minions.expense_claim.paid", Notice{Method: "mpesa", AmountCents: 1000, Currency: "KES", Description: "taxi"}); !strings.HasSuffix(m.Body, "by M-Pesa.") {
 		t.Errorf("paid: %+v", m)
 	}
+	if m, _ := Compose("projects.task.overdue", Notice{Level: 2, Task: "Count shelf 4", AssigneeName: "Sam"}); m.Title != "A task in your team is 3 days overdue" || m.Body != "Count shelf 4, given to Sam" {
+		t.Errorf("overdue level 2: %+v", m)
+	}
+	if m, _ := Compose("projects.task.assigned", Notice{FromName: "Tom", Task: "Count shelf 4"}); m.Title != "Tom gave you a task" || m.Path("member") != "/minions/" {
+		t.Errorf("assigned: %+v", m)
+	}
 	if _, ok := Compose("crm.opportunity.won", Notice{}); ok {
 		t.Error("other events say nothing")
 	}

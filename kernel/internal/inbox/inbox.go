@@ -28,6 +28,10 @@ type Notice struct {
 	Note          string   `json:"note"`
 	DecidedByName string   `json:"decided_by_name"`
 	Method        string   `json:"method"`
+	// Tasks (projects.task.*).
+	Task         string `json:"task"`
+	AssigneeName string `json:"assignee_name"`
+	Level        int    `json:"level"` // overdue: 1 on the due day, 2 three days later
 }
 
 // Message is one notice in words, with where it leads: StaffPath in
@@ -69,6 +73,16 @@ func Compose(typ string, n Notice) (Message, bool) {
 		}
 		return Message{n.DecidedByName + " approved your claim", fmt.Sprintf("%s (%s)", what, amount),
 			"/minions/expense-claims", "/minions/expense-claims"}, true
+	case "projects.task.assigned":
+		return Message{n.FromName + " gave you a task", n.Task, "/minions/", "/projects/task"}, true
+	case "projects.task.done":
+		return Message{n.FromName + " finished a task", n.Task, "/minions/team", "/projects/task"}, true
+	case "projects.task.overdue":
+		if n.Level >= 2 {
+			return Message{"A task in your team is 3 days overdue", n.Task + ", given to " + n.AssigneeName,
+				"/minions/team", "/projects/task"}, true
+		}
+		return Message{"A task is overdue", n.Task + ", given to " + n.AssigneeName, "/minions/", "/projects/task"}, true
 	case "minions.expense_claim.paid":
 		how := map[string]string{"mpesa": " by M-Pesa", "bank": " by bank transfer", "cash": " in cash", "crypto": " to your wallet"}[n.Method]
 		return Message{"Your claim was paid", fmt.Sprintf("%s (%s)%s.", what, amount, how),

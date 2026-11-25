@@ -117,7 +117,7 @@ export function NotificationBell() {
             ) : null}
           </div>
           {items.length === 0 ? (
-            <p className="bell-empty">Nothing yet. Claims waiting for you, and decisions on yours, show up here.</p>
+            <p className="bell-empty">Nothing yet. Tasks given to you, claims waiting for you, and decisions on yours show up here.</p>
           ) : (
             <ul className="bell-list">
               {items.map((n) => (

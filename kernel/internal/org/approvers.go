@@ -139,3 +139,24 @@ func (p *People) Approvers(w http.ResponseWriter, r *http.Request) {
 	}
 	peopleJSON(w, http.StatusOK, map[string]any{"limits": l, "chain": chain, "top": top})
 }
+
+// Person (GET /internal/people/{org_id}/person?user_id=...|email=...): one
+// member of the business (id, role, name, email), 404 when they aren't
+// one. Apps use it to check whom something is given to. Apps only.
+func (p *People) Person(w http.ResponseWriter, r *http.Request) {
+	if !svcauth.Bearer(r, p.InternalToken) {
+		peopleError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	q := r.URL.Query()
+	var a Approver
+	err := p.Pool.QueryRow(r.Context(), `
+		SELECT m.user_id::text, m.role, u.full_name, u.email FROM core.memberships m JOIN core.users u ON u.id = m.user_id
+		WHERE m.org_id::text = $1 AND (($2 <> '' AND m.user_id::text = $2) OR ($2 = '' AND $3 <> '' AND lower(u.email) = lower($3)))`,
+		r.PathValue("org_id"), q.Get("user_id"), q.Get("email")).Scan(&a.UserID, &a.Role, &a.Name, &a.Email)
+	if err != nil {
+		peopleError(w, http.StatusNotFound, "not a member of this business")
+		return
+	}
+	peopleJSON(w, http.StatusOK, a)
+}
