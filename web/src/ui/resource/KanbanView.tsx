@@ -112,12 +112,12 @@ export function KanbanView({ spec, records, onCardClick, onMove }: KanbanViewPro
                     </div>
                     {subFields.slice(0, 1).map((f) => (
                       <div key={f.name} className="kanban-card-sub">
-                        {formatCellValue(f, record[f.name])}
+                        {formatCellValue(f, record[f.name], record)}
                       </div>
                     ))}
                     {currencyField ? (
                       <div className="kanban-card-sub" style={{ color: "var(--text)", fontWeight: 600 }}>
-                        {formatCellValue(currencyField, record[currencyField.name])}
+                        {formatCellValue(currencyField, record[currencyField.name], record)}
                       </div>
                     ) : null}
                     <div className="kanban-card-foot">
