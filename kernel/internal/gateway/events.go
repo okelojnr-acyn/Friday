@@ -71,6 +71,9 @@ var subscriptions = []subscription{
 	{Event: "minions.meeting.changed", App: "notify"},
 	{Event: "minions.meeting.cancelled", App: "notify"},
 	{Event: "minions.meeting.answered", App: "notify"},
+	{Event: "minions.meeting.soon", App: "notify"},
+	// Scheduled 30 minutes before a meeting: Minions checks it's still on.
+	{Event: "minions.meeting.reminder", App: "minions", WebhookPath: "/internal/webhooks/meeting-reminder"},
 	// Scheduled for a task's due time (and 3 days later): Projects checks it.
 	{Event: "projects.task.due", App: "projects", WebhookPath: "/internal/webhooks/task-due"},
 }
