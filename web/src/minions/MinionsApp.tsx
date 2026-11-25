@@ -1,3 +1,4 @@
+import { AccountPage } from "../shell/AccountPage";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "../lib/auth";
 import { OrgSettingsProvider } from "../lib/orgSettings";
@@ -30,6 +31,7 @@ export default function MinionsApp() {
           <Route path="/payroll" element={<PayrollPage />} />
           <Route path="/team" element={<TeamPage />} />
           <Route path="/me" element={<MePage />} />
+          <Route path="/devices" element={<AccountPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

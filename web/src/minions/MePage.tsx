@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
 import {
@@ -90,9 +91,9 @@ export function MePage() {
         >
           Add a passkey on this phone
         </Button>
-        <a className="btn btn-secondary" href="/account">
-          Where I'm signed in
-        </a>
+        <Link className="btn btn-secondary" to="/devices">
+          Passkeys and where I'm signed in
+        </Link>
         <Button variant="ghost" onClick={logout}>
           Sign out
         </Button>
