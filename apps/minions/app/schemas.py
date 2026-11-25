@@ -129,6 +129,13 @@ class PayrollLineOut(BaseModel):
     network: str
     status: str
     external_id: str
+    nssf_cents: int = 0
+    shif_cents: int = 0
+    levy_cents: int = 0
+    paye_cents: int = 0
+    net_cents: int = 0
+    employer_nssf_cents: int = 0
+    employer_levy_cents: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -177,6 +184,11 @@ class MyPayrollLineOut(BaseModel):
     gross_amount_cents: int
     currency: str
     line_status: str
+    nssf_cents: int = 0
+    shif_cents: int = 0
+    levy_cents: int = 0
+    paye_cents: int = 0
+    net_cents: int = 0
 
 
 class MeetingCreate(BaseModel):

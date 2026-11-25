@@ -20,6 +20,7 @@ from friday_common import (
     resource,
     set_org_context,
 )
+from friday_common.payroll_ke import kenya_deductions
 from friday_common.access import Scope, approvers_for, people_in, person_in_business, require, scope_for, who_can
 from friday_common.integrations import AcynWalletProvider, GoogleCalendarProvider
 from sqlalchemy import and_, or_, select
@@ -790,6 +791,11 @@ async def my_payroll(
             gross_amount_cents=line.gross_amount_cents,
             currency=run.currency,
             line_status=line.status,
+            nssf_cents=line.nssf_cents,
+            shif_cents=line.shif_cents,
+            levy_cents=line.levy_cents,
+            paye_cents=line.paye_cents,
+            net_cents=line.paid_cents,
         )
         for line, run in rows.all()
     ]
@@ -1175,6 +1181,7 @@ async def create_payroll_run(
                 to_address=employee.wallet_address,
                 network=employee.wallet_network,
                 status="pending" if employee.wallet_address else "blocked",
+                **_payslip(employee.pay_rate_cents, run.currency, run.period_end),
             )
         )
     await session.commit()
@@ -1205,6 +1212,26 @@ async def approve_payroll_run(
     return PayrollRunOut.from_model(run)
 
 
+def _payslip(gross_cents: int, currency: str, period_end: datetime) -> dict:
+    """What comes off a line's gross. Kenyan statutory deductions for a run
+    in KES, at the rates in force at the end of its period; other
+    currencies have none yet (net = gross).
+    shortcut: KES stands for Kenya; follow the business's country when
+    orgs record one."""
+    if currency.upper() != "KES":
+        return {"net_cents": gross_cents}
+    d = kenya_deductions(gross_cents, period_end.date())
+    return {
+        "nssf_cents": d.nssf_cents,
+        "shif_cents": d.shif_cents,
+        "levy_cents": d.levy_cents,
+        "paye_cents": d.paye_cents,
+        "net_cents": d.net_cents,
+        "employer_nssf_cents": d.employer_nssf_cents,
+        "employer_levy_cents": d.employer_levy_cents,
+    }
+
+
 @payroll_router.post("/{run_id}/pay", response_model=PayrollRunOut)
 async def pay_payroll_run(
     run_id: uuid.UUID,
@@ -1231,7 +1258,7 @@ async def pay_payroll_run(
             result = await provider.request_payout(
                 to_address=line.to_address,
                 currency=run.currency,
-                amount=f"{line.gross_amount_cents / 100:.2f}",
+                amount=f"{line.paid_cents / 100:.2f}",  # the net: deductions go to KRA, NSSF, SHA
                 network=line.network,
                 reason=f"Payroll {run.id}",
             )
@@ -1286,13 +1313,28 @@ async def refresh_payroll_run_status(
         run.updated_at = datetime.now(UTC)
 
     if newly_paid:
-        paid_cents = sum(l.gross_amount_cents for l in run.lines if l.status == "confirmed")
+        paid = [l for l in run.lines if l.status == "confirmed"]
+        paid_cents = sum(l.paid_cents for l in paid)
         if paid_cents > 0:
-            # Saved with the run's new status (plan 19.2).
+            total = lambda f: sum(getattr(l, f) for l in paid)  # noqa: E731
+            # Saved with the run's new status (plan 19.2). The books take
+            # the gross as salary, the net out of cash, and each deduction
+            # (both shares) as owed to KRA, NSSF and SHA.
             await publish_event(
                 "minions.payroll_run.paid",
                 principal.org_id,
-                {"payroll_run_id": str(run.id), "amount_cents": paid_cents, "currency": run.currency},
+                {
+                    "payroll_run_id": str(run.id),
+                    "amount_cents": paid_cents,
+                    "currency": run.currency,
+                    "gross_cents": total("gross_amount_cents"),
+                    "paye_cents": total("paye_cents"),
+                    "nssf_cents": total("nssf_cents"),
+                    "employer_nssf_cents": total("employer_nssf_cents"),
+                    "shif_cents": total("shif_cents"),
+                    "levy_cents": total("levy_cents"),
+                    "employer_levy_cents": total("employer_levy_cents"),
+                },
                 session=session,
             )
     await session.commit()

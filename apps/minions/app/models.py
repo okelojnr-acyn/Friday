@@ -135,6 +135,20 @@ class PayrollLine(Base):
     )
     employee_name: Mapped[str] = mapped_column(Text, nullable=False)
     gross_amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # The payslip (0009): what came off the gross, and the employer's share.
+    nssf_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    shif_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    levy_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    paye_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    net_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    employer_nssf_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    employer_levy_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    @property
+    def paid_cents(self) -> int:
+        """What reaches the person: the net, or the gross on lines from
+        before payslips."""
+        return self.net_cents or self.gross_amount_cents
     to_address: Mapped[str] = mapped_column(Text, nullable=False, default="")
     network: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")

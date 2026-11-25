@@ -500,3 +500,24 @@ async def test_stock_counted_in_and_out_reach_the_books_at_cost(client, kernel_a
     assert lines[await _account_id(client, "1400")] == [3250000, 130000]
     assert lines[await _account_id(client, "3000")] == [0, 3250000]
     assert lines[await _account_id(client, "5100")] == [130000, 0]
+
+
+async def test_payroll_with_payslips_books_gross_net_and_what_is_owed(client, kernel_auth_header, principal):
+    """KES 100,000 gross (HR plan phase 2): Dr salaries 100,000 and the
+    employer's 7,500; Cr cash the net, and PAYE, NSSF, SHIF, Housing Levy owed."""
+    run = str(uuid.uuid4())
+    payload = {
+        "payroll_run_id": run, "amount_cents": 7_044_165, "currency": "KES", "gross_cents": 10_000_000,
+        "paye_cents": 1_930_835, "nssf_cents": 600_000, "employer_nssf_cents": 600_000, "shif_cents": 275_000,
+        "levy_cents": 150_000, "employer_levy_cents": 150_000,
+    }
+    r = await client.post("/internal/webhooks/payroll-paid", headers=kernel_auth_header, json={"org_id": principal.org_id, "payload": payload})
+    assert r.status_code == 204
+    [entry] = [e for e in await _journal_entries(client) if e["source_ref"] == run]
+    assert entry["total_debit_cents"] == entry["total_credit_cents"] == 10_750_000
+    by = {line["account_id"]: line for line in entry["lines"]}
+    expect = {"6000": (10_000_000, 0), "6010": (750_000, 0), "1010": (0, 7_044_165), "2310": (0, 1_930_835),
+              "2320": (0, 1_200_000), "2330": (0, 275_000), "2340": (0, 300_000)}
+    for code, (debit, credit) in expect.items():
+        line = by[await _account_id(client, code)]
+        assert (line["debit_cents"], line["credit_cents"]) == (debit, credit), code

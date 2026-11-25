@@ -429,8 +429,26 @@ async def payroll_paid(body: dict, session: AsyncSession = Depends(get_session))
         return
 
     await ensure_default_accounts(session, org_id)
-    salary_expense = await get_account_by_code(session, org_id, "6000")
-    cash = await get_account_by_code(session, org_id, "1010")
+    # (account, debit, credit, description). With a payslip breakdown
+    # (Minions 0009): Dr salaries (gross) and the employer's share, Cr cash
+    # (net) and what's owed to KRA, NSSF and SHA. Older events: gross = paid.
+    p = lambda k: int(payload.get(k) or 0)  # noqa: E731
+    if p("gross_cents"):
+        employer = p("employer_nssf_cents") + p("employer_levy_cents")
+        legs = [
+            ("6000", p("gross_cents"), 0, "Salaries (gross)"),
+            ("6010", employer, 0, "Employer NSSF and Housing Levy"),
+            ("1010", 0, amount_cents, "Net pay paid out"),
+            ("2310", 0, p("paye_cents"), "PAYE withheld"),
+            ("2320", 0, p("nssf_cents") + p("employer_nssf_cents"), "NSSF, both shares"),
+            ("2330", 0, p("shif_cents"), "SHIF withheld"),
+            ("2340", 0, p("levy_cents") + p("employer_levy_cents"), "Housing Levy, both shares"),
+        ]
+    else:
+        legs = [("6000", amount_cents, 0, "Salary expense"), ("1010", 0, amount_cents, "Cash paid out")]
+    legs = [leg for leg in legs if leg[1] or leg[2]]
+    if sum(leg[1] for leg in legs) != sum(leg[2] for leg in legs):
+        raise ValueError(f"payroll run {payroll_run_id}: the payslips don't add up; nothing booked")
 
     now = datetime.now(UTC)
     entry = JournalEntry(
@@ -447,24 +465,16 @@ async def payroll_paid(body: dict, session: AsyncSession = Depends(get_session))
     session.add(entry)
     await session.flush()
 
-    session.add(
-        JournalLine(
-            org_id=org_id,
-            journal_entry_id=entry.id,
-            account_id=salary_expense.id,
-            debit_cents=amount_cents,
-            credit_cents=0,
-            description="Salary expense",
+    for code, debit, credit, description in legs:
+        account = await get_account_by_code(session, org_id, code)
+        session.add(
+            JournalLine(
+                org_id=org_id,
+                journal_entry_id=entry.id,
+                account_id=account.id,
+                debit_cents=debit,
+                credit_cents=credit,
+                description=description,
+            )
         )
-    )
-    session.add(
-        JournalLine(
-            org_id=org_id,
-            journal_entry_id=entry.id,
-            account_id=cash.id,
-            debit_cents=0,
-            credit_cents=amount_cents,
-            description="Cash paid out",
-        )
-    )
     await session.commit()

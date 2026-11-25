@@ -36,12 +36,19 @@ DEFAULT_ACCOUNTS = (
     ("2150", "Owed to staff", "liability"),
     # VAT charged on sales, owed to KRA (named "Tax Payable" before).
     ("2200", "VAT Output (payable)", "liability"),
+    # Payroll deductions owed until they're paid over (HR plan phase 2).
+    ("2310", "PAYE payable", "liability"),
+    ("2320", "NSSF payable", "liability"),
+    ("2330", "SHIF payable", "liability"),
+    ("2340", "Housing Levy payable", "liability"),
     ("3000", "Owner's Equity", "equity"),
     ("4000", "Sales Revenue", "income"),
     ("5000", "Cost of Goods Sold", "expense"),
     # Stock written off or found missing at a count (plan 20.2 #1).
     ("5100", "Stock losses", "expense"),
     ("6000", "Salary Expense", "expense"),
+    # The employer's own NSSF and Housing Levy share, on top of salaries.
+    ("6010", "Employer payroll contributions", "expense"),
     ("6900", "Shop expenses", "expense"),
 )
 

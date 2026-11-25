@@ -82,10 +82,11 @@ export function PayrollPage() {
         <section className="minions-slip" aria-label="Latest pay">
           <p className="field-label">{period(latest)}</p>
           <p className="minions-slip-amount">
-            {formatMoney(latest.gross_amount_cents, {
+            {formatMoney(latest.net_cents || latest.gross_amount_cents, {
               currency: latest.currency,
             })}
           </p>
+          <Payslip line={latest} />
           <p className="minions-slip-state">{state.label}</p>
           <ol className="minions-steps" aria-label="Progress">
             {STEPS.map((s, i) => (
@@ -122,5 +123,31 @@ export function PayrollPage() {
         </section>
       ) : null}
     </div>
+  );
+}
+
+/** Gross, what came off it, and what reaches you. */
+function Payslip({ line: l }: { line: MyPayrollLine }) {
+  const off = [
+    ["NSSF", l.nssf_cents],
+    ["SHIF", l.shif_cents],
+    ["Housing Levy", l.levy_cents],
+    ["PAYE (income tax)", l.paye_cents],
+  ].filter(([, v]) => Number(v) > 0) as [string, number][];
+  if (!off.length) return null;
+  const m = (c: number) => formatMoney(c, { currency: l.currency });
+  return (
+    <dl className="minions-payslip">
+      <dt>Gross pay</dt>
+      <dd>{m(l.gross_amount_cents)}</dd>
+      {off.map(([k, v]) => (
+        <div key={k} className="minions-payslip-off">
+          <dt>{k}</dt>
+          <dd>−{m(v)}</dd>
+        </div>
+      ))}
+      <dt className="minions-payslip-net">You get</dt>
+      <dd className="minions-payslip-net">{m(l.net_cents || l.gross_amount_cents)}</dd>
+    </dl>
   );
 }

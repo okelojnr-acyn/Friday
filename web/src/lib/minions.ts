@@ -74,6 +74,12 @@ export interface MyPayrollLine {
   gross_amount_cents: number;
   currency: string;
   line_status: string;
+  /** The payslip (Kenya); missing on an older Minions, 0 when none. */
+  nssf_cents?: number;
+  shif_cents?: number;
+  levy_cents?: number;
+  paye_cents?: number;
+  net_cents?: number;
 }
 
 export const fetchMyPayroll = () =>
