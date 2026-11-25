@@ -359,7 +359,7 @@ func (h *Handlers) AcceptInviteLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "couldn't join")
 		return
 	}
-	token, err := h.Issuer.Issue(userID, orgID, role, email)
+	token, err := h.Issuer.IssueFor(r, userID, orgID, role, email)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not issue token")
 		return

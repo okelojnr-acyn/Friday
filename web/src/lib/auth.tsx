@@ -94,7 +94,7 @@ interface AuthContextValue {
    * passkey to my account" flow, which stays unconstrained. */
   /** `token` overrides the current session's, for a caller that just
    * signed someone in and can't wait for React to re-render. */
-  addPasskey: (opts?: { platformOnly?: boolean; token?: string }) => Promise<void>;
+  addPasskey: (opts?: { platformOnly?: boolean; token?: string; label?: string }) => Promise<void>;
   /** Cashier PIN on a trusted till (lib/posPin.ts): a POS-only session. */
   loginWithPin: (userId: string, pin: string) => Promise<void>;
   logout: () => void;
@@ -207,7 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [applyAuthResponse]);
 
   const addPasskey = useCallback(
-    async (opts?: { platformOnly?: boolean; token?: string }) => {
+    async (opts?: { platformOnly?: boolean; token?: string; label?: string }) => {
       const token = opts?.token ?? session?.token;
       if (!token) throw new Error("addPasskey requires an active session");
       const authHeader = { Authorization: `Bearer ${token}` };
@@ -217,7 +217,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         publicKey: PublicKeyCredentialCreationOptionsJSON;
       }>(`/auth/passkey/register-options${query}`, undefined, authHeader);
       const responseJSON = await startRegistration({ optionsJSON: publicKey });
-      await kernelFetch(`/auth/passkey/register-verify?session_id=${session_id}`, {
+      const label = opts?.label ? `&device_label=${encodeURIComponent(opts.label.slice(0, 60))}` : "";
+      await kernelFetch(`/auth/passkey/register-verify?session_id=${session_id}${label}`, {
         method: "POST",
         headers: authHeader,
         body: JSON.stringify(responseJSON),
@@ -234,9 +235,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    // End this device's session too, so it leaves "Devices" (best effort).
+    if (session?.token) {
+      void fetch(`${KERNEL_URL}/auth/sessions/sign-out`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.token}` },
+      }).catch(() => {});
+    }
     clearSession();
     setSession(null);
-  }, []);
+  }, [session]);
 
   const value = useMemo(
     () => ({

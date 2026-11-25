@@ -275,6 +275,7 @@ var trimStatements = []string{
 	`DELETE FROM core.guss_link_codes WHERE expires_at < now() - interval '1 day'`,
 	`DELETE FROM core.guss_web_codes WHERE expires_at < now() - interval '1 day'`,
 	`DELETE FROM core.pos_pin_events WHERE created_at < now() - interval '2 years'`,
+	`DELETE FROM core.sessions WHERE created_at < now() - interval '30 days'`,
 }
 
 // TrimExpired runs trimStatements; a failure is logged and the rest still run.

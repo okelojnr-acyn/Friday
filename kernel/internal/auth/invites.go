@@ -53,7 +53,7 @@ func (h *Handlers) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.Issuer.Issue(userID, orgID, role, req.Email)
+	token, err := h.Issuer.IssueFor(r, userID, orgID, role, req.Email)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not issue token")
 		return
@@ -222,7 +222,7 @@ func (h *Handlers) PosVerifyCode(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "invalid or expired code")
 			return
 		}
-		h.issueSessionForUser(w, ctx, userID, req.Email)
+		h.issueSessionForUser(w, r, userID, req.Email)
 		return
 	}
 
@@ -244,7 +244,7 @@ func (h *Handlers) PosVerifyCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.applyInviteLink(ctx, req.Email, orgID, userID)
-	token, err := h.Issuer.Issue(userID, orgID, role, req.Email)
+	token, err := h.Issuer.IssueFor(r, userID, orgID, role, req.Email)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not issue token")
 		return

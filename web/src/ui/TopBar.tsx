@@ -41,10 +41,10 @@ export function TopBar({ email, role, onLogout }: TopBarProps) {
             <span className="topbar-label">Import</span>
           </Link>
         ) : null}
-        <span className="topbar-user" title={role}>
+        <Link to="/account" className="topbar-user" title={`Your account (${role}): passkeys and devices`} aria-label="Your account">
           <Avatar label={initials(email)} title={email} size={26} />
           <span className="topbar-email">{email}</span>
-        </span>
+        </Link>
         <Button variant="ghost" size="sm" onClick={onLogout} title="Log out" aria-label="Log out">
           <Icon name="logout" size={16} />
         </Button>
