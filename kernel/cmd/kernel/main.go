@@ -277,7 +277,9 @@ func main() {
 
 	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(pool, eventsToken))
 	// Sends queued events to subscribers, retrying until each accepts.
-	go (&gateway.Deliverer{Pool: pool, Apps: apps, Token: eventsToken}).Run(ctx)
+	go (&gateway.Deliverer{Pool: pool, Apps: apps, Token: eventsToken, Local: map[string]func(context.Context, string, string, []byte) error{
+		"notify": gussHandlers.Notify,
+	}}).Run(ctx)
 	gateway.WithEventCounts(gateway.EventCounts(pool))
 	mux.Handle("GET /health", gateway.HealthHandler(apps, pool, nil))
 
