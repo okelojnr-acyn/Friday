@@ -9,6 +9,7 @@ from friday_common import (
     create_app,
     get_current_principal,
     get_org_session,
+    first_delivery,
     get_session,
     publish_event,
     require_kernel_token,
@@ -298,6 +299,7 @@ async def create_task(
     await session.flush()
     if for_someone_else:
         await _tell("projects.task.assigned", principal, task, [task.assignee_user_id], session, from_name=task.assigned_by_name)
+    await _schedule_due(principal.org_id, task, session)
     await session.commit()
     await session.refresh(task)
     return task
@@ -347,6 +349,7 @@ async def update_task(
             task.assignee_name = (new_person or {}).get("name") or task.assignee_email
             task.overdue_level = 0
     was_done = task.status == "done"
+    due_before, person_before = task.due_at, task.assignee_user_id
     for field_name, value in changes.items():
         setattr(task, field_name, value)
     now = datetime.now(UTC)
@@ -361,41 +364,72 @@ async def update_task(
         task.done_at, task.overdue_level = None, 0
     if new_person and new_person["user_id"] != principal.user_id:
         await _tell("projects.task.assigned", principal, task, [new_person["user_id"]], session, from_name=await _my_name(principal))
+    if task.due_at != due_before or task.assignee_user_id != person_before or (was_done and task.status != "done"):
+        await _schedule_due(principal.org_id, task, session)
     task.updated_at = now
     await session.commit()
     await session.refresh(task)
     return task
 
 
-@webhooks_router.post("/hourly", dependencies=[Depends(require_kernel_token)], status_code=204)
-async def hourly(body: dict, session: AsyncSession = Depends(get_session)):
-    """The kernel's hourly tick for one business: overdue tasks. On the due
-    day, the person and whoever gave it are told; three days later, the
-    next person up the giver's line (owner default, 2026-11-25)."""
-    org_id = str(body["org_id"])
-    await set_org_context(session, org_id)
-    now = datetime.now(UTC)
-    rows = await session.execute(
-        select(Task)
-        .where(
-            Task.org_id == uuid.UUID(org_id),
-            Task.status != "done",
-            Task.due_at.is_not(None),
-            Task.due_at < now,
-            Task.overdue_level < 2,
-            Task.assignee_user_id != "",
-        )
-        .with_for_update(skip_locked=True)
+def _utc(at: datetime) -> datetime:
+    """Aware, in UTC (a time sent without a zone is UTC, as Postgres reads it)."""
+    return (at if at.tzinfo else at.replace(tzinfo=UTC)).astimezone(UTC)
+
+
+async def _schedule_due(org_id: str, task: Task, session: AsyncSession, level: int = 1) -> None:
+    """Asks the kernel to deliver projects.task.due at the task's due time
+    (level 1) or three days later (level 2), instead of anything polling.
+    A schedule left behind by a change (new due time, done) is ignored when
+    it arrives: the check compares it with the task."""
+    if task.due_at is None or not task.assignee_user_id or task.status == "done":
+        return
+    due = _utc(task.due_at)
+    at = due + (timedelta(days=3) if level == 2 else timedelta())
+    await publish_event(
+        "projects.task.due",
+        org_id,
+        {"task_id": str(task.id), "due_at": due.isoformat(), "level": level},
+        session=session,
+        deliver_at=max(at, datetime.now(UTC)),
     )
-    for task in rows.scalars().all():
-        if task.overdue_level == 0:
-            await _tell("projects.task.overdue", org_id, task, [task.assignee_user_id, task.assigned_by_user_id], session, level=1)
-            task.overdue_level = 1
-        elif task.due_at < now - timedelta(days=3):
-            line = await approvers_for(org_id, task.assigned_by_user_id or task.assignee_user_id)
-            up = (line.chain or line.top or ({},))[0].get("user_id", "")
-            await _tell("projects.task.overdue", org_id, task, [up], session, level=2)
-            task.overdue_level = 2
+
+
+@webhooks_router.post("/task-due", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def task_due(body: dict, session: AsyncSession = Depends(get_session)):
+    """A task's due time came (scheduled by _schedule_due). Still open and
+    unchanged: on the due day the person and whoever gave it are told,
+    three days later the next person up the giver's line (owner default,
+    2026-11-25)."""
+    org_id, payload = str(body["org_id"]), body.get("payload") or {}
+    await set_org_context(session, org_id)
+    if not await first_delivery(session, body):
+        return
+    try:
+        task = await session.get(Task, uuid.UUID(str(payload.get("task_id"))), with_for_update=True)
+        due = _utc(datetime.fromisoformat(str(payload.get("due_at"))))
+        level = int(payload.get("level") or 1)
+    except (ValueError, TypeError):
+        return
+    if (
+        task is None
+        or str(task.org_id) != org_id
+        or task.status == "done"
+        or not task.assignee_user_id
+        or task.due_at is None
+        or _utc(task.due_at) != due
+        or task.overdue_level >= level
+    ):
+        await session.commit()
+        return
+    if level == 1:
+        await _tell("projects.task.overdue", org_id, task, [task.assignee_user_id, task.assigned_by_user_id], session, level=1)
+        await _schedule_due(org_id, task, session, level=2)
+    else:
+        line = await approvers_for(org_id, task.assigned_by_user_id or task.assignee_user_id)
+        up = (line.chain or line.top or ({},))[0].get("user_id", "")
+        await _tell("projects.task.overdue", org_id, task, [up], session, level=2)
+    task.overdue_level = level
     await session.commit()
 
 

@@ -26,8 +26,8 @@ def who(principal, uid, role="member", team=()):
 def events(monkeypatch):
     sent = []
 
-    async def fake_publish(event_type, org_id, payload, **_):
-        sent.append((event_type, payload))
+    async def fake_publish(event_type, org_id, payload, deliver_at=None, **_):
+        sent.append((event_type, {**payload, "_at": deliver_at}))
 
     async def person(_org, *, user_id="", email=""):
         for p in PEOPLE.values():
@@ -98,22 +98,42 @@ async def test_the_person_changes_the_status_and_the_giver_hears_it_is_done(clie
     assert (await client.patch(f"/tasks/{task['id']}", json={"status": "todo"})).status_code == 404
 
 
-async def test_overdue_goes_to_both_then_up_the_line(client, as_principal, principal, events, kernel_auth_header):
+async def test_overdue_is_scheduled_not_polled(client, as_principal, principal, events, kernel_auth_header):
+    """Giving a task with a due time schedules its check for that time (the
+    kernel holds it); when it comes the person and giver are told and a
+    second check is scheduled 3 days on, which goes up the giver's line. A
+    check left behind by a new due time, or arriving twice, does nothing."""
     as_principal(who(principal, "u-tom", "team_leader", team=("u-sam",)))
-    due = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
-    late = (datetime.now(UTC) - timedelta(days=4)).isoformat()
-    soon = (await client.post("/tasks", json={"title": "Due today", "assignee_user_id": "u-sam", "due_at": due})).json()
-    old = (await client.post("/tasks", json={"title": "Long late", "assignee_user_id": "u-sam", "due_at": late})).json()
-    tick = lambda: client.post("/internal/webhooks/hourly", json={"org_id": principal.org_id}, headers=kernel_auth_header)  # noqa: E731
-    assert (await tick()).status_code == 204
+    due = datetime.now(UTC) + timedelta(hours=2)
+    task = (await client.post("/tasks", json={"title": "Count shelf 4", "assignee_user_id": "u-sam", "due_at": due.isoformat()})).json()
+    [check] = [p for e, p in events if e == "projects.task.due"]
+    assert check["level"] == 1 and abs((check["_at"] - due).total_seconds()) < 1
+
+    def deliver(payload, eid):
+        body = {"id": eid, "org_id": principal.org_id, "payload": {k: v for k, v in payload.items() if k != "_at"}}
+        return client.post("/internal/webhooks/task-due", json=body, headers=kernel_auth_header)
+
+    # The due time moves: the old check finds a different task and does nothing.
+    await client.patch(f"/tasks/{task['id']}", json={"due_at": (due + timedelta(hours=1)).isoformat()})
+    assert (await deliver(check, "old-check")).status_code == 204
+    assert not [e for e, _ in events if e == "projects.task.overdue"]
+
+    current = [p for e, p in events if e == "projects.task.due"][-1]
+    await deliver(current, "due-1")
+    await deliver(current, "due-1")  # the kernel's retry: once
     overdue = [p for e, p in events if e == "projects.task.overdue"]
-    assert {(p["task"], tuple(p["to_user_ids"]), p["level"]) for p in overdue} == {
-        ("Due today", ("u-sam", "u-tom"), 1),
-        ("Long late", ("u-sam", "u-tom"), 1),
-    }
-    await tick()  # the next hour: only the 3-days-late one goes up, to Tom's boss
+    assert [(p["to_user_ids"], p["level"]) for p in overdue] == [(["u-sam", "u-tom"], 1)]
+    later = [p for e, p in events if e == "projects.task.due"][-1]
+    assert later["level"] == 2 and later["_at"] > datetime.now(UTC) + timedelta(days=2)
+
+    await deliver(later, "due-2")
     overdue = [p for e, p in events if e == "projects.task.overdue"]
-    assert [(p["task"], p["to_user_ids"], p["level"]) for p in overdue[2:]] == [("Long late", ["u-bea"], 2)]
-    await tick()
-    assert len([e for e, _ in events if e == "projects.task.overdue"]) == 3  # nothing more
-    assert soon["id"] and old["id"]
+    assert [(p["to_user_ids"], p["level"]) for p in overdue[1:]] == [(["u-bea"], 2)]
+
+    # Done before its time: the check does nothing.
+    as_principal(who(principal, "u-sam"))
+    other = (await client.post("/tasks", json={"title": "Mine", "assignee_user_id": "u-sam", "due_at": due.isoformat()})).json()
+    mine = [p for e, p in events if e == "projects.task.due" and p["task_id"] == other["id"]][-1]
+    await client.patch(f"/tasks/{other['id']}", json={"status": "done"})
+    await deliver(mine, "due-3")
+    assert len([e for e, _ in events if e == "projects.task.overdue"]) == 2
