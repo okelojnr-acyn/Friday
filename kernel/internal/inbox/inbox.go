@@ -85,6 +85,8 @@ func Compose(typ string, n Notice, loc *time.Location) (Message, bool) {
 		return Message{n.FromName + " invited you to a meeting", meeting, "/minions/calendar", "/people/meeting"}, true
 	case "minions.meeting.changed":
 		return Message{"A meeting moved", strings.TrimSpace(n.Meeting) + ", now " + When(n.StartsAt, loc), "/minions/calendar", "/people/meeting"}, true
+	case "minions.meeting.soon":
+		return Message{"Starting in 30 minutes", meeting, "/minions/calendar", "/people/meeting"}, true
 	case "minions.meeting.cancelled":
 		return Message{n.FromName + " cancelled a meeting", meeting, "/minions/calendar", "/people/meeting"}, true
 	case "minions.meeting.answered":
