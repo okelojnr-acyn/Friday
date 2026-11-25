@@ -20,7 +20,7 @@ from friday_common import (
     resource,
     set_org_context,
 )
-from friday_common.access import APPROVAL_LIMIT_CENTS, Scope, people_in, require, scope_for, who_can
+from friday_common.access import Scope, approvers_for, people_in, require, scope_for, who_can
 from friday_common.integrations import AcynWalletProvider, GoogleCalendarProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +46,8 @@ from .schemas import (
     EmployeeSaleOut,
     ExpenseClaimCreate,
     ExpenseClaimOut,
+    ExpenseClaimPay,
+    ExpenseClaimResend,
     ExpenseClaimStatusUpdate,
     MeetingCreate,
     MeetingOut,
@@ -571,13 +573,22 @@ async def my_payroll(
 @expense_claims_router.get("", response_model=list[ExpenseClaimOut])
 async def list_expense_claims(
     mine: bool = False,
+    waiting: bool = False,
     principal: Principal = Depends(get_current_principal),
     scope: Scope = Depends(require("claims.read")),
     session: AsyncSession = Depends(get_org_session),
 ):
     """Claims by role: your own, your team's, your locations' or all;
-    `mine` narrows to your own whatever your role."""
+    `mine` narrows to your own whatever your role. `waiting`: the ones
+    waiting for your decision (owners and admins: every waiting claim,
+    since they decide anything)."""
     query = select(ExpenseClaim).where(ExpenseClaim.org_id == _org(principal))
+    if waiting:
+        query = query.where(ExpenseClaim.status == "submitted")
+        if principal.role not in ("owner", "admin"):
+            query = query.where(ExpenseClaim.waiting_on_user_id == principal.user_id)
+        rows = await session.execute(query.order_by(ExpenseClaim.submitted_at))
+        return rows.scalars().all()
     if mine or scope.kind == "own":
         employee = await _resolve_my_employee(session, principal)
         query = query.where(ExpenseClaim.employee_id == employee.id)
@@ -606,9 +617,41 @@ async def create_expense_claim(
         **body.model_dump(),
     )
     session.add(claim)
+    await session.flush()
+    await _route_claim(session, claim, employee)
     await session.commit()
     await session.refresh(claim)
     return claim
+
+
+async def _route_claim(session: AsyncSession, claim: ExpenseClaim, employee: Employee) -> None:
+    """Sends a waiting claim to the nearest person up the claimant's
+    reporting line whose limit covers it, else to the owners and admins,
+    and tells them (minions.approval.needed; Guss delivers it). Published
+    in `session`, so it goes out only if the claim is saved."""
+    who = await approvers_for(str(claim.org_id), employee.user_id)
+    person = who.pick(claim.amount_cents)
+    if person:
+        claim.waiting_on_user_id = person["user_id"]
+        claim.waiting_on_name = person.get("name") or person.get("email") or "your manager"
+        to = [person["user_id"]]
+    else:
+        claim.waiting_on_user_id, claim.waiting_on_name = "", "an owner or admin"
+        to = [p["user_id"] for p in who.top]
+    await publish_event(
+        "minions.approval.needed",
+        str(claim.org_id),
+        {
+            "kind": "expense_claim",
+            "claim_id": str(claim.id),
+            "to_user_ids": to,
+            "from_name": employee.name,
+            "amount_cents": claim.amount_cents,
+            "currency": claim.currency,
+            "description": claim.description,
+        },
+        session=session,
+    )
 
 
 async def _get_owned_claim(session: AsyncSession, principal: Principal, claim_id: uuid.UUID) -> ExpenseClaim:
@@ -698,6 +741,9 @@ async def set_expense_claim_status(
     actually having been queued to move."""
     if body.status not in ("approved", "rejected"):
         raise HTTPException(422, "status must be 'approved' or 'rejected'")
+    note = body.note.strip()
+    if body.status == "rejected" and not note:
+        raise HTTPException(422, "say why it's rejected, so they can fix it")
     claim = await _get_owned_claim(session, principal, claim_id)
     if claim.status != "submitted":
         raise HTTPException(400, f"claim is '{claim.status}', not 'submitted'")
@@ -705,17 +751,75 @@ async def set_expense_claim_status(
     # everyone), never the claimant themselves (owners excepted), and
     # within their approval limit.
     claimant = await _get_owned_employee(session, principal, claim.employee_id)
-    ids = await _visible_employee_ids(session, principal, scope)
+    # The person the claim was sent to (up the claimant's reporting line)
+    # may decide it even outside their usual team or locations.
+    routed_to_me = bool(claim.waiting_on_user_id) and claim.waiting_on_user_id == principal.user_id
+    ids = None if routed_to_me else await _visible_employee_ids(session, principal, scope)
     if ids is not None and claimant.id not in ids:
         raise HTTPException(403, f"{claimant.name} isn't in your team or locations; ask {who_can('claims.approve', principal.role)}")
     if claimant.user_id == principal.user_id and principal.role != "owner":
         raise HTTPException(403, f"nobody decides their own claim; ask {who_can('claims.approve', principal.role)}")
-    limit = APPROVAL_LIMIT_CENTS.get(principal.role)
+    limits = (await approvers_for(principal.org_id, claimant.user_id)).limits
+    limit = None if principal.role in ("owner", "admin") else limits.get(principal.role)
     if limit is not None and claim.amount_cents > limit:
         raise HTTPException(
             403, f"above your approval limit ({limit // 100:,}); ask {who_can('claims.approve', principal.role)}"
         )
     claim.status = body.status
+    claim.decision_note = note
+    claim.decided_by_name = await _name_of(session, principal)
+    claim.decided_at = datetime.now(UTC)
+    claim.waiting_on_user_id = claim.waiting_on_name = ""
+    await publish_event(
+        "minions.expense_claim.decided",
+        principal.org_id,
+        {
+            "claim_id": str(claim.id),
+            "to_user_ids": [claimant.user_id] if claimant.user_id else [],
+            "status": claim.status,
+            "note": note,
+            "decided_by_name": claim.decided_by_name,
+            "amount_cents": claim.amount_cents,
+            "currency": claim.currency,
+            "description": claim.description,
+        },
+        session=session,
+    )
+    await session.commit()
+    await session.refresh(claim)
+    return claim
+
+
+async def _name_of(session: AsyncSession, principal: Principal) -> str:
+    """The person's name as Minions knows it, else their email."""
+    rows = await session.execute(
+        select(Employee.name).where(Employee.org_id == _org(principal), Employee.user_id == principal.user_id)
+    )
+    return rows.scalars().first() or principal.email
+
+
+@expense_claims_router.post("/{claim_id}/resend", response_model=ExpenseClaimOut)
+async def resend_expense_claim(
+    claim_id: uuid.UUID,
+    body: ExpenseClaimResend,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """A rejected claim, fixed by the person who made it and sent again:
+    it waits once more, routed afresh (the amount may have changed)."""
+    claim = await _get_owned_claim(session, principal, claim_id)
+    me = await _resolve_my_employee(session, principal)
+    if claim.employee_id != me.id:
+        raise HTTPException(403, "only the person who made the claim sends it again")
+    if claim.status != "rejected":
+        raise HTTPException(400, f"claim is '{claim.status}'; only a rejected claim is sent again")
+    for field, value in body.model_dump(exclude_none=True).items():
+        setattr(claim, field, value)
+    claim.status = "submitted"
+    claim.submitted_at = datetime.now(UTC)
+    claim.decision_note = claim.decided_by_name = ""
+    claim.decided_at = None
+    await _route_claim(session, claim, me)
     await session.commit()
     await session.refresh(claim)
     return claim
@@ -724,6 +828,7 @@ async def set_expense_claim_status(
 @expense_claims_router.post("/{claim_id}/pay", response_model=ExpenseClaimOut)
 async def pay_expense_claim(
     claim_id: uuid.UUID,
+    body: ExpenseClaimPay | None = None,
     principal: Principal = Depends(get_current_principal),
     _pay: Scope = Depends(require("pay.write")),
     session: AsyncSession = Depends(get_org_session),
@@ -733,19 +838,24 @@ async def pay_expense_claim(
         raise HTTPException(400, f"claim is '{claim.status}', not 'approved'")
     if not claim.reimburse:
         raise HTTPException(400, "the business paid this one; there's nothing to pay back")
+    pay = body or ExpenseClaimPay()
+    reference = pay.reference.strip()
+    if pay.method in ("mpesa", "bank") and not reference:
+        raise HTTPException(422, "add the M-Pesa code or bank reference")
     employee = await _get_owned_employee(session, principal, claim.employee_id)
-    if not employee.wallet_address:
-        raise HTTPException(400, f"{employee.name} hasn't connected a wallet yet")
-
-    provider = await _provider(principal)
-    await provider.request_payout(
-        to_address=employee.wallet_address,
-        currency=claim.currency,
-        amount=f"{claim.amount_cents / 100:.2f}",
-        network=employee.wallet_network,
-        reason=f"Expense claim: {claim.description}",
-    )
+    if pay.method == "crypto":
+        if not employee.wallet_address:
+            raise HTTPException(400, f"{employee.name} hasn't connected a wallet yet")
+        provider = await _provider(principal)
+        await provider.request_payout(
+            to_address=employee.wallet_address,
+            currency=claim.currency,
+            amount=f"{claim.amount_cents / 100:.2f}",
+            network=employee.wallet_network,
+            reason=f"Expense claim: {claim.description}",
+        )
     claim.status = "paid"
+    claim.paid_method, claim.paid_reference, claim.paid_at = pay.method, reference, datetime.now(UTC)
     # The books: a claim Guss booked as owed (its description ends "(Guss
     # <id>)") clears 2150 Owed to staff; any other is a shop expense now.
     # Saved with the claim's new status, in its transaction (plan 19.2).
@@ -754,6 +864,9 @@ async def pay_expense_claim(
         principal.org_id,
         {
             "claim_id": str(claim.id),
+            "to_user_ids": [employee.user_id] if employee.user_id else [],
+            "method": pay.method,
+            "reference": reference,
             "amount_cents": claim.amount_cents,
             "currency": claim.currency,
             "owed_booked": bool(re.search(r"\(Guss [0-9a-f]{8}\)$", claim.description)),

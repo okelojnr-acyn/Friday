@@ -3,6 +3,7 @@ import { ApiError } from "../lib/api";
 import {
   fetchMyExpenseClaims,
   openClaimReceipt,
+  resendExpenseClaim,
   submitExpenseClaim,
   uploadClaimReceipt,
   withdrawExpenseClaim,
@@ -221,8 +222,119 @@ export function ExpenseClaimsPage() {
                 ) : null}
               </span>
             </div>
+            <ClaimProgress
+              claim={c}
+              onResent={(r) =>
+                setClaims((cur) =>
+                  (cur ?? []).map((x) => (x.id === r.id ? r : x)),
+                )
+              }
+            />
           </Card>
         ))
+      )}
+    </div>
+  );
+}
+
+/** Who a waiting claim waits on; why it was rejected, and "fix and send
+ * again". Shows nothing on an older Minions, which doesn't say. */
+function ClaimProgress({
+  claim,
+  onResent,
+}: {
+  claim: ExpenseClaim;
+  onResent: (c: ExpenseClaim) => void;
+}) {
+  const [fixing, setFixing] = useState(false);
+  const [description, setDescription] = useState(claim.description);
+  const [amount, setAmount] = useState((claim.amount_cents / 100).toFixed(2));
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function resend() {
+    const cents = Math.round(Number.parseFloat(amount || "0") * 100);
+    if (!description.trim() || !Number.isFinite(cents) || cents <= 0) {
+      setError("A description and a positive amount are required");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      onResent(
+        await resendExpenseClaim(claim.id, {
+          description: description.trim(),
+          amount_cents: cents,
+        }),
+      );
+      setFixing(false);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Could not send the claim again",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (claim.status === "submitted" && claim.waiting_on_name) {
+    return (
+      <p className="field-label" style={{ margin: "6px 0 0" }}>
+        Waiting for {claim.waiting_on_name}
+      </p>
+    );
+  }
+  if (claim.status !== "rejected" || !claim.decided_by_name) return null;
+  return (
+    <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+      <p className="field-label" style={{ margin: 0 }}>
+        {claim.decided_by_name} rejected it
+        {claim.decision_note ? `: ${claim.decision_note}` : ""}
+      </p>
+      {error ? <div className="error-banner">{error}</div> : null}
+      {fixing ? (
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            alignItems: "flex-end",
+          }}
+        >
+          <FieldWrap label="Description">
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </FieldWrap>
+          <FieldWrap label="Amount">
+            <Input
+              value={amount}
+              inputMode="decimal"
+              onChange={(e) => setAmount(e.target.value)}
+              style={{ width: 110 }}
+            />
+          </FieldWrap>
+          <Button variant="primary" size="sm" disabled={busy} onClick={resend}>
+            Send again
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => setFixing(false)}
+          >
+            Cancel
+          </Button>
+        </div>
+      ) : (
+        <div>
+          <Button size="sm" onClick={() => setFixing(true)}>
+            Fix and send again
+          </Button>
+        </div>
       )}
     </div>
   );
