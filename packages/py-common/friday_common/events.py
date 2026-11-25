@@ -36,9 +36,13 @@ def require_kernel_token(authorization: str | None = Header(default=None)) -> No
 
 async def _send(client: httpx.AsyncClient, event_id: str, event_type: str, org_id: str, payload: dict) -> None:
     settings = get_settings()
+    payload = dict(payload)
+    body = {"id": event_id, "type": event_type, "org_id": org_id}
+    if payload.get("_deliver_at"):
+        body["deliver_at"] = payload.pop("_deliver_at")  # the kernel holds it until then
     resp = await client.post(
         f"{settings.kernel_internal_url}/events",
-        json={"id": event_id, "type": event_type, "org_id": org_id, "payload": payload},
+        json={**body, "payload": payload},
         headers={"Authorization": f"Bearer {settings.kernel_events_token}"},
     )
     resp.raise_for_status()
@@ -79,7 +83,7 @@ async def _stage(session, event_type: str, org_id: str, payload: dict) -> None:
     sa_event.listen(session.sync_session, "after_commit", _after_commit, once=True)
 
 
-async def publish_event(event_type: str, org_id: str, payload: dict, *, session=None) -> None:
+async def publish_event(event_type: str, org_id: str, payload: dict, *, session=None, deliver_at=None) -> None:
     """Publish a domain event (e.g. "invoicing.pos_sale.recorded") to the
     kernel, which delivers it to every app subscribed to it.
 
@@ -96,7 +100,13 @@ async def publish_event(event_type: str, org_id: str, payload: dict, *, session=
     saved together or not at all (before, a crash between the commit and
     this write lost the stock move or journal entry). Call it before
     `commit()`. Without `session` it keeps the after-commit behaviour.
+
+    `deliver_at` (an aware datetime, at most 400 days ahead): the kernel
+    delivers it then, not now: a task falling due, a meeting reminder.
+    Nothing polls for those.
     """
+    if deliver_at is not None:
+        payload = {**payload, "_deliver_at": deliver_at.isoformat()}
     if session is not None:
         await _stage(session, event_type, org_id, payload)
         return
@@ -167,7 +177,7 @@ async def deliver_due(only_id: str | None = None, limit: int = 50) -> int:
     return delivered
 
 
-async def run_outbox(interval_seconds: float = 10.0) -> None:
+async def run_outbox(interval_seconds: float = 30.0) -> None:
     """Background loop (started by create_app): sends whatever is due, and
     drops delivered events after a week."""
     from .db import make_engine
