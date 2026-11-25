@@ -82,7 +82,7 @@ async def test_cannot_approve_a_claim_twice(client, as_principal, principal):
 
     as_principal(admin)
     await client.patch(f"/expense_claims/{claim['id']}/status", json={"status": "approved"})
-    resp = await client.patch(f"/expense_claims/{claim['id']}/status", json={"status": "rejected"})
+    resp = await client.patch(f"/expense_claims/{claim['id']}/status", json={"status": "rejected", "note": "no receipt"})
     assert resp.status_code == 400
 
 
@@ -180,4 +180,4 @@ async def test_withdraw_a_waiting_claim_and_payouts_reach_the_books(client, as_p
     boss = make_principal(org_id=principal.org_id, role="admin", email="boss@example.com")
     as_principal(boss)
     assert (await client.post(f"/expense_claims/{other['id']}/withdraw")).status_code in (403, 404)
-    assert sent == []
+    assert [e for e, _ in sent if e.endswith(".paid")] == []

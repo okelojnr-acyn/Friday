@@ -53,6 +53,19 @@ async def client():
 
 
 @pytest.fixture(autouse=True)
+def _no_reporting_line(monkeypatch):
+    """No kernel in tests: nobody up the line and the default limits (what
+    approvers_for answers when the kernel can't). Tests that need a line
+    patch app.main.approvers_for themselves."""
+    from friday_common.access import APPROVAL_LIMIT_CENTS, Approvers
+
+    async def none(_org, _user):
+        return Approvers(limits=dict(APPROVAL_LIMIT_CENTS), chain=(), top=())
+
+    monkeypatch.setattr("app.main.approvers_for", none)
+
+
+@pytest.fixture(autouse=True)
 async def _dispose_engine_after_test():
     yield
     await dispose_engine()

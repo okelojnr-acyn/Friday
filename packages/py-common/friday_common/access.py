@@ -37,8 +37,8 @@ TEAM_BY_LOCATION = "*loc"
 
 # Approval limits per item, in the currency's cents (plan 12.9: KES 2,000
 # for team leaders, KES 20,000 for branch managers; owners and admins have
-# none). shortcut: one limit for every business and currency; make them a
-# business setting when a business asks.
+# none). Defaults only: each business sets its own (kernel
+# /orgs/approval-limits, read through approvers_for).
 APPROVAL_LIMIT_CENTS = {"team_leader": 200_000, "branch_manager": 2_000_000}
 
 ROLE_NAMES = {
@@ -142,6 +142,48 @@ async def people_in(scope: Scope, org_id: str) -> set[str] | None:
         except (httpx.HTTPError, KeyError, ValueError) as exc:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"couldn't check who works where: {exc}") from exc
     return scope.people()
+
+
+@dataclass(frozen=True)
+class Approvers:
+    """Who a request from one person goes to (kernel
+    /internal/people/{org}/approvers/{user}): `chain` up reports_to,
+    nearest first; `top` the owners and admins; `limits` per role, cents."""
+
+    limits: dict[str, int]
+    chain: tuple[dict, ...]
+    top: tuple[dict, ...]
+
+    def pick(self, amount_cents: int) -> dict | None:
+        """The nearest person up the line who may decide this amount; None
+        when nobody in the line may (it goes to the owners and admins)."""
+        for person in self.chain:
+            if person.get("role") in ("owner", "admin"):
+                return person
+            limit = self.limits.get(person.get("role", ""))
+            if limit is not None and amount_cents <= limit:
+                return person
+        return None
+
+
+async def approvers_for(org_id: str, user_id: str) -> Approvers:
+    """Asks the kernel; if it can't answer, the default limits and nobody
+    named, so a request still goes to the owners and admins (never lost)."""
+    import httpx
+
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{settings.kernel_internal_url}/people/{org_id}/approvers/{user_id}",
+                headers={"Authorization": f"Bearer {settings.kernel_events_token}"},
+            )
+            resp.raise_for_status()
+            body = resp.json()
+        limits = {k: int(v) for k, v in body["limits"].items()}
+        return Approvers(limits=limits, chain=tuple(body["chain"]), top=tuple(body["top"]))
+    except (httpx.HTTPError, KeyError, ValueError, TypeError):
+        return Approvers(limits=dict(APPROVAL_LIMIT_CENTS), chain=(), top=())
 
 
 def require_place(scope: Scope, location_id, what: str = "that place") -> None:

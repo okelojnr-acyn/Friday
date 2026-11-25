@@ -5,6 +5,7 @@ import { ApiError } from "../lib/api";
 import { formatMoney, saveOrgSettings, useOrgSettings } from "../lib/orgSettings";
 import { Button } from "../ui/Button";
 import { Checkbox, FieldWrap, Select } from "../ui/Field";
+import { ApprovalsSection } from "./business/ApprovalsSection";
 import { EtimsSection } from "./business/EtimsSection";
 import { PaymentsSection } from "./business/PaymentsSection";
 import { SaveRow } from "./business/SaveRow";
@@ -31,6 +32,7 @@ const TABS = [
   ["etims", "eTIMS"],
   ["tills", "Tills"],
   ["payments", "Payments"],
+  ["approvals", "Approvals"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
@@ -68,6 +70,7 @@ export function BusinessSettingsPage() {
       {tab === "etims" ? <EtimsSection canEdit={canEdit} /> : null}
       {tab === "tills" ? <TillsSection canEdit={canEdit} /> : null}
       {tab === "payments" ? <PaymentsSection canEdit={canEdit} /> : null}
+      {tab === "approvals" ? <ApprovalsSection canEdit={canEdit} /> : null}
     </div>
   );
 }

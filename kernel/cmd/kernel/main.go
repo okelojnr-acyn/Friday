@@ -184,6 +184,9 @@ func main() {
 	mux.Handle("DELETE /orgs/members/{user_id}", requireAuth(http.HandlerFunc(members.Remove)))
 	people := &org.People{Pool: pool, InternalToken: eventsToken}
 	mux.HandleFunc("GET /internal/people/{org_id}", people.AtLocations)
+	mux.HandleFunc("GET /internal/people/{org_id}/approvers/{user_id}", people.Approvers)
+	mux.Handle("GET /orgs/approval-limits", requireAuth(http.HandlerFunc(people.GetApprovalLimits)))
+	mux.Handle("PUT /orgs/approval-limits", requireAuth(http.HandlerFunc(people.PutApprovalLimits)))
 	mux.Handle("PATCH /orgs/members/{user_id}", requireAuth(http.HandlerFunc(people.UpdatePerson)))
 	mux.Handle("GET /orgs/me/permissions", requireAuth(http.HandlerFunc(people.MyPermissions)))
 	mux.Handle("GET /orgs/access/rules", requireAuth(http.HandlerFunc(people.AccessRules)))
