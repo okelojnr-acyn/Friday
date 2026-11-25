@@ -2843,3 +2843,28 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* Payslip on Minions > Pay. */
+.minions-payslip {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  margin: 10px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+.minions-payslip dt {
+  color: var(--text-muted);
+}
+.minions-payslip dd {
+  margin: 0;
+  text-align: right;
+}
+.minions-payslip-off {
+  display: contents;
+}
+.minions-payslip-net {
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-weight: 700;
+  color: var(--text) !important;
+}

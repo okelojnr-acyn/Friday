@@ -2,7 +2,7 @@ async def test_list_accounts_lazily_seeds_default_chart_of_accounts(client):
     resp = await client.get("/accounts")
     assert resp.status_code == 200
     codes = {a["code"] for a in resp.json()}
-    assert codes == {"1010", "1020", "1030", "1200", "1400", "1500", "2000", "2150", "2200", "3000", "4000", "5000", "5100", "6000", "6900"}
+    assert codes == {"1010", "1020", "1030", "1200", "1400", "1500", "2000", "2150", "2200", "2310", "2320", "2330", "2340", "3000", "4000", "5000", "5100", "6000", "6010", "6900"}
 
 
 async def test_listing_accounts_twice_does_not_duplicate_defaults(client):

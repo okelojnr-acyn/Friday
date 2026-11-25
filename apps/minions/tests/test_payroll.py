@@ -282,3 +282,45 @@ async def test_my_payroll_is_empty_for_an_employee_with_no_runs(client, as_princ
     resp = await client.get("/me/payroll")
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+async def test_a_kes_run_works_out_the_payslip_and_pays_the_net(client, as_principal, principal, monkeypatch):
+    """Kenyan deductions on a KES run (HR plan phase 2): the line keeps NSSF,
+    SHIF, Housing Levy and PAYE; the payout is the net; staff see their payslip."""
+    admin = _as_admin(as_principal, principal)
+    employee = (await client.post("/employees", json={"name": "Jane", "email": "jane@example.com", "pay_rate_cents": 10_000_000})).json()
+    as_principal(make_principal(org_id=principal.org_id, email="jane@example.com"))
+    await client.put("/me/wallet", json={"wallet_address": "0xabc", "wallet_network": "base"})
+    as_principal(admin)
+    run = (
+        await client.post(
+            "/payroll_runs",
+            json={"period_start": "2026-03-01T00:00:00Z", "period_end": "2026-03-31T00:00:00Z", "currency": "KES", "employee_ids": [employee["id"]]},
+        )
+    ).json()
+    line = run["lines"][0]
+    assert (line["nssf_cents"], line["shif_cents"], line["levy_cents"], line["paye_cents"]) == (600_000, 275_000, 150_000, 1_930_835)
+    assert line["net_cents"] == 7_044_165 and line["employer_nssf_cents"] == 600_000
+
+    captured = []
+
+    async def fake_config(org_id, provider):
+        return {"api_key": "test-key"}
+
+    class FakeProvider:
+        def __init__(self, config):
+            pass
+
+        async def request_payout(self, **kwargs):
+            captured.append(kwargs)
+            return {"id": "payout-1", "status": "pending"}
+
+    monkeypatch.setattr("app.main.get_integration_config", fake_config)
+    monkeypatch.setattr("app.main.AcynWalletProvider", FakeProvider)
+    await client.post(f"/payroll_runs/{run['id']}/approve")
+    await client.post(f"/payroll_runs/{run['id']}/pay")
+    assert captured[0]["amount"] == "70441.65"  # the net, not the gross
+
+    as_principal(make_principal(org_id=principal.org_id, email="jane@example.com"))
+    [mine] = (await client.get("/me/payroll")).json()
+    assert mine["gross_amount_cents"] == 10_000_000 and mine["paye_cents"] == 1_930_835 and mine["net_cents"] == 7_044_165
