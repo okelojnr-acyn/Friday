@@ -2766,6 +2766,24 @@
   gap: 10px;
 }
 
+/* Minions Work tab (minions/WorkPage). */
+.minions-parcel {
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+.minions-parcel p {
+  margin: 0;
+}
+.minions-notice {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: #fdf6f1;
+  border: 1px solid rgba(224, 122, 53, 0.45);
+  font-weight: 600;
 /* Minions calendar (minions/CalendarPage) and today's meetings on Today. */
 .minions-time {
   min-width: 52px;
