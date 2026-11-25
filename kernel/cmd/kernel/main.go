@@ -96,6 +96,8 @@ func main() {
 	issuer.Scope = func(ctx context.Context, userID, orgID, role string) ([]string, []string, []string, error) {
 		return access.Load(ctx, pool, orgID, userID, role)
 	}
+	// Each sign-in is a device people can see and sign out (Account, Devices).
+	issuer.Sessions = &auth.Sessions{Pool: pool, TTL: 24 * time.Hour}
 	webAuthn, err := auth.NewWebAuthn(webauthnRPID, webauthnRPName, []string{corsOrigin})
 	if err != nil {
 		log.Fatalf("configure webauthn: %v", err)
@@ -136,6 +138,12 @@ func main() {
 	mux.HandleFunc("POST /auth/passkey/login-verify", authHandlers.PasskeyLoginVerify)
 	mux.Handle("POST /auth/passkey/register-options", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterOptions)))
 	mux.Handle("POST /auth/passkey/register-verify", requireAuth(http.HandlerFunc(authHandlers.PasskeyRegisterVerify)))
+	mux.Handle("GET /auth/passkeys", requireAuth(http.HandlerFunc(issuer.Sessions.ListPasskeys)))
+	mux.Handle("DELETE /auth/passkeys/{id}", requireAuth(http.HandlerFunc(issuer.Sessions.DeletePasskey)))
+	mux.Handle("GET /auth/sessions", requireAuth(http.HandlerFunc(issuer.Sessions.ListDevices)))
+	mux.Handle("DELETE /auth/sessions/{id}", requireAuth(http.HandlerFunc(issuer.Sessions.SignOutDevice)))
+	mux.Handle("POST /auth/sessions/sign-out-others", requireAuth(http.HandlerFunc(issuer.Sessions.SignOutOthers)))
+	mux.Handle("POST /auth/sessions/sign-out", requireAuth(http.HandlerFunc(issuer.Sessions.SignOutThis)))
 	mux.Handle("GET /auth/me", requireAuth(http.HandlerFunc(authHandlers.Me)))
 	mux.Handle("POST /auth/sso", requireAuth(http.HandlerFunc(authHandlers.SsoExchange)))
 	// Cashier PIN (plan section 11): trusted tills, PINs, lockout.

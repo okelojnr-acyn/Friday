@@ -2,8 +2,8 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -142,7 +142,7 @@ func (h *Handlers) OtpVerify(w http.ResponseWriter, r *http.Request) {
 
 	if userID, _, ok := findUserByEmail(ctx, h.Pool, req.Email); ok {
 		if _, err := h.Otp.Verify(ctx, req.Email, "login", req.Code); err == nil {
-			h.issueSessionForUser(w, r.Context(), userID, req.Email)
+			h.issueSessionForUser(w, r, userID, req.Email)
 			return
 		}
 	}
@@ -214,7 +214,7 @@ func (h *Handlers) completeSignup(w http.ResponseWriter, r *http.Request, email,
 		return
 	}
 
-	token, err := h.Issuer.Issue(userID, orgID, "owner", email)
+	token, err := h.Issuer.IssueFor(r, userID, orgID, "owner", email)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not issue token")
 		return
@@ -225,7 +225,8 @@ func (h *Handlers) completeSignup(w http.ResponseWriter, r *http.Request, email,
 // issueSessionForUser is the shared "I know who this is, log them in"
 // tail end of both the OTP-login and passkey-login paths: look up their
 // org/role and mint a JWT.
-func (h *Handlers) issueSessionForUser(w http.ResponseWriter, ctx context.Context, userID, email string) {
+func (h *Handlers) issueSessionForUser(w http.ResponseWriter, r *http.Request, userID, email string) {
+	ctx := r.Context()
 	var orgID, role string
 	if err := h.Pool.QueryRow(ctx,
 		`SELECT org_id, role FROM core.memberships WHERE user_id = $1 ORDER BY created_at LIMIT 1`,
@@ -234,7 +235,7 @@ func (h *Handlers) issueSessionForUser(w http.ResponseWriter, ctx context.Contex
 		writeError(w, http.StatusForbidden, "user has no org membership")
 		return
 	}
-	token, err := h.Issuer.Issue(userID, orgID, role, email)
+	token, err := h.Issuer.IssueFor(r, userID, orgID, role, email)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not issue token")
 		return
@@ -346,7 +347,7 @@ func (h *Handlers) PasskeyLoginVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.issueSessionForUser(w, ctx, wu.id, wu.email)
+	h.issueSessionForUser(w, r, wu.id, wu.email)
 }
 
 // PasskeyRegisterOptions starts a ceremony to add a passkey to the

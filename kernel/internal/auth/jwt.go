@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"log"
+	"net/http"
 	"slices"
 	"time"
 
@@ -29,6 +30,9 @@ type Claims struct {
 	Perms []string `json:"perms,omitempty"`
 	Locs  []string `json:"locs,omitempty"`
 	Team  []string `json:"team,omitempty"`
+	// Sid is the sign-in's session (a device under "Devices"); "" on
+	// tokens from before sessions and on the till's and assistants'.
+	Sid string `json:"sid,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -41,6 +45,9 @@ type Issuer struct {
 	// Scope fills Perms/Locs/Team on every token; nil leaves them empty
 	// (tests). Set once at start-up.
 	Scope ScopeFunc
+	// Sessions, if set, records each sign-in (IssueFor) and lets
+	// RequireAuth refuse a signed-out one.
+	Sessions *Sessions
 }
 
 // fill adds the person's scope to claims. If it can't be loaded the token
@@ -65,11 +72,29 @@ func NewIssuer(secret string, ttl time.Duration) *Issuer {
 }
 
 func (iss *Issuer) Issue(userID, orgID, role, email string) (string, error) {
+	return iss.issue(userID, orgID, role, email, "")
+}
+
+// IssueFor signs a person in from request r: a new session (a device they
+// can see and sign out) when Sessions is set.
+func (iss *Issuer) IssueFor(r *http.Request, userID, orgID, role, email string) (string, error) {
+	sid := ""
+	if iss.Sessions != nil {
+		var err error
+		if sid, err = iss.Sessions.start(r, userID); err != nil {
+			return "", err
+		}
+	}
+	return iss.issue(userID, orgID, role, email, sid)
+}
+
+func (iss *Issuer) issue(userID, orgID, role, email, sid string) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		OrgID: orgID,
 		Role:  role,
 		Email: email,
+		Sid:   sid,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(now),

@@ -33,7 +33,7 @@ func (h *Handlers) SsoExchange(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
-	token, err := h.Issuer.Issue(userID, c.OrgID, role, email)
+	token, err := h.Issuer.IssueFor(r, userID, c.OrgID, role, email)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not issue token")
 		return

@@ -24,6 +24,10 @@ func RequireAuth(issuer *Issuer) func(http.Handler) http.Handler {
 				writeError(w, http.StatusUnauthorized, "invalid token: "+err.Error())
 				return
 			}
+			if claims.Sid != "" && issuer.Sessions != nil && !issuer.Sessions.Active(r.Context(), claims.Sid, claims.Subject) {
+				writeError(w, http.StatusUnauthorized, "this device was signed out; sign in again")
+				return
+			}
 			// A supplier reaches only Inventory's supplier routes (their own
 			// purchase orders), nothing else in Friday.
 			if claims.Via == SupplierVia && !strings.HasPrefix(r.URL.Path, "/api/inventory/supplier/") {

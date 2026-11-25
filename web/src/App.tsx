@@ -1,5 +1,6 @@
 import { SupplierPage } from "./shell/SupplierPage";
 import { PaidPage } from "./shell/PaidPage";
+import { AccountPage } from "./shell/AccountPage";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider } from "./lib/auth";
 import { OrgSettingsProvider } from "./lib/orgSettings";
@@ -52,6 +53,7 @@ export default function App() {
         <Route element={<RequireAuth />}>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/apps" element={<AppsIntegrationsPage />} />
+          <Route path="/account" element={<AccountPage />} />
           <Route path="/settings/integrations" element={<IntegrationsRedirect />} />
           <Route path="/store" element={<StorePage />} />
           <Route path="/settings/people" element={<Navigate to="/people" replace />} />
