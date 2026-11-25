@@ -12,6 +12,11 @@ class EmployeeCreate(BaseModel):
     pay_rate_cents: int = 0
     pay_frequency: str = "monthly"
     status: str = "active"
+    # For the monthly returns; checked in main._statutory_numbers.
+    kra_pin: str = Field(default="", max_length=20)
+    national_id: str = Field(default="", max_length=20)
+    nssf_number: str = Field(default="", max_length=20)
+    sha_number: str = Field(default="", max_length=20)
 
 
 class EmployeeOut(BaseModel):
@@ -27,6 +32,10 @@ class EmployeeOut(BaseModel):
     status: str
     wallet_address: str
     wallet_network: str
+    kra_pin: str = ""
+    national_id: str = ""
+    nssf_number: str = ""
+    sha_number: str = ""
     created_at: datetime
     updated_at: datetime
 

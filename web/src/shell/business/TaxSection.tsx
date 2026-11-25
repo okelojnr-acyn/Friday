@@ -5,6 +5,7 @@ import { Button } from "../../ui/Button";
 import { Checkbox, FieldWrap, Input, Select, Textarea } from "../../ui/Field";
 import { SaveRow } from "./SaveRow";
 import { VatReturnCard } from "./VatReturnCard";
+import { PayrollReturnsCard } from "./PayrollReturnsCard";
 
 // KRA's eTIMS tax types; what an org without saved tax settings starts with.
 const KENYA_RATES: TaxRate[] = [
@@ -214,6 +215,7 @@ export function TaxSection({ canEdit }: { canEdit: boolean }) {
       <SaveRow canEdit={canEdit} saving={saving} onSave={save} />
     </div>
     {canEdit ? <VatReturnCard /> : null}
+    {canEdit ? <PayrollReturnsCard /> : null}
     </>
   );
 }
