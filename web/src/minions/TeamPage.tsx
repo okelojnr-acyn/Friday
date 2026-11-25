@@ -82,6 +82,8 @@ export function TeamPage() {
         </ul>
       </section>
 
+      <WaitingAdvances />
+
       <section aria-label="Give a task">
         <h2 className="minions-group">Give a task</h2>
         <GiveTask
@@ -144,5 +146,44 @@ function TaskCounts({ tasks }: { tasks: TeamTask[] }) {
     <span className={`field-label${late ? " minions-flag" : ""}`}>
       {open.length} open{late ? `, ${late} overdue` : ""}
     </span>
+  );
+}
+
+interface WaitingAdvance {
+  id: string;
+  employee_id: string;
+  amount_cents: number;
+  currency: string;
+  months: number;
+  description: string;
+}
+
+/** Advances waiting for my decision (an older Minions has none). */
+function WaitingAdvances() {
+  const [list, setList] = useState<WaitingAdvance[]>([]);
+  const load = () => {
+    api
+      .get<WaitingAdvance[]>("/api/minions/salary_advances?waiting=true")
+      .then(setList)
+      .catch(() => setList([]));
+  };
+  useEffect(load, []);
+  if (!list.length) return null;
+  return (
+    <section aria-label="Advances waiting for you">
+      <h2 className="minions-group">Advances waiting for you</h2>
+      <ul className="minions-cardlist">
+        {list.map((a) => (
+          <li key={a.id} className="minions-parcel">
+            <p className="minions-decide-amount">{formatMoney(a.amount_cents, { currency: a.currency })}</p>
+            <p className="field-label">
+              Paid back over {a.months} {a.months === 1 ? "pay" : "pays"}
+              {a.description ? `, for ${a.description}` : ""}
+            </p>
+            <ClaimDecision claim={a} onDone={load} base="/api/minions/salary_advances" />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

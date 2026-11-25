@@ -21,6 +21,7 @@ import (
 // Notice is what an event names: who to tell and the facts to say.
 type Notice struct {
 	ToUserIDs     []string `json:"to_user_ids"`
+	Kind          string   `json:"kind"` // approval.needed: expense_claim or salary_advance
 	FromName      string   `json:"from_name"`
 	AmountCents   int64    `json:"amount_cents"`
 	Currency      string   `json:"currency"`
@@ -96,8 +97,24 @@ func Compose(typ string, n Notice, loc *time.Location) (Message, bool) {
 		}
 		return Message{n.ByName + " " + verb + " your meeting", meeting, "/minions/calendar", "/people/meeting"}, true
 	case "minions.approval.needed":
+		if n.Kind == "salary_advance" {
+			body := amount
+			if what != "" {
+				body += " for " + what
+			}
+			return Message{n.FromName + " asks for a salary advance", body, "/minions/team", "/people/salary_advance"}, true
+		}
 		return Message{n.FromName + " asks you to approve a claim", amount + " for " + what,
 			"/minions/team", "/people/expense_claim"}, true
+	case "minions.salary_advance.decided":
+		if n.Status == "rejected" {
+			return Message{n.DecidedByName + " turned down your salary advance", amount + ": " + n.Note,
+				"/minions/payroll", "/minions/payroll"}, true
+		}
+		return Message{n.DecidedByName + " approved your salary advance", amount, "/minions/payroll", "/minions/payroll"}, true
+	case "minions.salary_advance.paid":
+		how := map[string]string{"mpesa": " by M-Pesa", "bank": " by bank transfer", "cash": " in cash", "crypto": " to your wallet"}[n.Method]
+		return Message{"Your salary advance was paid", amount + how + ". It comes off your next pay.", "/minions/payroll", "/minions/payroll"}, true
 	case "minions.expense_claim.decided":
 		if n.Status == "rejected" {
 			return Message{n.DecidedByName + " rejected your claim",

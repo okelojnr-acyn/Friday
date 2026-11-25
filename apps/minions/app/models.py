@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, LargeBinary, ForeignKey, String, Text
+from sqlalchemy import SmallInteger, BigInteger, Boolean, DateTime, LargeBinary, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -143,12 +143,16 @@ class PayrollLine(Base):
     net_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     employer_nssf_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     employer_levy_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Taken back towards a salary advance (0010).
+    advance_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    advance_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     @property
     def paid_cents(self) -> int:
         """What reaches the person: the net, or the gross on lines from
-        before payslips."""
-        return self.net_cents or self.gross_amount_cents
+        before payslips (they have no deductions at all)."""
+        worked_out = self.net_cents or self.paye_cents or self.nssf_cents or self.advance_cents
+        return self.net_cents if worked_out else self.gross_amount_cents
     to_address: Mapped[str] = mapped_column(Text, nullable=False, default="")
     network: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
@@ -236,3 +240,38 @@ class MeetingAttendee(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     email: Mapped[str] = mapped_column(Text, nullable=False, default="")
     response: Mapped[str] = mapped_column(String(16), nullable=False, default="invited")
+
+
+ADVANCE_STATUSES = ("submitted", "approved", "rejected", "paid", "recovered", "withdrawn")
+
+
+class SalaryAdvance(Base):
+    """Part of next pay, early (HR plan phase 2). Decided like a claim,
+    paid like one, then taken back from the next `months` payslips."""
+
+    __tablename__ = "salary_advances"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=False
+    )
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="KES")
+    months: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="submitted")
+    waiting_on_user_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    waiting_on_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decision_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decided_by_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_method: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    paid_reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    recovered_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def remaining_cents(self) -> int:
+        return max(0, self.amount_cents - self.recovered_cents) if self.status == "paid" else 0

@@ -136,6 +136,7 @@ class PayrollLineOut(BaseModel):
     net_cents: int = 0
     employer_nssf_cents: int = 0
     employer_levy_cents: int = 0
+    advance_cents: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -189,6 +190,7 @@ class MyPayrollLineOut(BaseModel):
     levy_cents: int = 0
     paye_cents: int = 0
     net_cents: int = 0
+    advance_cents: int = 0
 
 
 class MeetingCreate(BaseModel):
@@ -241,5 +243,31 @@ class MeetingOut(BaseModel):
     attendees: list[MeetingAttendeeOut] = []
     # Mine: organiser, or my answer (invited, accepted, declined); "" = neither.
     my_role: str = ""
+
+    model_config = {"from_attributes": True}
+
+
+class SalaryAdvanceCreate(BaseModel):
+    amount_cents: int = Field(gt=0)
+    # Paid back over this many pay runs.
+    months: int = Field(default=1, ge=1, le=3)
+    description: str = Field(default="", max_length=300)
+
+
+class SalaryAdvanceOut(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    description: str
+    amount_cents: int
+    currency: str
+    months: int
+    status: str
+    waiting_on_name: str = ""
+    decision_note: str = ""
+    decided_by_name: str = ""
+    paid_method: str = ""
+    paid_reference: str = ""
+    recovered_cents: int = 0
+    submitted_at: datetime
 
     model_config = {"from_attributes": True}

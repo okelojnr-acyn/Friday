@@ -14,6 +14,7 @@ import { CreatePurchaseOrderPanel } from "../../apps/inventory/CreatePurchaseOrd
 import { PayPurchaseOrderPanel } from "../../apps/inventory/PayPurchaseOrderPanel";
 import { SupplierLinkPanel, SupplierStatusPanel } from "../../apps/inventory/SupplierPanels";
 import { ClaimReviewPanel } from "../../apps/minions/ClaimReviewPanel";
+import { AdvanceReviewPanel } from "../../apps/minions/AdvanceReviewPanel";
 import { amountInputToCents, centsToAmountInput, toDateInputValue, toDatetimeInputValue } from "./fieldFormat";
 import { fromLocalDatetimeInput } from "../../lib/localTime";
 
@@ -158,6 +159,9 @@ export function FormView({ spec, app, schema, record, onClose, onSaved }: FormVi
         </>
       ) : null}
       {isEdit && app === "inventory" && spec.name === "supplier" ? <SupplierLinkPanel record={record!} /> : null}
+      {isEdit && app === "minions" && spec.name === "salary_advance" ? (
+        <AdvanceReviewPanel record={record!} onChanged={onSaved} />
+      ) : null}
       {isEdit && app === "minions" && spec.name === "expense_claim" ? (
         <ClaimReviewPanel record={record!} onChanged={onSaved} />
       ) : null}

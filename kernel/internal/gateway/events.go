@@ -57,6 +57,7 @@ var subscriptions = []subscription{
 	{Event: "invoicing.pos_sale.recorded", App: "minions", WebhookPath: "/internal/webhooks/pos-sale"},
 	{Event: "minions.payroll_run.paid", App: "accounting", WebhookPath: "/internal/webhooks/payroll-paid"},
 	{Event: "minions.expense_claim.paid", App: "accounting", WebhookPath: "/internal/webhooks/claim-paid"},
+	{Event: "minions.salary_advance.paid", App: "accounting", WebhookPath: "/internal/webhooks/advance-paid"},
 	{Event: "inventory.purchase.received", App: "accounting", WebhookPath: "/internal/webhooks/purchase-received"},
 	{Event: "inventory.purchase.paid", App: "accounting", WebhookPath: "/internal/webhooks/purchase-paid"},
 	{Event: "inventory.stock.adjusted", App: "accounting", WebhookPath: "/internal/webhooks/stock-adjusted"},
@@ -72,6 +73,8 @@ var subscriptions = []subscription{
 	{Event: "minions.meeting.cancelled", App: "notify"},
 	{Event: "minions.meeting.answered", App: "notify"},
 	{Event: "minions.meeting.soon", App: "notify"},
+	{Event: "minions.salary_advance.decided", App: "notify"},
+	{Event: "minions.salary_advance.paid", App: "notify"},
 	// Scheduled 30 minutes before a meeting: Minions checks it's still on.
 	{Event: "minions.meeting.reminder", App: "minions", WebhookPath: "/internal/webhooks/meeting-reminder"},
 	// Scheduled for a task's due time (and 3 days later): Projects checks it.

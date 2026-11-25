@@ -521,3 +521,22 @@ async def test_payroll_with_payslips_books_gross_net_and_what_is_owed(client, ke
     for code, (debit, credit) in expect.items():
         line = by[await _account_id(client, code)]
         assert (line["debit_cents"], line["credit_cents"]) == (debit, credit), code
+
+
+async def test_an_advance_is_owed_by_staff_until_payroll_takes_it_back(client, kernel_auth_header, principal):
+    adv = str(uuid.uuid4())
+    body = {"org_id": principal.org_id, "payload": {"advance_id": adv, "amount_cents": 3_000_000, "currency": "KES", "method": "mpesa"}}
+    for _ in range(2):  # a repeat delivery books once
+        assert (await client.post("/internal/webhooks/advance-paid", headers=kernel_auth_header, json=body)).status_code == 204
+    [entry] = [e for e in await _journal_entries(client) if e["source_ref"] == adv]
+    by = {line["account_id"]: line for line in entry["lines"]}
+    assert by[await _account_id(client, "1210")]["debit_cents"] == 3_000_000
+    assert by[await _account_id(client, "1020")]["credit_cents"] == 3_000_000  # out of M-Pesa
+
+    run = str(uuid.uuid4())
+    payload = {"payroll_run_id": run, "amount_cents": 4_000_000, "currency": "KES", "gross_cents": 5_000_000, "advance_cents": 1_000_000}
+    await client.post("/internal/webhooks/payroll-paid", headers=kernel_auth_header, json={"org_id": principal.org_id, "payload": payload})
+    [entry] = [e for e in await _journal_entries(client) if e["source_ref"] == run]
+    assert entry["total_debit_cents"] == entry["total_credit_cents"] == 5_000_000
+    by = {line["account_id"]: line for line in entry["lines"]}
+    assert by[await _account_id(client, "1210")]["credit_cents"] == 1_000_000

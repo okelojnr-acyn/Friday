@@ -27,6 +27,8 @@ DEFAULT_ACCOUNTS = (
     ("1020", "M-Pesa", "asset"),
     ("1030", "Card and bank", "asset"),
     ("1200", "Accounts Receivable", "asset"),
+    # Salary advances paid out, until payroll takes them back.
+    ("1210", "Staff advances", "asset"),
     ("1400", "Inventory Asset", "asset"),
     # VAT paid on purchases, claimed back on the VAT return.
     ("1500", "VAT Input (claimable)", "asset"),
