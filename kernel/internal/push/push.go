@@ -206,7 +206,7 @@ func (p *Push) Send(ctx context.Context, eventID, orgID, typ string, payload []b
 	}
 	var orgTZ string
 	_ = p.Pool.QueryRow(ctx, `SELECT time_zone FROM core.orgs WHERE id::text = $1`, orgID).Scan(&orgTZ)
-	m, ok := inbox.Compose(typ, n)
+	m, ok := inbox.Compose(typ, n, inbox.Zone(orgTZ))
 	if !ok {
 		return
 	}
