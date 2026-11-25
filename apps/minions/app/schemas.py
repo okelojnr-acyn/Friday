@@ -1,6 +1,6 @@
 import uuid
 from typing import Literal
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -278,5 +278,31 @@ class SalaryAdvanceOut(BaseModel):
     paid_reference: str = ""
     recovered_cents: int = 0
     submitted_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TimeOffCreate(BaseModel):
+    kind: Literal["annual", "sick", "unpaid"]
+    starts_on: date
+    ends_on: date
+    note: str = Field(default="", max_length=300)
+
+
+class TimeOffOut(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    kind: str
+    starts_on: date
+    ends_on: date
+    days: int
+    note: str
+    status: str
+    waiting_on_name: str = ""
+    decision_note: str = ""
+    decided_by_name: str = ""
+    submitted_at: datetime
+    # Filled where the list shows whose it is (calendars).
+    employee_name: str = ""
 
     model_config = {"from_attributes": True}

@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import SmallInteger, BigInteger, Boolean, DateTime, LargeBinary, ForeignKey, String, Text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, LargeBinary, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -280,3 +280,38 @@ class SalaryAdvance(Base):
     @property
     def remaining_cents(self) -> int:
         return max(0, self.amount_cents - self.recovered_cents) if self.status == "paid" else 0
+
+
+TIME_OFF_KINDS = ("annual", "sick", "unpaid")
+TIME_OFF_STATUSES = ("submitted", "approved", "rejected", "withdrawn")
+
+
+class TimeOff(Base):
+    """Days away (HR plan phase 3), decided like a claim."""
+
+    __tablename__ = "time_off"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    starts_on: Mapped[date] = mapped_column(Date, nullable=False)
+    ends_on: Mapped[date] = mapped_column(Date, nullable=False)
+    # Working days (Monday to Friday) it covers.
+    days: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The summary approvers are told ("Annual leave, 1-3 Dec, 3 days").
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="submitted")
+    waiting_on_user_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    waiting_on_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decision_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decided_by_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    # The approval routing and limits work on an amount: time off has none.
+    amount_cents = 0
+    currency = ""
