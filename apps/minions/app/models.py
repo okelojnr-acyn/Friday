@@ -334,3 +334,33 @@ class ApprovalCover(Base):
     starts_on: Mapped[date] = mapped_column(Date, nullable=False)
     ends_on: Mapped[date] = mapped_column(Date, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Announcement(Base):
+    """A message to everyone, a location or a team (HR plan 8.2)."""
+
+    __tablename__ = "announcements"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    audience: Mapped[str] = mapped_column(String(16), nullable=False)
+    location_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    author_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    author_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AnnouncementRecipient(Base):
+    """Who an announcement went to, and when they read it."""
+
+    __tablename__ = "announcement_recipients"
+
+    announcement_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("announcements.id", ondelete="CASCADE"), primary_key=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    user_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

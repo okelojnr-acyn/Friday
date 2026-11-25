@@ -115,6 +115,8 @@ func Compose(typ string, n Notice, loc *time.Location) (Message, bool) {
 				"/minions/payroll", "/minions/payroll"}, true
 		}
 		return Message{n.DecidedByName + " approved your salary advance", amount, "/minions/payroll", "/minions/payroll"}, true
+	case "minions.announcement.posted":
+		return Message{"Announcement from " + n.FromName, what, "/minions/", "/minions/"}, true
 	case "minions.cover.set":
 		return Message{n.FromName + " asked you to approve for them", "While they're away, " + what + ". Their requests come to you.", "/minions/team", "/minions/team"}, true
 	case "minions.time_off.decided":
