@@ -190,6 +190,7 @@ func main() {
 	mux.HandleFunc("GET /internal/people/{org_id}", people.AtLocations)
 	mux.HandleFunc("GET /internal/people/{org_id}/approvers/{user_id}", people.Approvers)
 	mux.HandleFunc("GET /internal/people/{org_id}/person", people.Person)
+	mux.HandleFunc("GET /internal/people/{org_id}/seen", people.SeenSince)
 	mux.Handle("GET /orgs/approval-limits", requireAuth(http.HandlerFunc(people.GetApprovalLimits)))
 	mux.Handle("PUT /orgs/approval-limits", requireAuth(http.HandlerFunc(people.PutApprovalLimits)))
 	mux.HandleFunc("GET /internal/orgs/{org_id}/time-zone", people.OrgTimeZone)
