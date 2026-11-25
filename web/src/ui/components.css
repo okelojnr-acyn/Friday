@@ -1982,7 +1982,7 @@
   max-width: 640px;
   margin: 0 auto;
   display: grid;
-  gap: 12px;
+  gap: 16px;
 }
 .minions-tabs {
   position: fixed;
@@ -2012,7 +2012,26 @@
   border-radius: 12px;
 }
 .minions-tab.active {
+  color: var(--text);
+}
+.minions-tab.active svg {
   color: var(--accent);
+}
+/* The active tab sits on a soft amber pill, as phone tab bars mark it. */
+.minions-tab.active::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  width: 52px;
+  height: 30px;
+  border-radius: var(--radius-pill);
+  background: rgba(224, 122, 53, 0.16); /* older phone browsers */
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  z-index: -1;
+}
+.minions-tab {
+  position: relative;
+  isolation: isolate;
 }
 .minions-tab:focus-visible {
   outline: 2px solid var(--accent);
@@ -2026,17 +2045,6 @@
   padding-left: 18px;
   display: grid;
   gap: 6px;
-}
-.minions-id {
-  display: grid;
-  gap: 6px;
-  text-align: center;
-}
-.minions-staff-id {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 30px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
 }
 .minions-cta {
   height: 52px;
@@ -2064,6 +2072,208 @@
 .minions-claim-actions {
   display: flex;
   gap: 8px;
+}
+
+/* Minions redesign (HR plan phase 1): one bold thing per screen (the
+ * dark day strip on Today, the dark staff pass on Me), quiet lists. */
+.minions-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 18px;
+  color: var(--text);
+  text-decoration: none;
+}
+.minions-brand-sub {
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.minions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.minions-daystrip,
+.minions-pass {
+  background: var(--ink-bg);
+  color: var(--ink-text);
+  border-radius: var(--radius);
+  padding: 22px 20px;
+  display: grid;
+  gap: 4px;
+}
+.minions-daystrip p,
+.minions-pass p {
+  margin: 0;
+}
+.minions-daystrip-date {
+  color: var(--ink-text-muted);
+  font-size: 14px;
+}
+.minions-daystrip-title {
+  margin: 2px 0 0;
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+.minions-daystrip-sum {
+  font-size: 16px;
+  color: var(--ink-text);
+}
+.minions-group {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.minions-group.danger {
+  color: var(--danger);
+}
+.minions-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+}
+.minions-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 10px 14px;
+}
+.minions-row + .minions-row {
+  border-top: 1px solid var(--border);
+}
+.minions-row-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.minions-row-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.minions-row.done .minions-row-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+.minions-flag {
+  color: var(--danger);
+  font-weight: 600;
+}
+.minions-step {
+  min-width: 76px;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.minions-step.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+.minions-step:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.minions-step:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.minions-empty {
+  padding: 28px 20px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+.minions-empty p {
+  margin: 0;
+}
+.minions-empty-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 17px;
+  margin-bottom: 4px !important;
+}
+.minions-slip {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  padding: 20px;
+  display: grid;
+  gap: 4px;
+}
+.minions-slip p {
+  margin: 0;
+}
+.minions-slip-amount {
+  font-family: var(--font-display);
+  font-size: 36px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.minions-slip-state {
+  font-weight: 600;
+}
+.minions-steps {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.minions-steps li {
+  padding-top: 8px;
+  border-top: 4px solid var(--border);
+}
+.minions-steps li.reached {
+  border-top-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+.minions-pass-business {
+  color: var(--ink-text-muted);
+  font-size: 14px;
+}
+.minions-pass-id {
+  font-family: var(--font-display);
+  font-size: 40px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  margin: 6px 0 !important;
+}
+.minions-pass-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.minions-pass-role {
+  color: var(--accent);
+  font-weight: 700;
+}
+.minions-pass-where {
+  color: var(--ink-text-muted);
+  font-size: 14px;
 }
 
 /* CRM pipeline board (apps/crm/PipelineBoard.tsx) */

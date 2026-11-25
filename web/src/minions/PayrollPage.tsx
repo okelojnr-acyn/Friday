@@ -2,54 +2,125 @@ import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { ApiError } from "../lib/api";
 import { fetchMyPayroll, type MyPayrollLine } from "../lib/minions";
-import { Card } from "../ui/Card";
-import { Badge, statusTone } from "../ui/Badge";
+import { formatMoney } from "../lib/orgSettings";
 
-/** Read-only -- approve/pay/refresh-status stay admin actions on the
- * main Friday shell's payroll_run resource screens. This just shows an
- * employee their own payroll history (GET /me/payroll), never anyone
- * else's. */
+const period = (l: MyPayrollLine) => {
+  const f = (iso: string) =>
+    new Date(iso).toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+    });
+  return `${f(l.period_start)} to ${f(l.period_end)} ${new Date(l.period_end).getFullYear()}`;
+};
+
+/** Where a pay line is, in words a person understands. */
+function payState(l: MyPayrollLine): { label: string; step: number } {
+  if (l.line_status === "paid" || l.line_status === "confirmed")
+    return { label: "Paid", step: 3 };
+  if (l.line_status === "failed")
+    return { label: "Payment didn't go through. Ask your manager", step: 2 };
+  if (l.line_status === "sent") return { label: "On its way", step: 2 };
+  if (l.run_status === "approved")
+    return { label: "Approved, not sent yet", step: 1 };
+  return { label: "Being prepared", step: 0 };
+}
+
+const STEPS = ["Prepared", "Approved", "Sent", "Paid"];
+
+/** Pay: the latest pay as a slip (period, amount, where it is), then the
+ * earlier ones. Read-only: approving and paying are on Friday's People >
+ * Payroll. Payslips with deductions come in HR plan phase 2. */
 export function PayrollPage() {
   const [lines, setLines] = useState<MyPayrollLine[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMyPayroll()
-      .then(setLines)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load your payroll history"));
+      .then((rows) =>
+        setLines(
+          [...rows].sort((a, b) => b.period_end.localeCompare(a.period_end)),
+        ),
+      )
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : "Could not load your pay",
+        ),
+      );
   }, []);
 
-  if (error) return <div className="page error-banner">{error}</div>;
-  if (!lines) return <div className="page spinner">Loading...</div>;
+  const [latest, ...earlier] = lines ?? [];
+  const state = latest ? payState(latest) : null;
 
   return (
-    <div className="page">
-      <div className="page-header">
+    <div className="page minions-page">
+      <header className="minions-head">
         <h1 className="page-title">Pay</h1>
         <Link to="/wallet" className="btn btn-secondary btn-sm">
-          Wallet
+          Payout details
         </Link>
-      </div>
+      </header>
 
-      {lines.length === 0 ? (
-        <div className="empty-state">No payroll runs yet.</div>
-      ) : (
-        lines.map((l) => (
-          <Card key={l.payroll_run_id} style={{ marginBottom: 10 }}>
-            <div className="pos-totals-row">
-              <span>
-                {new Date(l.period_start).toLocaleDateString()} &ndash; {new Date(l.period_end).toLocaleDateString()}
-              </span>
-              <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span>
-                  {(l.gross_amount_cents / 100).toFixed(2)} {l.currency}
-                </span>
-                <Badge tone={statusTone(l.line_status)}>{l.line_status}</Badge>
-              </span>
-            </div>
-          </Card>
-        ))
-      )}
+      {error ? (
+        <div className="error-banner" role="alert">
+          {error}
+        </div>
+      ) : null}
+      {!lines && !error ? (
+        <div className="spinner">Loading your pay…</div>
+      ) : null}
+
+      {lines && !latest ? (
+        <div className="minions-empty">
+          <p className="minions-empty-title">No pay yet</p>
+          <p className="field-label">
+            Each time the business runs payroll, your pay shows up here.
+          </p>
+        </div>
+      ) : null}
+
+      {latest && state ? (
+        <section className="minions-slip" aria-label="Latest pay">
+          <p className="field-label">{period(latest)}</p>
+          <p className="minions-slip-amount">
+            {formatMoney(latest.gross_amount_cents, {
+              currency: latest.currency,
+            })}
+          </p>
+          <p className="minions-slip-state">{state.label}</p>
+          <ol className="minions-steps" aria-label="Progress">
+            {STEPS.map((s, i) => (
+              <li
+                key={s}
+                className={i <= state.step ? "reached" : undefined}
+                aria-current={i === state.step ? "step" : undefined}
+              >
+                {s}
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
+
+      {earlier.length ? (
+        <section aria-label="Earlier pay">
+          <h2 className="minions-group">Earlier</h2>
+          <ul className="minions-rows">
+            {earlier.map((l) => (
+              <li key={l.payroll_run_id} className="minions-row">
+                <div className="minions-row-main">
+                  <span className="minions-row-title">
+                    {formatMoney(l.gross_amount_cents, {
+                      currency: l.currency,
+                    })}
+                  </span>
+                  <span className="field-label">{period(l)}</span>
+                </div>
+                <span className="field-label">{payState(l).label}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </div>
   );
 }

@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
-import { listLocations, PERM_LABEL, ROLE_LABEL, type Location } from "../lib/people";
+import {
+  listLocations,
+  PERM_LABEL,
+  ROLE_LABEL,
+  type Location,
+} from "../lib/people";
 import { useMyPermissions } from "../lib/permissions";
-import { Badge } from "../ui/Badge";
+import { useOrgSettings } from "../lib/orgSettings";
 import { Button } from "../ui/Button";
 
 /** Me: who I am at this business (name, staff ID, role, jobs, where I
@@ -13,26 +18,33 @@ export function MePage() {
   const me = useMyPermissions();
   const [locations, setLocations] = useState<Location[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const business = useOrgSettings().name;
   useEffect(() => {
-    listLocations().then(setLocations).catch(() => {});
+    listLocations()
+      .then(setLocations)
+      .catch(() => {});
   }, []);
   if (!session) return null;
   const where =
     !me || me.locations.includes("*")
       ? "Every location"
-      : me.locations.map((id) => locations.find((l) => l.id === id)?.name ?? "—").join(", ");
+      : me.locations
+          .map((id) => locations.find((l) => l.id === id)?.name ?? "—")
+          .join(", ");
 
   return (
     <div className="page minions-page">
       <h1 className="page-title">Me</h1>
-      <section className="card card-padded minions-id" aria-label="Staff card">
-        <div className="field-label">Staff ID</div>
-        <div className="minions-staff-id">{me?.staff_id ?? "—"}</div>
-        <div style={{ fontWeight: 600 }}>{session.email}</div>
-        <div>
-          <Badge tone="accent">{ROLE_LABEL[me?.role ?? session.role] ?? session.role}</Badge>
-        </div>
-        <div className="field-label">Works at: {where}</div>
+      <section className="minions-pass" aria-label="Staff pass">
+        <p className="minions-pass-business">{business || "Staff pass"}</p>
+        <p className="minions-pass-id" aria-label="Staff ID">
+          {me?.staff_id ?? "—"}
+        </p>
+        <p className="minions-pass-name">{session.email}</p>
+        <p className="minions-pass-role">
+          {ROLE_LABEL[me?.role ?? session.role] ?? session.role}
+        </p>
+        <p className="minions-pass-where">Works at {where}</p>
       </section>
 
       {me && me.perms.length ? (
@@ -52,17 +64,35 @@ export function MePage() {
         </a>
       ) : null}
 
-      <section className="card card-padded" style={{ display: "grid", gap: 10 }}>
-        {notice ? <div className="field-label" role="status">{notice}</div> : null}
+      <section
+        className="card card-padded"
+        style={{ display: "grid", gap: 10 }}
+      >
+        {notice ? (
+          <div className="field-label" role="status">
+            {notice}
+          </div>
+        ) : null}
         <Button
           onClick={() =>
             addPasskey()
-              .then(() => setNotice("Passkey added: next time, sign in with your fingerprint or face."))
-              .catch((e) => setNotice(e instanceof Error ? e.message : "Could not add a passkey"))
+              .then(() =>
+                setNotice(
+                  "Passkey added: next time, sign in with your fingerprint or face.",
+                ),
+              )
+              .catch((e) =>
+                setNotice(
+                  e instanceof Error ? e.message : "Could not add a passkey",
+                ),
+              )
           }
         >
           Add a passkey on this phone
         </Button>
+        <a className="btn btn-secondary" href="/account">
+          Where I'm signed in
+        </a>
         <Button variant="ghost" onClick={logout}>
           Sign out
         </Button>
