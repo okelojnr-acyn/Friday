@@ -43,7 +43,7 @@ func TestChangedAccessIsRefreshedNotKept(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO core.memberships (org_id, user_id, role, perms) VALUES ($1, $2, 'member', '{cashier}')`, orgID, userID); err != nil {
 		t.Fatal(err)
 	}
-	iss := NewIssuer("test-secret", 0)
+	iss := NewIssuer("test-secret", time.Hour)
 	iss.Sessions = &Sessions{Pool: pool}
 	iss.Scope = func(ctx context.Context, userID, orgID, role string) ([]string, []string, []string, error) {
 		var perms []string
