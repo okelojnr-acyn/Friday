@@ -1,3 +1,4 @@
+import { TeamSales } from "./TeamSales";
 import { SendAnnouncements } from "./Announcements";
 import { WhosIn } from "./WhosIn";
 import { CoverCard } from "./CoverCard";
@@ -54,6 +55,7 @@ export function TeamPage() {
     <div className="page minions-page">
       <h1 className="page-title">Team</h1>
       <WhosIn />
+      <TeamSales />
       <SendAnnouncements />
       {error ? (
         <div className="error-banner" role="alert">

@@ -2915,3 +2915,20 @@
   color: var(--text-muted);
   font-size: 14px;
 }
+
+/* Sales against target (minions/TeamSales). */
+.minions-target {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+  margin-top: 4px;
+}
+.minions-target > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.minions-target > span.met {
+  background: var(--success);
+}
