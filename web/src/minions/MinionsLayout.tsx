@@ -1,4 +1,6 @@
-import { Link, Navigate, NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
+import { fetchClaimsWaitingForMe } from "../lib/minions";
 import { useAuth } from "../lib/auth";
 import { useMyPermissions, type MyPermissions } from "../lib/permissions";
 import { Icon, type IconName } from "../ui/Icon";
@@ -48,6 +50,7 @@ function MinionsLayout() {
   const { session } = useAuth();
   const me = useMyPermissions();
   const business = useOrgSettings().name;
+  const waiting = useWaitingCount(Boolean(me?.rules["claims.approve"]));
   if (!session) return null;
   return (
     <div className="minions-shell">
@@ -85,10 +88,34 @@ function MinionsLayout() {
             >
               <Icon name={t.icon} size={22} />
               <span>{t.label}</span>
+              {t.to === "/team" && waiting > 0 ? (
+                <span className="minions-badge" aria-label={`${waiting} waiting for you`}>
+                  {waiting > 9 ? "9+" : waiting}
+                </span>
+              ) : null}
             </NavLink>
           ),
         )}
       </nav>
     </div>
   );
+}
+
+/** How many claims wait for my decision, for the Team tab: checked on each
+ * page change and when the app comes back to the front. */
+function useWaitingCount(canApprove: boolean): number {
+  const [count, setCount] = useState(0);
+  const { pathname } = useLocation();
+  useEffect(() => {
+    if (!canApprove) return;
+    const check = () =>
+      fetchClaimsWaitingForMe()
+        .then((c) => setCount(c.length))
+        .catch(() => {});
+    check();
+    const onShow = () => document.visibilityState === "visible" && check();
+    document.addEventListener("visibilitychange", onShow);
+    return () => document.removeEventListener("visibilitychange", onShow);
+  }, [canApprove, pathname]);
+  return count;
 }

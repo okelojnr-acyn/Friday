@@ -2275,6 +2275,201 @@
   color: var(--ink-text-muted);
   font-size: 14px;
 }
+/* Minions part 2: Claims (camera first) and Team (decide with the receipt). */
+.minions-newclaim {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+.minions-camera {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 132px;
+  border: 2px dashed rgba(224, 122, 53, 0.45);
+  border: 2px dashed color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: var(--radius-sm);
+  background: #fdf6f1;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  color: var(--text);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 17px;
+  text-align: center;
+  cursor: pointer;
+  overflow: hidden;
+}
+.minions-camera.has-photo {
+  border-style: solid;
+  min-height: 0;
+}
+.minions-camera img {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+  background: var(--ink-bg);
+}
+.minions-camera input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.minions-camera:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.minions-newclaim input[inputmode="decimal"] {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.minions-choice {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.minions-choice legend {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.minions-choice button {
+  min-height: 52px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.minions-choice button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: #fbebe0;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+.minions-choice button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.minions-problem {
+  margin: 0;
+  color: var(--danger);
+  font-weight: 600;
+}
+.minions-claimrow {
+  align-items: flex-start;
+}
+.minions-claimrow .minions-steps {
+  margin-top: 8px;
+  grid-template-columns: repeat(3, 1fr);
+}
+.minions-claimstate {
+  margin: 6px 0 0;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.minions-claimstate.danger {
+  color: var(--danger);
+}
+.minions-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.minions-fix {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.minions-cardlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.minions-decide {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 12px;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+  padding: 12px;
+}
+.minions-decide p {
+  margin: 0;
+}
+.minions-decide-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.minions-decide-amount {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.minions-thumb {
+  display: block;
+  width: 96px;
+  height: 120px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ink-bg);
+}
+.minions-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.minions-thumb.empty {
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.minions-badge {
+  position: absolute;
+  top: 2px;
+  right: calc(50% - 22px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+@media (max-width: 360px) {
+  .minions-decide {
+    grid-template-columns: 1fr;
+  }
+  .minions-thumb {
+    width: 100%;
+    height: 180px;
+  }
+}
+
 
 /* CRM pipeline board (apps/crm/PipelineBoard.tsx) */
 .pipeline-search {
