@@ -1,4 +1,6 @@
+import csv
 import hashlib
+import io
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -20,7 +22,8 @@ from friday_common import (
     resource,
     set_org_context,
 )
-from friday_common.payroll_ke import kenya_deductions
+from friday_common.clock import business_tz, month_bounds
+from friday_common.payroll_ke import band_tax_cents, kenya_deductions, nssf_tiers
 from friday_common.access import Scope, approvers_for, people_in, person_in_business, require, scope_for, who_can
 from friday_common.integrations import AcynWalletProvider, GoogleCalendarProvider
 from sqlalchemy import and_, or_, select
@@ -82,6 +85,10 @@ resource(
             FieldSpec("pay_rate_cents", "Pay rate", "currency"),
             FieldSpec("pay_frequency", "Frequency", "select", options=PAY_FREQUENCIES, required=True),
             FieldSpec("status", "Status", "select", options=EMPLOYEE_STATUSES, required=True),
+            FieldSpec("kra_pin", "KRA PIN", "text", list_visible=False),
+            FieldSpec("national_id", "ID number", "text", list_visible=False),
+            FieldSpec("nssf_number", "NSSF number", "text", list_visible=False),
+            FieldSpec("sha_number", "SHA number", "text", list_visible=False),
             FieldSpec("wallet_address", "Wallet address", "text", list_visible=False, form_visible=False),
             FieldSpec("wallet_network", "Wallet network", "text", list_visible=False, form_visible=False),
         ),
@@ -706,7 +713,10 @@ async def list_employees(
     for e in (await session.execute(q)).scalars().all():
         row = EmployeeOut.model_validate(e)
         if not sees_pay and e.user_id != principal.user_id:
-            row = row.model_copy(update={"pay_rate_cents": None, "wallet_address": "", "wallet_network": ""})
+            row = row.model_copy(
+                update={"pay_rate_cents": None, "wallet_address": "", "wallet_network": "",
+                        "kra_pin": "", "national_id": "", "nssf_number": "", "sha_number": ""}
+            )
         out.append(row)
     return out
 
@@ -722,6 +732,7 @@ async def create_employee(
         raise HTTPException(422, f"pay_frequency must be one of {PAY_FREQUENCIES}")
     if body.status not in EMPLOYEE_STATUSES:
         raise HTTPException(422, f"status must be one of {EMPLOYEE_STATUSES}")
+    _statutory_numbers(body)
     existing = await session.execute(
         select(Employee).where(Employee.org_id == _org(principal), Employee.email == body.email)
     )
@@ -743,6 +754,24 @@ async def _get_owned_employee(session: AsyncSession, principal: Principal, emplo
     return employee
 
 
+_KRA_PIN = re.compile(r"^[AP][0-9]{9}[A-Z]$")
+
+
+def _statutory_numbers(body) -> None:
+    """Tidies and checks the return numbers (empty is fine until filing)."""
+    body.kra_pin = body.kra_pin.strip().upper()
+    if body.kra_pin and not _KRA_PIN.match(body.kra_pin):
+        raise HTTPException(422, "a KRA PIN looks like A012345678Z: A or P, nine digits, a letter")
+    body.national_id = body.national_id.strip()
+    if body.national_id and not body.national_id.isdigit():
+        raise HTTPException(422, "the ID number is digits only")
+    for f in ("nssf_number", "sha_number"):
+        v = getattr(body, f).strip().upper()
+        if v and not v.replace("-", "").isalnum():
+            raise HTTPException(422, f"the {f.split('_')[0].upper()} number is letters and digits only")
+        setattr(body, f, v)
+
+
 @employees_router.patch("/{employee_id}", response_model=EmployeeOut)
 async def update_employee(
     employee_id: uuid.UUID,
@@ -755,6 +784,7 @@ async def update_employee(
         raise HTTPException(422, f"pay_frequency must be one of {PAY_FREQUENCIES}")
     if body.status not in EMPLOYEE_STATUSES:
         raise HTTPException(422, f"status must be one of {EMPLOYEE_STATUSES}")
+    _statutory_numbers(body)
     employee = await _get_owned_employee(session, principal, employee_id)
     for field_name, value in body.model_dump().items():
         setattr(employee, field_name, value)
@@ -1404,6 +1434,93 @@ async def refresh_payroll_run_status(
     await session.commit()
     await session.refresh(run, attribute_names=["lines"])
     return PayrollRunOut.from_model(run)
+
+
+# Monthly statutory returns (HR plan phase 2): from the payslips of the
+# month's payroll runs (by their period's end, in the business's calendar),
+# one row per person, as CSV to copy into each authority's template:
+# KRA (PAYE and Housing Levy, the P10), NSSF (Tier I and II, both shares),
+# SHA (SHIF). Only for whoever sees everyone's pay.
+RETURN_KINDS = ("paye", "nssf", "shif")
+
+
+def _shillings(cents: int) -> str:
+    return f"{cents / 100:.2f}"
+
+
+@payroll_router.get("/returns.csv")
+async def payroll_return_csv(
+    kind: str,
+    month: str,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("pay.read")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    if kind not in RETURN_KINDS:
+        raise HTTPException(422, f"kind is one of {RETURN_KINDS}")
+    if scope.kind != "all":
+        raise HTTPException(403, "only whoever handles everyone's pay files the returns")
+    try:
+        first = datetime.strptime(month, "%Y-%m")
+    except ValueError:
+        raise HTTPException(422, "month is YYYY-MM") from None
+    start, end = month_bounds(first.year, first.month, await business_tz(principal.org_id))
+    rows = await session.execute(
+        select(PayrollLine, PayrollRun, Employee)
+        .join(PayrollRun, PayrollRun.id == PayrollLine.payroll_run_id)
+        .join(Employee, Employee.id == PayrollLine.employee_id)
+        .where(
+            PayrollRun.org_id == _org(principal),
+            PayrollRun.status != "draft",
+            PayrollRun.period_end >= start,
+            PayrollRun.period_end < end,
+            PayrollLine.status.notin_(("blocked", "failed")),
+        )
+    )
+    people: dict = {}
+    for line, run, emp in rows.all():
+        p = people.setdefault(emp.id, {"emp": emp, "lines": []})
+        p["lines"].append((line, run.period_end.date()))
+
+    out = io.StringIO()
+    w = csv.writer(out)
+    if kind == "paye":
+        w.writerow(["KRA PIN", "Employee", "Gross pay", "NSSF", "SHIF", "Housing Levy (employee)",
+                    "Housing Levy (employer)", "Taxable pay", "Tax charged", "Personal relief", "PAYE", "Note"])
+    elif kind == "nssf":
+        w.writerow(["ID number", "NSSF number", "KRA PIN", "Employee", "Gross pay", "Tier I (employee)",
+                    "Tier II (employee)", "Tier I (employer)", "Tier II (employer)", "Total", "Note"])
+    else:
+        w.writerow(["ID number", "SHA number", "Employee", "Gross pay", "SHIF", "Note"])
+    for p in sorted(people.values(), key=lambda x: x["emp"].name.lower()):
+        emp, lines = p["emp"], p["lines"]
+        s = lambda f: sum(getattr(l, f) for l, _ in lines)  # noqa: E731
+        gross = s("gross_amount_cents")
+        if kind == "paye":
+            taxable = gross - s("nssf_cents") - s("shif_cents") - s("levy_cents")
+            charged = sum(band_tax_cents(l.gross_amount_cents - l.nssf_cents - l.shif_cents - l.levy_cents, d) for l, d in lines)
+            paye = s("paye_cents")
+            w.writerow([emp.kra_pin, emp.name, _shillings(gross), _shillings(s("nssf_cents")), _shillings(s("shif_cents")),
+                        _shillings(s("levy_cents")), _shillings(s("employer_levy_cents")), _shillings(taxable),
+                        _shillings(charged), _shillings(charged - paye), _shillings(paye), "" if emp.kra_pin else "no KRA PIN"])
+        elif kind == "nssf":
+            t1 = t2 = 0
+            for l, d in lines:
+                a, b = nssf_tiers(l.gross_amount_cents, d) if l.nssf_cents else (0, 0)
+                t1, t2 = t1 + a, t2 + b
+            missing = ", ".join(n for n, v in (("ID", emp.national_id), ("NSSF number", emp.nssf_number)) if not v)
+            w.writerow([emp.national_id, emp.nssf_number, emp.kra_pin, emp.name, _shillings(gross), _shillings(t1),
+                        _shillings(t2), _shillings(t1), _shillings(t2), _shillings(2 * (t1 + t2)),
+                        f"no {missing}" if missing else ""])
+        else:
+            missing = ", ".join(n for n, v in (("ID", emp.national_id), ("SHA number", emp.sha_number)) if not v)
+            w.writerow([emp.national_id, emp.sha_number, emp.name, _shillings(gross), _shillings(s("shif_cents")),
+                        f"no {missing}" if missing else ""])
+    return Response(
+        content=out.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{kind}-{month}.csv"'},
+    )
 
 
 app.include_router(employees_router)

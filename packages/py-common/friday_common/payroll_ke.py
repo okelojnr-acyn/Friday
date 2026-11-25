@@ -98,3 +98,26 @@ def kenya_deductions(gross_cents: int, on: date | None = None) -> Deductions:
         employer_nssf_cents=nssf,
         employer_levy_cents=levy,
     )
+
+
+def band_tax_cents(taxable_cents: int, on: date | None = None) -> int:
+    """Tax on the bands before the personal relief (the P10's "tax charged")."""
+    r = rates_on(on or date.today())
+    tax, lower = 0.0, 0
+    for upper, rate in r.bands:
+        top = taxable_cents if upper is None else min(taxable_cents, upper)
+        if top > lower:
+            tax += (top - lower) * rate
+        if upper is None or taxable_cents <= upper:
+            break
+        lower = upper
+    return round(tax)
+
+
+def nssf_tiers(gross_cents: int, on: date | None = None) -> tuple[int, int]:
+    """(Tier I, Tier II) employee contribution; the employer pays the same."""
+    r = rates_on(on or date.today())
+    gross = max(0, int(gross_cents))
+    tier1 = min(gross, r.nssf_lower_cents)
+    tier2 = max(0, min(gross, r.nssf_upper_cents) - r.nssf_lower_cents)
+    return round(tier1 * r.nssf_rate), round(tier2 * r.nssf_rate)

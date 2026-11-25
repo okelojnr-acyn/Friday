@@ -47,6 +47,11 @@ class Employee(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     wallet_address: Mapped[str] = mapped_column(Text, nullable=False, default="")
     wallet_network: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # For the monthly returns (0011): KRA, NSSF, SHA.
+    kra_pin: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    national_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    nssf_number: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    sha_number: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
