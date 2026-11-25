@@ -3,9 +3,18 @@ import { api, ApiError } from "../lib/api";
 import { formatMoney } from "../lib/orgSettings";
 import { claimReceiptBlob, fetchClaimsWaitingForMe, type ExpenseClaim } from "../lib/minions";
 import { ClaimDecision } from "../apps/minions/ClaimActions";
+import { GiveTask } from "./GiveTask";
+
+interface TeamTask {
+  id: string;
+  status: string;
+  assignee_user_id?: string;
+  due_at: string | null;
+}
 
 interface TeamMember {
   id: string;
+  user_id: string;
   name: string;
   email: string;
   department: string;
@@ -18,6 +27,7 @@ interface TeamMember {
 export function TeamPage() {
   const [claims, setClaims] = useState<ExpenseClaim[] | null>(null);
   const [team, setTeam] = useState<TeamMember[]>([]);
+  const [tasks, setTasks] = useState<TeamTask[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   function load() {
@@ -27,6 +37,10 @@ export function TeamPage() {
     api
       .get<TeamMember[]>("/api/minions/employees")
       .then(setTeam)
+      .catch(() => {});
+    api
+      .get<TeamTask[]>("/api/projects/tasks")
+      .then(setTasks)
       .catch(() => {});
   }
   useEffect(load, []);
@@ -68,6 +82,14 @@ export function TeamPage() {
         </ul>
       </section>
 
+      <section aria-label="Give a task">
+        <h2 className="minions-group">Give a task</h2>
+        <GiveTask
+          people={team.filter((t) => t.user_id && t.status !== "terminated").map((t) => ({ user_id: t.user_id, name: t.name }))}
+          onGiven={load}
+        />
+      </section>
+
       <section aria-label="My team">
         <h2 className="minions-group">My team</h2>
         {team.length === 0 ? (
@@ -80,6 +102,7 @@ export function TeamPage() {
                   <span className="minions-row-title">{t.name}</span>
                   <span className="field-label">{t.department || t.email}</span>
                 </div>
+                <TaskCounts tasks={tasks.filter((k) => k.assignee_user_id && k.assignee_user_id === t.user_id)} />
               </li>
             ))}
           </ul>
@@ -109,5 +132,17 @@ function ReceiptThumb({ claim }: { claim: ExpenseClaim }) {
     <a className="minions-thumb" href={url} target="_blank" rel="noreferrer" title="Open the receipt full size">
       <img src={url} alt={`Receipt for ${claim.description}`} />
     </a>
+  );
+}
+
+/** A person's open tasks, and how many are overdue. */
+function TaskCounts({ tasks }: { tasks: TeamTask[] }) {
+  const open = tasks.filter((t) => t.status !== "done");
+  const late = open.filter((t) => t.due_at && new Date(t.due_at).getTime() < Date.now()).length;
+  if (!open.length) return <span className="field-label">No open tasks</span>;
+  return (
+    <span className={`field-label${late ? " minions-flag" : ""}`}>
+      {open.length} open{late ? `, ${late} overdue` : ""}
+    </span>
   );
 }

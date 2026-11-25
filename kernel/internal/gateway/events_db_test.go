@@ -142,3 +142,25 @@ func TestBackoffGrowsToAnHour(t *testing.T) {
 		t.Fatal("backoff")
 	}
 }
+
+// Each business with Projects gets one tick an hour, however often asked.
+func TestHourlyTickOncePerBusinessPerHour(t *testing.T) {
+	pool := eventsPool(t)
+	ctx := context.Background()
+	var orgID string
+	if err := pool.QueryRow(ctx, `INSERT INTO core.orgs (name, slug) VALUES ('Duka', 'duka-' || gen_random_uuid()) RETURNING id::text`).Scan(&orgID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO core.apps (name, label) VALUES ('projects', 'Projects') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO core.app_installs (org_id, app_name) VALUES ($1, 'projects')`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	QueueHourly(ctx, pool)
+	QueueHourly(ctx, pool)
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM core.event_deliveries WHERE org_id = $1 AND type = 'kernel.hourly' AND app = 'projects'`, orgID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("ticks: %d %v", n, err)
+	}
+}

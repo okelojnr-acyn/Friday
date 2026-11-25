@@ -29,5 +29,7 @@
   "integrations.write":    {"owner": "all", "admin": "all"},
   "people.read":           {"owner": "all", "admin": "all", "branch_manager": "loc", "team_leader": "team"},
   "people.write":          {"owner": "all", "admin": "all", "branch_manager": "loc"},
+  "tasks.read":            {"owner": "all", "admin": "all", "branch_manager": "loc", "team_leader": "team", "member": "own", "viewer": "all"},
+  "tasks.assign":          {"owner": "all", "admin": "all", "branch_manager": "loc", "team_leader": "team", "member": "own"},
   "host.manage":           {"owner": "all"}
 }

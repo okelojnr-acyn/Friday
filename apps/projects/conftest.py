@@ -13,6 +13,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from friday_common.auth import get_current_principal
+from friday_common.settings import get_settings
 from friday_common.testing import dispose_engine, make_principal, prepare_test_schema
 
 from app.main import app
@@ -55,3 +56,8 @@ async def client():
 async def _dispose_engine_after_test():
     yield
     await dispose_engine()
+
+
+@pytest.fixture
+def kernel_auth_header():
+    return {"Authorization": f"Bearer {get_settings().kernel_events_token}"}

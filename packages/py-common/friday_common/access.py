@@ -186,6 +186,28 @@ async def approvers_for(org_id: str, user_id: str) -> Approvers:
         return Approvers(limits=dict(APPROVAL_LIMIT_CENTS), chain=(), top=())
 
 
+async def person_in_business(org_id: str, *, user_id: str = "", email: str = "") -> dict | None:
+    """One member of the business ({user_id, role, name, email}) by id or
+    email; None when they aren't one. Raises 503 when the kernel can't say
+    (never guesses who someone is)."""
+    import httpx
+
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{settings.kernel_internal_url}/people/{org_id}/person",
+                params={"user_id": user_id, "email": email},
+                headers={"Authorization": f"Bearer {settings.kernel_events_token}"},
+            )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"couldn't check who that is: {exc}") from exc
+
+
 def require_place(scope: Scope, location_id, what: str = "that place") -> None:
     """Refuses something at a location outside the caller's. Something
     nobody has placed yet (no location) stays open to whoever the rule
