@@ -24,14 +24,14 @@ type notice struct {
 	Method        string   `json:"method"`
 }
 
-// eat is East Africa Time. shortcut: one time zone for quiet hours; use
-// the business's own when orgs get a time-zone setting.
-var eat = time.FixedZone("EAT", 3*3600)
-
-// quiet: 21:00-07:00, when notices arrive without a sound (owner default,
-// 2026-11-25). They are never held back, so nothing waits till morning.
-func quiet(t time.Time) bool {
-	h := t.In(eat).Hour()
+// quiet: 21:00-07:00 in the person's own time zone, when notices arrive
+// without a sound (owner default, 2026-11-25). They are never held back.
+func quiet(t time.Time, tz string) bool {
+	loc, err := time.LoadLocation(tz)
+	if err != nil || tz == "" {
+		loc = time.UTC
+	}
+	h := t.In(loc).Hour()
 	return h >= 21 || h < 7
 }
 
@@ -86,16 +86,22 @@ func (h *Handlers) Notify(ctx context.Context, orgID, typ string, payload []byte
 		return nil
 	}
 	rows, err := h.Pool.Query(ctx,
-		`SELECT telegram_id FROM core.guss_links WHERE org_id::text = $1 AND user_id::text = ANY($2) ORDER BY telegram_id`,
+		`SELECT l.telegram_id, COALESCE(NULLIF(u.time_zone, ''), o.time_zone) FROM core.guss_links l
+		 JOIN core.users u ON u.id = l.user_id JOIN core.orgs o ON o.id = l.org_id
+		 WHERE l.org_id::text = $1 AND l.user_id::text = ANY($2) ORDER BY l.telegram_id`,
 		orgID, n.ToUserIDs)
 	if err != nil {
 		return err
 	}
-	var targets []int64
+	type target struct {
+		id int64
+		tz string // theirs, else the business's ("" = UTC)
+	}
+	var targets []target
 	for rows.Next() {
-		var id int64
-		if rows.Scan(&id) == nil {
-			targets = append(targets, id)
+		var t target
+		if rows.Scan(&t.id, &t.tz) == nil {
+			targets = append(targets, t)
 		}
 	}
 	rows.Close()
@@ -106,11 +112,12 @@ func (h *Handlers) Notify(ctx context.Context, orgID, typ string, payload []byte
 	if err != nil {
 		return nil // Guss isn't connected here
 	}
-	silent := quiet(time.Now())
 	// shortcut: a failure part-way retries everyone, so someone may get a
 	// notice twice; track per person if that happens often.
-	for _, id := range targets {
-		status, err := h.callJSON(ctx, c, http.MethodPost, "/api/notify", map[string]any{"telegram_id": id, "text": text, "silent": silent}, nil)
+	now := time.Now()
+	for _, t := range targets {
+		body := map[string]any{"telegram_id": t.id, "text": text, "silent": quiet(now, t.tz)}
+		status, err := h.callJSON(ctx, c, http.MethodPost, "/api/notify", body, nil)
 		if err != nil {
 			if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "no Telegram bot") {
 				log.Printf("guss notice for org %s skipped: %v", orgID, err)

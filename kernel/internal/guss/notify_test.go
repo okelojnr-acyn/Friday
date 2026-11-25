@@ -30,8 +30,12 @@ func TestNoticeTextMoneyAndQuietHours(t *testing.T) {
 	if noticeText("crm.opportunity.won", notice{}, "") != "" {
 		t.Error("other events send nothing")
 	}
-	at := func(h int) time.Time { return time.Date(2026, 11, 25, h, 0, 0, 0, eat) }
-	if !quiet(at(22)) || !quiet(at(6)) || quiet(at(7)) || quiet(at(20)) {
-		t.Error("quiet hours are 21:00-07:00 EAT")
+	// 19:00 UTC is 22:00 in Nairobi (quiet) but 14:00 in New York (not).
+	at := time.Date(2026, 11, 25, 19, 0, 0, 0, time.UTC)
+	if !quiet(at, "Africa/Nairobi") || quiet(at, "America/New_York") || quiet(at, "") {
+		t.Error("quiet hours are 21:00-07:00 in the person's own zone (UTC when unknown)")
+	}
+	if quiet(time.Date(2026, 11, 25, 4, 0, 0, 0, time.UTC), "Africa/Nairobi") || quiet(time.Date(2026, 11, 25, 4, 0, 0, 0, time.UTC), "Asia/Tokyo") {
+		t.Error("07:00 Nairobi is the end of quiet hours; 13:00 Tokyo isn't quiet")
 	}
 }

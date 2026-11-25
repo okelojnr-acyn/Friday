@@ -35,6 +35,7 @@ import segno
 from friday_common.etims.codes import PIN_CHECKER_URL, RECEIPT_CHECK, TAX_TYPES
 from friday_common.etims.kernel import automation_on, get_etims_config
 from friday_common.etims.payload import line_amounts
+from friday_common.clock import business_tz, month_bounds
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -181,15 +182,15 @@ def _row(inv: Invoice, cfg: dict, originals: dict[str, Invoice]) -> EtimsRow:
     )
 
 
-def _month_bounds(month: str | None) -> tuple[datetime, datetime] | None:
+async def _month_bounds(month: str | None, org_id: str) -> tuple[datetime, datetime] | None:
+    """The business's own calendar month, as a UTC window."""
     if not month:
         return None
     try:
-        start = datetime.strptime(month, "%Y-%m").replace(tzinfo=UTC)
+        start = datetime.strptime(month, "%Y-%m")
     except ValueError:
         raise HTTPException(422, "month is YYYY-MM") from None
-    end = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
-    return start, end
+    return month_bounds(start.year, start.month, await business_tz(org_id))
 
 
 def receipt_check_url(inv: Invoice, cfg: dict) -> str:
@@ -283,7 +284,7 @@ async def list_etims_invoices(
         q = q.where(Invoice.buyer_pin != "")
     if status != "any":
         q = q.where(Invoice.etims_status == status)
-    bounds = _month_bounds(month)
+    bounds = await _month_bounds(month, principal.org_id)
     if bounds:
         when = func.coalesce(Invoice.issued_at, Invoice.created_at)
         q = q.where(when >= bounds[0], when < bounds[1])
@@ -438,7 +439,7 @@ async def vat_sales_csv(
     """The month's sales by tax type, in the columns of the iTax VAT3
     sales schedule (Section B). iTax now pre-fills sales from eTIMS; this
     is the business's own copy to check it against."""
-    bounds = _month_bounds(month)
+    bounds = await _month_bounds(month, principal.org_id)
     assert bounds
     org = _org(principal)
     when = func.coalesce(Invoice.issued_at, Invoice.created_at)

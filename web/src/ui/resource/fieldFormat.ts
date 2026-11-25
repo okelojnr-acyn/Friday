@@ -1,6 +1,7 @@
 import type { FieldSpec } from "../../lib/types";
 import { statusTone } from "../Badge";
 import { formatMoney } from "../../lib/orgSettings";
+import { toLocalDateInput, toLocalDatetimeInput } from "../../lib/localTime";
 
 /** Cents (what every app stores) <-> a dollar-amount string (what a form
  * input shows). Keeps money as integers everywhere outside this one
@@ -35,15 +36,9 @@ export function formatCellValue(field: FieldSpec, value: unknown, record?: Recor
   }
 }
 
-export function toDateInputValue(value: unknown): string {
-  if (typeof value !== "string" || !value) return "";
-  return value.slice(0, 10);
-}
-
-export function toDatetimeInputValue(value: unknown): string {
-  if (typeof value !== "string" || !value) return "";
-  return value.slice(0, 16);
-}
+/** Dates and times in the viewer's own time zone (lib/localTime). */
+export const toDateInputValue = toLocalDateInput;
+export const toDatetimeInputValue = toLocalDatetimeInput;
 
 /** Heuristics the generic renderer uses to decide which fields earn a
  * richer treatment than a plain table cell -- an avatar for a person, a

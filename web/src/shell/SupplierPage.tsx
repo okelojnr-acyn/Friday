@@ -1,3 +1,4 @@
+import { localDay } from "../lib/localTime";
 import { useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { KERNEL_URL } from "../lib/runtimeConfig";
@@ -201,7 +202,7 @@ function OrderCard({
 }) {
   const [note, setNote] = useState(po.supplier_note);
   const [invNo, setInvNo] = useState(po.supplier_invoice_no);
-  const [invDate, setInvDate] = useState(po.supplier_invoice_date ?? new Date().toISOString().slice(0, 10));
+  const [invDate, setInvDate] = useState(po.supplier_invoice_date ?? localDay());
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const received = po.status === "received";

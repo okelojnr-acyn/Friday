@@ -1,3 +1,4 @@
+import { localDay } from "../../lib/localTime";
 import { AppHint } from "../../shell/AppFrame";
 import { useEffect, useState } from "react";
 import { ApiError } from "../../lib/api";
@@ -29,7 +30,7 @@ function startOfYear(): string {
 }
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return localDay();
 }
 
 type Tab = "pnl" | "balance-sheet" | "cash-flow" | "ledger";
