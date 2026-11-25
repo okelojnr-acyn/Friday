@@ -1,3 +1,4 @@
+import { NotificationBell } from "../ui/NotificationBell";
 import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import { fetchClaimsWaitingForMe } from "../lib/minions";
@@ -59,6 +60,8 @@ function MinionsLayout() {
           {business || "Friday"}
           <span className="minions-brand-sub">Staff</span>
         </Link>
+        <span className="minions-top-actions">
+          <NotificationBell />
         <Link to="/me" className="minions-avatar" aria-label="Me">
           <Avatar
             label={initials(session.email)}
@@ -66,6 +69,7 @@ function MinionsLayout() {
             size={30}
           />
         </Link>
+        </span>
       </header>
       <main className="minions-main">
         <Outlet />

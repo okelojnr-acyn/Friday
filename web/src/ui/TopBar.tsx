@@ -1,3 +1,4 @@
+import { NotificationBell } from "./NotificationBell";
 import { Link } from "react-router-dom";
 import { Icon } from "./Icon";
 import { Button } from "./Button";
@@ -41,6 +42,7 @@ export function TopBar({ email, role, onLogout }: TopBarProps) {
             <span className="topbar-label">Import</span>
           </Link>
         ) : null}
+        <NotificationBell />
         <Link to="/account" className="topbar-user" title={`Your account (${role}): passkeys and devices`} aria-label="Your account">
           <Avatar label={initials(email)} title={email} size={26} />
           <span className="topbar-email">{email}</span>

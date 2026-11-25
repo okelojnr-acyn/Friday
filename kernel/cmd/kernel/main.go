@@ -18,6 +18,7 @@ import (
 	"github.com/acyn-innovation/friday/kernel/internal/db"
 	"github.com/acyn-innovation/friday/kernel/internal/gateway"
 	"github.com/acyn-innovation/friday/kernel/internal/guss"
+	"github.com/acyn-innovation/friday/kernel/internal/inbox"
 	"github.com/acyn-innovation/friday/kernel/internal/importsource"
 	"github.com/acyn-innovation/friday/kernel/internal/integrations"
 	"github.com/acyn-innovation/friday/kernel/internal/mail"
@@ -190,6 +191,9 @@ func main() {
 	mux.Handle("PUT /orgs/approval-limits", requireAuth(http.HandlerFunc(people.PutApprovalLimits)))
 	mux.HandleFunc("GET /internal/orgs/{org_id}/time-zone", people.OrgTimeZone)
 	mux.Handle("PUT /auth/me/time-zone", requireAuth(http.HandlerFunc(people.SetMyTimeZone)))
+	bell := &inbox.Inbox{Pool: pool}
+	mux.Handle("GET /me/notifications", requireAuth(http.HandlerFunc(bell.List)))
+	mux.Handle("POST /me/notifications/read", requireAuth(http.HandlerFunc(bell.Read)))
 	mux.Handle("PATCH /orgs/members/{user_id}", requireAuth(http.HandlerFunc(people.UpdatePerson)))
 	mux.Handle("GET /orgs/me/permissions", requireAuth(http.HandlerFunc(people.MyPermissions)))
 	mux.Handle("GET /orgs/access/rules", requireAuth(http.HandlerFunc(people.AccessRules)))
@@ -280,8 +284,16 @@ func main() {
 
 	mux.HandleFunc("POST /internal/events", gateway.EventsHandler(pool, eventsToken))
 	// Sends queued events to subscribers, retrying until each accepts.
-	go (&gateway.Deliverer{Pool: pool, Apps: apps, Token: eventsToken, Local: map[string]func(context.Context, string, string, []byte) error{
-		"notify": gussHandlers.Notify,
+	notices := &inbox.Inbox{Pool: pool}
+	go (&gateway.Deliverer{Pool: pool, Apps: apps, Token: eventsToken, Local: map[string]func(context.Context, string, string, string, []byte) error{
+		// The inbox first (once per event), then Guss; a Guss failure
+		// retries both, and the inbox ignores the repeat.
+		"notify": func(ctx context.Context, eventID, orgID, typ string, payload []byte) error {
+			if err := notices.Deliver(ctx, eventID, orgID, typ, payload); err != nil {
+				return err
+			}
+			return gussHandlers.Notify(ctx, orgID, typ, payload)
+		},
 	}}).Run(ctx)
 	gateway.WithEventCounts(gateway.EventCounts(pool))
 	mux.Handle("GET /health", gateway.HealthHandler(apps, pool, nil))

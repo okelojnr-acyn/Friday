@@ -51,7 +51,7 @@ var subscriptions = []subscription{
 	{Event: "inventory.purchase.received", App: "accounting", WebhookPath: "/internal/webhooks/purchase-received"},
 	{Event: "inventory.purchase.paid", App: "accounting", WebhookPath: "/internal/webhooks/purchase-paid"},
 	{Event: "inventory.stock.adjusted", App: "accounting", WebhookPath: "/internal/webhooks/stock-adjusted"},
-	// HR plan phase 1: tell people on Guss (Deliverer.Local["notify"]).
+	// Tell people: their inbox (the bell) and Guss (Deliverer.Local["notify"]).
 	{Event: "minions.approval.needed", App: "notify"},
 	{Event: "minions.expense_claim.decided", App: "notify"},
 	{Event: "minions.expense_claim.paid", App: "notify"},
@@ -124,7 +124,7 @@ type Deliverer struct {
 	Every time.Duration
 	// Local subscribers the kernel runs itself, by App name ("notify":
 	// Guss notices), with the same retries as an app's webhook.
-	Local map[string]func(ctx context.Context, orgID, typ string, payload []byte) error
+	Local map[string]func(ctx context.Context, eventID, orgID, typ string, payload []byte) error
 }
 
 func backoff(attempts int) time.Duration {
@@ -186,7 +186,7 @@ func (d *Deliverer) DeliverDue(ctx context.Context) (int, error) {
 	for _, x := range due {
 		var err error
 		if local, ok := d.Local[x.app]; ok {
-			err = local(ctx, x.orgID, x.typ, x.payload)
+			err = local(ctx, x.eventID, x.orgID, x.typ, x.payload)
 		} else {
 			err = d.send(ctx, client, base[x.app], x)
 		}
@@ -289,6 +289,7 @@ var trimStatements = []string{
 	`DELETE FROM core.guss_web_codes WHERE expires_at < now() - interval '1 day'`,
 	`DELETE FROM core.pos_pin_events WHERE created_at < now() - interval '2 years'`,
 	`DELETE FROM core.sessions WHERE created_at < now() - interval '30 days'`,
+	`DELETE FROM core.notifications WHERE created_at < now() - interval '90 days'`,
 }
 
 // TrimExpired runs trimStatements; a failure is logged and the rest still run.
