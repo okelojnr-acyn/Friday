@@ -19,6 +19,7 @@ import (
 	"github.com/acyn-innovation/friday/kernel/internal/gateway"
 	"github.com/acyn-innovation/friday/kernel/internal/guss"
 	"github.com/acyn-innovation/friday/kernel/internal/inbox"
+	"github.com/acyn-innovation/friday/kernel/internal/push"
 	"github.com/acyn-innovation/friday/kernel/internal/importsource"
 	"github.com/acyn-innovation/friday/kernel/internal/integrations"
 	"github.com/acyn-innovation/friday/kernel/internal/mail"
@@ -241,6 +242,11 @@ func main() {
 	// no Authorization header; see google_oauth.go's oauthStateClaims doc.
 	mux.HandleFunc("GET /orgs/integrations/google_calendar/oauth/callback", integrationHandlers.GoogleOAuthCallback)
 
+	// Phone notifications for Minions (Web Push); keys sealed like the rest.
+	pushes := &push.Push{Pool: pool, Box: secretsBox, WebURL: corsOrigin}
+	mux.Handle("GET /me/push/key", requireAuth(http.HandlerFunc(pushes.Key)))
+	mux.Handle("POST /me/push/subscriptions", requireAuth(http.HandlerFunc(pushes.Subscribe)))
+	mux.Handle("POST /me/push/unsubscribe", requireAuth(http.HandlerFunc(pushes.Unsubscribe)))
 	gussHandlers := &guss.Handlers{Pool: pool, Box: secretsBox, Issuer: issuer, WebURL: corsOrigin}
 	mux.Handle("GET /guss/status", requireAuth(http.HandlerFunc(gussHandlers.Status)))
 	mux.Handle("GET /guss/access", requireAuth(http.HandlerFunc(gussHandlers.Access)))
@@ -293,6 +299,9 @@ func main() {
 			if err := notices.Deliver(ctx, eventID, orgID, typ, payload); err != nil {
 				return err
 			}
+			// Best effort; tagged with the event id, so a retry replaces
+			// the notification on the phone instead of adding another.
+			pushes.Send(ctx, eventID, orgID, typ, payload)
 			return gussHandlers.Notify(ctx, orgID, typ, payload)
 		},
 	}}).Run(ctx)

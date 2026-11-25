@@ -1,3 +1,5 @@
+import { PhoneNotifications } from "./PhoneNotifications";
+import { turnOffPush } from "../lib/phonePush";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
@@ -65,6 +67,7 @@ export function MePage() {
         </a>
       ) : null}
 
+      <PhoneNotifications />
       <section
         className="card card-padded"
         style={{ display: "grid", gap: 10 }}
@@ -94,7 +97,11 @@ export function MePage() {
         <Link className="btn btn-secondary" to="/devices">
           Passkeys and where I'm signed in
         </Link>
-        <Button variant="ghost" onClick={logout}>
+        <Button
+          variant="ghost"
+          // A shared phone stops getting this person's notices.
+          onClick={() => void turnOffPush().finally(logout)}
+        >
           Sign out
         </Button>
       </section>
