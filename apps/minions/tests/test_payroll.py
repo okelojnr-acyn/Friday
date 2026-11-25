@@ -288,8 +288,10 @@ async def test_a_kes_run_works_out_the_payslip_and_pays_the_net(client, as_princ
     """Kenyan deductions on a KES run (HR plan phase 2): the line keeps NSSF,
     SHIF, Housing Levy and PAYE; the payout is the net; staff see their payslip."""
     admin = _as_admin(as_principal, principal)
-    employee = await _employee_with_wallet(client, as_principal, principal, admin)
-    await client.patch(f"/employees/{employee['id']}", json={"pay_rate_cents": 10_000_000})  # KES 100,000
+    employee = (await client.post("/employees", json={"name": "Jane", "email": "jane@example.com", "pay_rate_cents": 10_000_000})).json()
+    as_principal(make_principal(org_id=principal.org_id, email="jane@example.com"))
+    await client.put("/me/wallet", json={"wallet_address": "0xabc", "wallet_network": "base"})
+    as_principal(admin)
     run = (
         await client.post(
             "/payroll_runs",
