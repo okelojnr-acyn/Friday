@@ -10,6 +10,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -143,24 +144,40 @@ func TestBackoffGrowsToAnHour(t *testing.T) {
 	}
 }
 
-// Each business with Projects gets one tick an hour, however often asked.
-func TestHourlyTickOncePerBusinessPerHour(t *testing.T) {
+// A scheduled event waits for its time (no polling anywhere), is not
+// counted as pending or stuck meanwhile, and goes out once it is due.
+func TestScheduledEventsWaitForTheirTime(t *testing.T) {
 	pool := eventsPool(t)
 	ctx := context.Background()
-	var orgID string
-	if err := pool.QueryRow(ctx, `INSERT INTO core.orgs (name, slug) VALUES ('Duka', 'duka-' || gen_random_uuid()) RETURNING id::text`).Scan(&orgID); err != nil {
-		t.Fatal(err)
+	delivered := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		delivered++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	h := EventsHandler(pool, "tok")
+	org := "sched-" + newEventID()
+	at := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	body := `{"id":"due-` + org + `","type":"projects.task.due","org_id":"` + org + `","payload":{},"deliver_at":"` + at + `"}`
+	if code := publish(t, h, body); code != http.StatusAccepted {
+		t.Fatalf("publish: %d", code)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO core.apps (name, label) VALUES ('projects', 'Projects') ON CONFLICT DO NOTHING`); err != nil {
-		t.Fatal(err)
+	far := `{"id":"far-` + org + `","type":"projects.task.due","org_id":"` + org + `","deliver_at":"2099-01-01T00:00:00Z"}`
+	if code := publish(t, h, far); code != http.StatusBadRequest {
+		t.Fatalf("decades ahead accepted: %d", code)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO core.app_installs (org_id, app_name) VALUES ($1, 'projects')`, orgID); err != nil {
-		t.Fatal(err)
+	d := &Deliverer{Pool: pool, Apps: []registry.App{{Name: "projects", BaseURL: srv.URL}}, Token: "tok"}
+	if _, err := d.DeliverDue(ctx); err != nil || delivered != 0 {
+		t.Fatalf("delivered before its time: %d %v", delivered, err)
 	}
-	QueueHourly(ctx, pool)
-	QueueHourly(ctx, pool)
-	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM core.event_deliveries WHERE org_id = $1 AND type = 'kernel.hourly' AND app = 'projects'`, orgID).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("ticks: %d %v", n, err)
+	var pending int
+	pool.QueryRow(ctx, `SELECT count(*) FROM core.event_deliveries WHERE org_id = $1 AND delivered_at IS NULL AND (scheduled_for IS NULL OR scheduled_for <= now())`, org).Scan(&pending)
+	if pending != 0 {
+		t.Fatalf("a waiting event counts as pending: %d", pending)
+	}
+	// Its time comes.
+	pool.Exec(ctx, `UPDATE core.event_deliveries SET next_attempt_at = now(), scheduled_for = now() WHERE org_id = $1`, org)
+	if _, err := d.DeliverDue(ctx); err != nil || delivered != 1 {
+		t.Fatalf("not delivered when due: %d %v", delivered, err)
 	}
 }

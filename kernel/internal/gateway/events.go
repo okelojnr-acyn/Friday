@@ -27,7 +27,16 @@ type inboundEvent struct {
 	Type    string          `json:"type"`
 	OrgID   string          `json:"org_id"`
 	Payload json.RawMessage `json:"payload"`
+	// DeliverAt, if set, holds the event until then (at most maxAhead).
+	DeliverAt *time.Time `json:"deliver_at"`
 }
+
+// maxAhead: how far ahead an event may be scheduled.
+const maxAhead = 400 * 24 * time.Hour
+
+// wake tells this kernel's Deliverer an event just arrived, so it's sent at
+// once instead of at the next idle check.
+var wake = make(chan struct{}, 1)
 
 // subscription is the one cross-app wiring rule in the system: when
 // `Event` fires, POST the payload to `App`'s webhook path. Deliberately a
@@ -58,21 +67,10 @@ var subscriptions = []subscription{
 	{Event: "projects.task.assigned", App: "notify"},
 	{Event: "projects.task.done", App: "notify"},
 	{Event: "projects.task.overdue", App: "notify"},
+	// Scheduled for a task's due time (and 3 days later): Projects checks it.
+	{Event: "projects.task.due", App: "projects", WebhookPath: "/internal/webhooks/task-due"},
 }
 
-// QueueHourly gives each business's Projects its hourly tick (overdue
-// tasks; HR plan 8.4.2) through the delivery queue, so it retries like any
-// event. One per business per hour, however many kernels run.
-func QueueHourly(ctx context.Context, pool *pgxpool.Pool) {
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO core.event_deliveries (event_id, type, org_id, payload, app, webhook_path)
-		SELECT 'hourly-' || org_id::text || '-' || to_char(now() AT TIME ZONE 'UTC', 'YYYYMMDDHH24'), 'kernel.hourly', org_id::text, '{}',
-		       'projects', '/internal/webhooks/hourly'
-		FROM core.app_installs WHERE app_name = 'projects'
-		ON CONFLICT (event_id, app, webhook_path) DO NOTHING`); err != nil {
-		log.Printf("hourly ticks: %v", err)
-	}
-}
 
 func newEventID() string {
 	b := make([]byte, 16)
@@ -102,6 +100,14 @@ func EventsHandler(pool *pgxpool.Pool, eventsToken string) http.HandlerFunc {
 		if len(ev.Payload) == 0 {
 			ev.Payload = json.RawMessage("{}")
 		}
+		if ev.DeliverAt != nil && (ev.DeliverAt.After(time.Now().Add(maxAhead)) || ev.DeliverAt.Before(time.Now())) {
+			if ev.DeliverAt.Before(time.Now()) {
+				ev.DeliverAt = nil // already due: now
+			} else {
+				http.Error(w, "deliver_at is at most 400 days ahead", http.StatusBadRequest)
+				return
+			}
+		}
 		ctx := r.Context()
 		tx, err := pool.Begin(ctx)
 		if err != nil {
@@ -114,9 +120,9 @@ func EventsHandler(pool *pgxpool.Pool, eventsToken string) http.HandlerFunc {
 				continue
 			}
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO core.event_deliveries (event_id, type, org_id, payload, app, webhook_path)
-				VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (event_id, app, webhook_path) DO NOTHING`,
-				ev.ID, ev.Type, ev.OrgID, []byte(ev.Payload), sub.App, sub.WebhookPath); err != nil {
+				INSERT INTO core.event_deliveries (event_id, type, org_id, payload, app, webhook_path, next_attempt_at, scheduled_for)
+				VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, now()), $7) ON CONFLICT (event_id, app, webhook_path) DO NOTHING`,
+				ev.ID, ev.Type, ev.OrgID, []byte(ev.Payload), sub.App, sub.WebhookPath, ev.DeliverAt); err != nil {
 				log.Printf("event %s: queue for %s: %v", ev.Type, sub.App, err)
 				http.Error(w, "could not queue the event", http.StatusServiceUnavailable)
 				return
@@ -125,6 +131,12 @@ func EventsHandler(pool *pgxpool.Pool, eventsToken string) http.HandlerFunc {
 		if err := tx.Commit(ctx); err != nil {
 			http.Error(w, "could not queue the event", http.StatusServiceUnavailable)
 			return
+		}
+		if ev.DeliverAt == nil {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
 		}
 		w.WriteHeader(http.StatusAccepted)
 	}
@@ -253,9 +265,10 @@ func (d *Deliverer) send(ctx context.Context, client *http.Client, base string, 
 
 // Run delivers until ctx ends, and trims delivered rows older than a week.
 func (d *Deliverer) Run(ctx context.Context) {
+	// Idle check for retries and scheduled events; a new event wakes it.
 	every := d.Every
 	if every == 0 {
-		every = 2 * time.Second
+		every = 15 * time.Second
 	}
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -273,13 +286,13 @@ func (d *Deliverer) Run(ctx context.Context) {
 		if time.Since(lastTrim) > time.Hour {
 			_, _ = d.Pool.Exec(ctx, `DELETE FROM core.event_deliveries WHERE delivered_at < now() - interval '7 days'`)
 			TrimExpired(ctx, d.Pool)
-			QueueHourly(ctx, d.Pool)
 			lastTrim = time.Now()
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+		case <-wake:
 		}
 	}
 }
@@ -290,8 +303,8 @@ func EventCounts(pool *pgxpool.Pool) func(ctx context.Context) (pending, stuck i
 	return func(ctx context.Context) (int, int, error) {
 		var pending, stuck int
 		err := pool.QueryRow(ctx, `
-			SELECT count(*), count(*) FILTER (WHERE created_at < now() - interval '10 minutes')
-			FROM core.event_deliveries WHERE delivered_at IS NULL`).Scan(&pending, &stuck)
+			SELECT count(*), count(*) FILTER (WHERE COALESCE(scheduled_for, created_at) < now() - interval '10 minutes')
+			FROM core.event_deliveries WHERE delivered_at IS NULL AND (scheduled_for IS NULL OR scheduled_for <= now())`).Scan(&pending, &stuck)
 		return pending, stuck, err
 	}
 }
