@@ -404,6 +404,8 @@ class SpendRequestOut(BaseModel):
     submitted_at: datetime
 
     model_config = {"from_attributes": True}
+
+
 class PettyFloatCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     location_id: str = Field(default="", max_length=64)

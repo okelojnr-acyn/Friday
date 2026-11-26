@@ -428,6 +428,8 @@ class SpendRequest(Base):
     settle_method: Mapped[str] = mapped_column(Text, nullable=False, default="")
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class PettyFloat(Base):
     """Petty cash (spending plan part C): a fixed float at a location, one
     holder. What they should hold is the sum of its moves."""
