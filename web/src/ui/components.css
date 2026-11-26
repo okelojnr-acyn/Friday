@@ -3010,3 +3010,31 @@
     flex-basis: min(85vw, 300px);
   }
 }
+
+/* Business settings > Spending (shell/business/SpendingSection). */
+.spend-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+.spend-preset {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding: 14px;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.spend-preset.chosen {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent) inset;
+}
+.spend-preset:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
