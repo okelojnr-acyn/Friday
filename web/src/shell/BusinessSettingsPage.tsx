@@ -6,6 +6,7 @@ import { formatMoney, saveOrgSettings, useOrgSettings } from "../lib/orgSettings
 import { Button } from "../ui/Button";
 import { Checkbox, FieldWrap, Select } from "../ui/Field";
 import { ApprovalsSection } from "./business/ApprovalsSection";
+import { SpendingSection } from "./business/SpendingSection";
 import { EtimsSection } from "./business/EtimsSection";
 import { PaymentsSection } from "./business/PaymentsSection";
 import { SaveRow } from "./business/SaveRow";
@@ -42,6 +43,7 @@ const TABS = [
   ["tills", "Tills"],
   ["payments", "Payments"],
   ["approvals", "Approvals"],
+  ["spending", "Spending"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
@@ -80,6 +82,7 @@ export function BusinessSettingsPage() {
       {tab === "tills" ? <TillsSection canEdit={canEdit} /> : null}
       {tab === "payments" ? <PaymentsSection canEdit={canEdit} /> : null}
       {tab === "approvals" ? <ApprovalsSection canEdit={canEdit} /> : null}
+      {tab === "spending" ? <SpendingSection canEdit={canEdit} /> : null}
     </div>
   );
 }

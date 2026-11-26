@@ -193,6 +193,9 @@ func main() {
 	mux.HandleFunc("GET /internal/people/{org_id}/seen", people.SeenSince)
 	mux.Handle("GET /orgs/approval-limits", requireAuth(http.HandlerFunc(people.GetApprovalLimits)))
 	mux.Handle("PUT /orgs/approval-limits", requireAuth(http.HandlerFunc(people.PutApprovalLimits)))
+	mux.Handle("GET /orgs/spending-policy", requireAuth(http.HandlerFunc(people.GetSpendingPolicy)))
+	mux.Handle("PUT /orgs/spending-policy", requireAuth(http.HandlerFunc(people.PutSpendingPolicy)))
+	mux.HandleFunc("GET /internal/people/{org_id}/spending-policy", people.SpendingPolicyFor)
 	mux.HandleFunc("GET /internal/orgs/{org_id}/time-zone", people.OrgTimeZone)
 	mux.Handle("PUT /auth/me/time-zone", requireAuth(http.HandlerFunc(people.SetMyTimeZone)))
 	bell := &inbox.Inbox{Pool: pool}
