@@ -75,6 +75,13 @@ class Invoice(Base):
     paystack_reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # Last time the till's poll asked Paystack about this sale (0019).
     paystack_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The open pay request (0021, pay_requests.py): which provider, its id
+    # there, where the customer pays ("" when the provider only emails it),
+    # and how much it asked for.
+    pay_request_provider: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    pay_request_ref: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    pay_request_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    pay_request_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     # "" means this invoice isn't a recurring template. A non-empty value
     # makes generate_recurring_invoices (see main.py) clone this invoice's
     # lines into a fresh draft invoice once `next_recurrence_at` passes.

@@ -9,6 +9,8 @@ paystack_webhook.
 
 import hashlib
 import hmac
+import json
+from datetime import date, timedelta
 from urllib.parse import quote
 
 import httpx
@@ -97,6 +99,67 @@ class PaystackProvider(PaymentProvider):
             "currency": str(d.get("currency", "")).upper(),
             "channel": str(d.get("channel", "")).lower(),
         }
+
+    async def create_pay_request(
+        self, amount_cents: int, currency: str, *, email: str, name: str, description: str,
+        reference: str, due_days: int, metadata: dict,
+    ) -> dict:
+        """Paystack Payment Request (POST /paymentrequest): Paystack emails
+        the customer and shows it "pending" until paid. It needs a Paystack
+        customer (POST /customer by email first). Paystack gives no pay URL
+        for it, so "url" is ""."""
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            first, _, last = name.strip().partition(" ")
+            c = await client.post(
+                f"{PAYSTACK_API_BASE}/customer",
+                json={"email": email, "first_name": first, "last_name": last},
+                headers=self._headers(),
+            )
+            cd = c.json() if c.content else {}
+            if c.status_code >= 400 or not cd.get("status"):
+                raise RuntimeError(f"Paystack customer failed: {cd.get('message') or c.status_code}")
+            due = (date.today() + timedelta(days=max(due_days, 0))).isoformat()
+            resp = await client.post(
+                f"{PAYSTACK_API_BASE}/paymentrequest",
+                json={
+                    "customer": cd["data"]["customer_code"],
+                    "amount": int(amount_cents),
+                    "currency": currency.upper(),
+                    "due_date": due,
+                    "description": description,
+                    "send_notification": True,
+                    "invoice_number": reference[-20:],
+                    "metadata": json.dumps(metadata),
+                },
+                headers=self._headers(),
+            )
+        data = resp.json() if resp.content else {}
+        if resp.status_code >= 400 or not data.get("status"):
+            raise RuntimeError(f"Paystack payment request failed: {data.get('message') or resp.status_code}")
+        return {"ref": data["data"]["request_code"], "url": ""}
+
+    async def pay_request_status(self, ref: str) -> dict:
+        """GET /paymentrequest/verify/:code. Paid is its `paid` flag (or a
+        `paid_at`), not a status string."""
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{PAYSTACK_API_BASE}/paymentrequest/verify/{quote(ref, safe='')}", headers=self._headers()
+            )
+        if resp.status_code == 404:
+            return {"paid": False, "amount": 0, "currency": ""}
+        resp.raise_for_status()
+        d = resp.json().get("data") or {}
+        paid = bool(d.get("paid") or d.get("paid_at"))
+        return {"paid": paid, "amount": int(d.get("amount") or 0) if paid else 0, "currency": str(d.get("currency", "")).upper()}
+
+    async def cancel_pay_request(self, ref: str) -> None:
+        """POST /paymentrequest/archive/:code."""
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f"{PAYSTACK_API_BASE}/paymentrequest/archive/{quote(ref, safe='')}", headers=self._headers()
+            )
+        if resp.status_code >= 400 and resp.status_code != 404:
+            resp.raise_for_status()
 
     def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
         """`x-paystack-signature` is the hex HMAC-SHA512 of the raw body

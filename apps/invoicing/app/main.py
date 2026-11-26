@@ -1,3 +1,4 @@
+from html import escape as html_escape
 import logging
 import uuid
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from . import pay_requests
 from .credit import customer_by_name, rebook_ref
 from .credit import router as credit_router
 from .events import invoice_lines_payload, publish_invoice_paid, publish_pos_sale_recorded
@@ -198,6 +200,10 @@ async def _email_invoice(org_id: str, inv: Invoice, session: AsyncSession) -> No
     if inv.due_at is not None:
         due = local_date(inv.due_at, await business_tz(str(org_id)))
         html += f"<p>Due {due:%Y-%m-%d}.</p>"
+    if inv.pay_request_url:
+        html += f'<p><a href="{html_escape(inv.pay_request_url)}">Pay online</a></p>'
+    elif inv.pay_request_ref:
+        html += "<p>A separate email from our payment provider has a link to pay online.</p>"
     try:
         await ResendProvider(config).send(customer.email, f"Invoice {inv.number}", html)
     except Exception as exc:  # noqa: BLE001 -- see docstring, this must never propagate
@@ -405,10 +411,41 @@ async def set_invoice_status(
     newly_sent = body.status == "sent" and inv.issued_at is None
     if newly_sent:
         inv.issued_at = inv.updated_at
+    if body.status == "void":
+        await pay_requests.cancel(principal.org_id, inv)  # so it can't be paid now
     await session.commit()
     await session.refresh(inv, attribute_names=["lines", "payments"])
     if newly_sent:
+        # Sent to a customer with an email: the business's provider asks
+        # for the money too. Its failing never undoes sending the invoice.
+        try:
+            if await pay_requests.start(session, principal.org_id, inv):
+                await session.commit()
+        except HTTPException as exc:
+            logger.warning("pay request for %s: %s", inv.number, exc.detail)
+            await session.rollback()
+        await session.refresh(inv, attribute_names=["lines", "payments"])
         await _email_invoice(principal.org_id, inv, session)
+    return InvoiceOut.from_model(inv)
+
+
+@invoices_router.post("/{invoice_id}/pay-request", response_model=InvoiceOut)
+async def send_pay_request(
+    invoice_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("invoices.write")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Asks for the invoice's balance again through the business's payment
+    provider (the last request is cancelled). Needs a sent invoice, a
+    customer with an email and a connected provider."""
+    inv = await _get_invoice(session, principal, invoice_id, scope=scope)
+    if inv.status != "sent":
+        raise HTTPException(400, "send the invoice first; a paid, void or draft one isn't requested")
+    if not await pay_requests.start(session, principal.org_id, inv):
+        raise HTTPException(400, "connect Paystack, Stripe or Pesapal, and give the customer an email")
+    await session.commit()
+    await session.refresh(inv, attribute_names=["lines", "payments"])
     return InvoiceOut.from_model(inv)
 
 
@@ -1739,5 +1776,6 @@ app.include_router(credit_router)
 app.include_router(paystack_router)
 app.include_router(registers_router)
 app.include_router(etims_router)
+app.include_router(pay_requests.router)
 app.include_router(webhooks_router)
 app.include_router(external_router)

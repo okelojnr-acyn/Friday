@@ -48,6 +48,59 @@ class StripeProvider(PaymentProvider):
             resp.raise_for_status()
             return resp.json()
 
+    async def create_pay_request(
+        self, amount_cents: int, currency: str, *, email: str, name: str, description: str,
+        reference: str, due_days: int, metadata: dict,
+    ) -> dict:
+        """A Stripe Invoice sent to the customer (collection_method
+        send_invoice): the customer (found by email, else created), the
+        invoice carrying our metadata, one item for the amount on it, then
+        send (which finalizes). "url" is its hosted_invoice_url."""
+        auth = (self.secret_key, "")
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            found = await client.get(f"{STRIPE_API_BASE}/customers", params={"email": email, "limit": 1}, auth=auth)
+            found.raise_for_status()
+            existing = found.json().get("data") or []
+            if existing:
+                customer = existing[0]["id"]
+            else:
+                made = await client.post(f"{STRIPE_API_BASE}/customers", data={"email": email, "name": name}, auth=auth)
+                made.raise_for_status()
+                customer = made.json()["id"]
+            form = {"customer": customer, "collection_method": "send_invoice", "days_until_due": str(max(due_days, 1)),
+                    "description": description}
+            form.update({f"metadata[{k}]": str(v) for k, v in metadata.items()})
+            inv = await client.post(f"{STRIPE_API_BASE}/invoices", data=form, auth=auth)
+            inv.raise_for_status()
+            invoice_id = inv.json()["id"]
+            item = await client.post(
+                f"{STRIPE_API_BASE}/invoiceitems",
+                data={"customer": customer, "invoice": invoice_id, "amount": str(int(amount_cents)),
+                      "currency": currency.lower(), "description": description},
+                auth=auth,
+            )
+            item.raise_for_status()
+            sent = await client.post(f"{STRIPE_API_BASE}/invoices/{invoice_id}/send", auth=auth)
+            sent.raise_for_status()
+            return {"ref": invoice_id, "url": sent.json().get("hosted_invoice_url") or ""}
+
+    async def pay_request_status(self, ref: str) -> dict:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(f"{STRIPE_API_BASE}/invoices/{ref}", auth=(self.secret_key, ""))
+        if resp.status_code == 404:
+            return {"paid": False, "amount": 0, "currency": ""}
+        resp.raise_for_status()
+        d = resp.json()
+        paid = d.get("status") == "paid"
+        return {"paid": paid, "amount": int(d.get("amount_paid") or 0) if paid else 0, "currency": str(d.get("currency", "")).upper()}
+
+    async def cancel_pay_request(self, ref: str) -> None:
+        """POST /invoices/{id}/void (a finalized, unpaid invoice)."""
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{STRIPE_API_BASE}/invoices/{ref}/void", auth=(self.secret_key, ""))
+        if resp.status_code >= 400 and resp.status_code not in (400, 404):  # 400: already paid or void
+            resp.raise_for_status()
+
     def verify_webhook_signature(self, payload: bytes, sig_header: str) -> bool:
         """Stripe's `Stripe-Signature` header is `t=<timestamp>,v1=<hmac>,...`
         -- see https://stripe.com/docs/webhooks/signatures. Always verify
