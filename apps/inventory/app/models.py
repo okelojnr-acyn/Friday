@@ -183,7 +183,7 @@ class Supplier(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-PURCHASE_ORDER_STATUSES = ("draft", "ordered", "received")
+PURCHASE_ORDER_STATUSES = ("draft", "requested", "approved", "ordered", "received")
 
 
 class PurchaseOrder(Base):
@@ -204,6 +204,11 @@ class PurchaseOrder(Base):
     )
     number: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    # A request to buy (0018): who sent it for approval, who decided, why.
+    requested_by_user_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    requested_by_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decided_by_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decision_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # The supplier's own invoice (0013): the VAT return lists it.
     supplier_invoice_no: Mapped[str] = mapped_column(Text, nullable=False, default="")
     supplier_invoice_date: Mapped[date | None] = mapped_column(Date, nullable=True)

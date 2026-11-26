@@ -56,6 +56,19 @@ async def client():
 
 
 @pytest.fixture(autouse=True)
+def _never_ask_first(monkeypatch):
+    """No kernel in tests: the Standard spending policy, but orders never
+    need approval first (test_purchase_requests.py puts the rule back)."""
+    from friday_common.access import STANDARD_SPENDING
+
+    async def policy(_org):
+        never = 10**12
+        return {**STANDARD_SPENDING, "ask_first_member": never, "ask_first_team_leader": never, "ask_first_branch_manager": never}
+
+    monkeypatch.setattr("app.main.spending_policy", policy)
+
+
+@pytest.fixture(autouse=True)
 async def _dispose_engine_after_test():
     yield
     await dispose_engine()

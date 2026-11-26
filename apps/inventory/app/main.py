@@ -20,7 +20,7 @@ from friday_common import (
     resource,
     set_org_context,
 )
-from friday_common.access import Scope, require, require_place
+from friday_common.access import Scope, approvers_for, require, require_place, spending_policy
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -836,6 +836,48 @@ async def get_purchase_order(
     return PurchaseOrderOut.from_model(po)
 
 
+async def _request_to_buy(principal: Principal, po: PurchaseOrder, body: PurchaseOrderStatusUpdate) -> None:
+    """Spending plan part D. Sending a draft for approval records who asked;
+    someone else approves it within their limit, or sends it back with a
+    reason. Ordering (or receiving) a draft straight away is open up to the
+    person's ask-first amount; owners and admins always.
+    shortcut: approvers aren't told on Guss or the bell yet; requests show as "requested" in Purchase orders."""
+    to, was = body.status, po.status
+    total = sum(line.total_cost_cents for line in po.lines)
+    if to == "requested":
+        if was != "draft":
+            raise HTTPException(400, f"only a draft is sent for approval; this one is {was}")
+        po.requested_by_user_id, po.requested_by_name = principal.user_id, principal.email
+        po.decided_by_name = po.decision_note = ""
+        return
+    if to == "approved" or (to == "draft" and was == "requested"):
+        if was != "requested":
+            raise HTTPException(400, "only a request waiting for approval is decided")
+        if principal.user_id == po.requested_by_user_id and principal.role != "owner":
+            raise HTTPException(403, "someone other than whoever asked decides it")
+        if principal.role not in ("owner", "admin", "branch_manager", "team_leader"):
+            raise HTTPException(403, "a team leader, manager, owner or admin decides requests to buy")
+        limit = None
+        if principal.role not in ("owner", "admin"):
+            limit = (await approvers_for(principal.org_id, po.requested_by_user_id)).limits.get(principal.role)
+        if limit is not None and total > limit:
+            raise HTTPException(403, f"above your approval limit ({limit // 100:,}); ask a manager, owner or admin")
+        if to == "draft" and not body.note.strip():
+            raise HTTPException(422, "say why it's sent back")
+        po.decided_by_name, po.decision_note = principal.email, body.note.strip()
+        return
+    if to in ("ordered", "received") and was in ("draft", "requested"):
+        if was == "requested":
+            raise HTTPException(400, "it's waiting for approval")
+        if principal.role not in ("owner", "admin"):
+            policy = await spending_policy(principal.org_id)
+            key = {"team_leader": "ask_first_team_leader", "branch_manager": "ask_first_branch_manager"}.get(
+                principal.role, "ask_first_member"
+            )
+            if total > int(policy[key]):
+                raise HTTPException(403, f"an order over {int(policy[key]) / 100:,.0f} needs approval first; send it for approval")
+
+
 @purchase_orders_router.patch("/{po_id}/status", response_model=PurchaseOrderOut)
 async def set_purchase_order_status(
     po_id: uuid.UUID,
@@ -848,6 +890,7 @@ async def set_purchase_order_status(
         raise HTTPException(422, f"status must be one of {PURCHASE_ORDER_STATUSES}")
     po = await _get_owned_po(session, principal, po_id)
     previous_status = po.status
+    await _request_to_buy(principal, po, body)
     po.status = body.status
     po.updated_at = datetime.now(UTC)
     if body.supplier_invoice_no is not None:
