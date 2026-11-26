@@ -423,6 +423,9 @@ class PettyFloatCreate(BaseModel):
 
 class PettyFloatUpdate(BaseModel):
     holder_user_id: str | None = Field(default=None, min_length=1, max_length=64)
+    # A new holder takes over only after the box is counted together.
+    counted_cents: int | None = Field(default=None, ge=0)
+    note: str = Field(default="", max_length=300)
     float_cents: int | None = Field(default=None, gt=0)
     active: bool | None = None
 

@@ -2602,11 +2602,16 @@ async def update_petty_cash(
     _pay: Scope = Depends(require("pay.write")),
     session: AsyncSession = Depends(get_org_session),
 ):
-    """A new holder (count it together first), a new size, or closed.
-    shortcut: handing over doesn't force a count; add one if floats go missing at handovers."""
+    """A new holder, a new size, or closed. A new holder takes over only
+    with the box counted (the handover count): over or short is the old
+    holder's, booked before the new one starts."""
     f = await _get_float(session, principal, float_id)
-    if body.holder_user_id is not None:
+    if body.holder_user_id is not None and body.holder_user_id != f.holder_user_id:
+        if body.counted_cents is None:
+            raise HTTPException(422, f"count the box with {f.holder_name or 'the holder'} first and enter what's in it")
         holder = await _holder(session, principal, body.holder_user_id)
+        why = body.note.strip()
+        await _record_count(session, principal, f, body.counted_cents, why, label=f"Handover to {holder.name}")
         f.holder_user_id, f.holder_name = holder.user_id, holder.name
     if body.float_cents is not None:
         f.float_cents = body.float_cents
@@ -2658,18 +2663,27 @@ async def count_petty_cash(
     f = await _get_float(session, principal, float_id)
     if principal.user_id != f.holder_user_id and not _pays(principal):
         raise HTTPException(403, "the holder, an owner or an admin counts it")
+    await _record_count(session, principal, f, body.counted_cents, body.note.strip())
+    await session.commit()
+    return await _petty_view(session, principal, f)
+
+
+async def _record_count(session: AsyncSession, principal: Principal, f: PettyFloat, counted: int, note: str, label: str = "") -> int:
+    """Records a count and books what's over or short (a shortage needs a
+    reason). Expected: what it should hold less slips not yet confirmed
+    (that cash is already out). Returns the difference."""
     view = await _petty_view(session, principal, f)
-    diff = body.counted_cents - ((view.balance_cents or 0) - (view.pending_cents or 0))
-    if diff < 0 and not body.note.strip():
+    diff = counted - ((view.balance_cents or 0) - (view.pending_cents or 0))
+    if diff < 0 and not note:
         raise HTTPException(422, f"it's {-diff / 100:,.2f} short; say why")
-    move = PettyMove(org_id=f.org_id, float_id=f.id, kind="count", amount_cents=diff, note=body.note.strip(),
+    note = f"{label}: {note}" if label and note else label or note
+    move = PettyMove(org_id=f.org_id, float_id=f.id, kind="count", amount_cents=diff, note=note,
                      by_name=await _name_of(session, principal), created_at=datetime.now(UTC))
     session.add(move)  # a count that agrees is kept too: it shows when it was last counted
     await session.flush()
     if diff:
         await _petty_moved(session, principal, f, move)
-    await session.commit()
-    return await _petty_view(session, principal, f)
+    return diff
 
 
 @petty_router.get("/slips", response_model=list[ExpenseClaimOut])
