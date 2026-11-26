@@ -97,6 +97,14 @@ class ExpenseClaim(Base):
     paid_from: Mapped[str] = mapped_column(Text, nullable=False, default="own")
     no_receipt_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     etims_invoice_no: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Asked first (0017): the request it was asked under, or why it wasn't
+    # (an emergency); a note when it's over its approval by more than the
+    # policy's tolerance.
+    request_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spend_requests.id", ondelete="SET NULL"), nullable=True
+    )
+    emergency_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    flag: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class ClaimReceipt(Base):
@@ -377,3 +385,42 @@ class AnnouncementRecipient(Base):
     user_id: Mapped[str] = mapped_column(Text, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SpendRequest(Base):
+    """Asking first (spending plan part B): a spend, or a trip with an
+    optional cash advance. Decided like a claim; its claims carry it; a
+    trip is closed by settling its advance against them."""
+
+    __tablename__ = "spend_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False, default="spend")
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="KES")
+    for_kind: Mapped[str] = mapped_column(Text, nullable=False, default="daily")
+    for_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    for_label: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    category: Mapped[str] = mapped_column(Text, nullable=False, default="other")
+    destination: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    starts_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    ends_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    advance_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="submitted")
+    waiting_on_user_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    waiting_on_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decision_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decided_by_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    advance_method: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    advance_reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    advance_paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    spent_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    settle_method: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

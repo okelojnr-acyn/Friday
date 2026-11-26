@@ -429,7 +429,7 @@ async def advance_paid(body: dict, session: AsyncSession = Depends(get_session))
         org_id=org_id,
         number=_new_entry_number(now),
         entry_date=local_date(now, await business_tz(str(org_id))),
-        memo=f"Salary advance {advance_id} paid",
+        memo=(payload.get("description") or f"Salary advance {advance_id} paid")[:500],
         source="advance",
         source_ref=advance_id,
         status="posted",
@@ -452,6 +452,57 @@ async def advance_paid(body: dict, session: AsyncSession = Depends(get_session))
                 description=description,
             )
         )
+    await session.commit()
+
+
+@webhooks_router.post("/trip-settled", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def trip_settled(body: dict, session: AsyncSession = Depends(get_session)):
+    """Subscribed to minions.trip.settled: the trip's spends become 6900
+    Shop expenses against 1210 Staff advances (its cash up front). What
+    was left and given back goes into the money it came back as; an
+    overspend paid to the person comes out of it; left and taken off pay
+    ("payroll") stays in 1210 until payroll recovers it."""
+    payload = body.get("payload", {})
+    org_id = uuid.UUID(body["org_id"])
+    await set_org_context(session, str(org_id))
+    if not await first_delivery(session, body):
+        return
+    request_id = payload.get("request_id") or ""
+    if request_id and await _already_posted(session, org_id, "trip", request_id):
+        return
+    advance, spent = int(payload.get("advance_cents") or 0), int(payload.get("spent_cents") or 0)
+    method = payload.get("method") or "cash"
+    balance = advance - spent  # > 0 given back (or off pay); < 0 paid to them
+    staff_credit = spent if method == "payroll" and balance > 0 else advance
+    await ensure_default_accounts(session, org_id)
+    expenses = await get_account_by_code(session, org_id, "6900")
+    advances = await get_account_by_code(session, org_id, "1210")
+    money = await get_account_by_code(session, org_id, MONEY_ACCOUNT.get(method, "1010"))
+    lines = [(expenses, spent, 0, "Trip spends"), (advances, 0, staff_credit, "Trip advance settled")]
+    if balance > 0 and method != "payroll":
+        lines.append((money, balance, 0, "Unused advance given back"))
+    elif balance < 0:
+        lines.append((money, 0, -balance, "Overspend paid to staff"))
+    lines = [line for line in lines if line[1] or line[2]]
+    if not lines:
+        return
+    now = datetime.now(UTC)
+    entry = JournalEntry(
+        org_id=org_id,
+        number=_new_entry_number(now),
+        entry_date=local_date(now, await business_tz(str(org_id))),
+        memo=f"Trip settled: {payload.get('description') or request_id}"[:500],
+        source="trip",
+        source_ref=request_id,
+        status="posted",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(entry)
+    await session.flush()
+    for account, debit, credit, description in lines:
+        session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=account.id,
+                                debit_cents=debit, credit_cents=credit, description=description))
     await session.commit()
 
 
