@@ -458,3 +458,5 @@ class PettyFloatOut(BaseModel):
     pending_cents: int | None = None
     held_by_me: bool = False
     moves: list[PettyMoveOut] = []
+
+    model_config = {"from_attributes": True}
