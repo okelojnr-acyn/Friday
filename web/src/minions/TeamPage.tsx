@@ -80,7 +80,12 @@ export function TeamPage() {
                 <p className="minions-decide-amount">{formatMoney(c.amount_cents, { currency: c.currency })}</p>
                 <p className="minions-row-title">{c.description}</p>
                 <p className="field-label">
-                  {nameOf(c.employee_id)}, {c.reimburse === false ? "the business paid" : "wants it paid back"},{" "}
+                  For {c.for_kind && c.for_kind !== "daily" ? `${c.for_kind}: ${c.for_label}` : "daily running"}
+                  {c.category ? `, ${c.category}` : ""}
+                  {!c.receipt_sha && c.no_receipt_reason ? `. No receipt: ${c.no_receipt_reason}` : ""}
+                </p>
+                <p className="field-label">
+                  {nameOf(c.employee_id)}, {c.reimburse === false ? (c.paid_from === "petty_cash" ? "paid from petty cash" : "the business paid") : "wants it paid back"},{" "}
                   {new Date(c.submitted_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
                 </p>
                 <ClaimDecision claim={c} onDone={load} />

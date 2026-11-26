@@ -7,8 +7,14 @@ import {
   submitExpenseClaim,
   uploadClaimReceipt,
   withdrawExpenseClaim,
+  CATEGORIES,
   type ExpenseClaim,
+  type ForKind,
+  type PaidFrom,
 } from "../lib/minions";
+import { api } from "../lib/api";
+import { listRecords } from "../lib/resourceApi";
+import { PickList, type PickOption } from "../ui/PickList";
 import { Button } from "../ui/Button";
 import { FieldWrap, Input } from "../ui/Field";
 import { formatMoney, useOrgSettings } from "../lib/orgSettings";
@@ -69,8 +75,13 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
   const [photoKey, setPhotoKey] = useState(0); // resets the file input
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
-  // Who paid varies person to person (owner, 2026-11-22), so always ask.
-  const [whoPaid, setWhoPaid] = useState<"" | "me" | "business">("");
+  // Which money paid it varies person to person (owner, 2026-11-22), so always ask.
+  const [whoPaid, setWhoPaid] = useState<"" | PaidFrom>("");
+  const [forKind, setForKind] = useState<FormFor>("daily");
+  const [forPick, setForPick] = useState<PickOption | null>(null);
+  const [category, setCategory] = useState("");
+  const [reason, setReason] = useState("");
+  const [etims, setEtims] = useState("");
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -88,8 +99,11 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
     e.preventDefault();
     const cents = Math.round(Number.parseFloat(amount || "0") * 100);
     if (!Number.isFinite(cents) || cents <= 0) return setProblem("Enter the amount on the receipt");
-    if (!description.trim()) return setProblem("Say what it was for");
-    if (!whoPaid) return setProblem("Say who paid");
+    if (!description.trim()) return setProblem("Say what you bought");
+    if (forKind !== "daily" && !forPick) return setProblem(`Choose the ${FOR_NAME[forKind]} it was for`);
+    if (!category) return setProblem("Choose what kind of cost it is");
+    if (!whoPaid) return setProblem("Say whose money paid");
+    if (!photo && !reason.trim()) return setProblem("Take a photo of the receipt, or say why there isn't one");
     setProblem(null);
     onError(null);
     setSending(true);
@@ -98,7 +112,14 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
         description: description.trim(),
         amount_cents: cents,
         currency,
-        reimburse: whoPaid === "me",
+        reimburse: whoPaid === "own",
+        paid_from: whoPaid,
+        for_kind: forKind,
+        for_id: forPick?.value ?? "",
+        for_label: forPick?.label ?? "",
+        category,
+        no_receipt_reason: photo ? "" : reason.trim(),
+        etims_invoice_no: etims.trim(),
       });
       if (photo) {
         try {
@@ -113,6 +134,11 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
       setAmount("");
       setDescription("");
       setWhoPaid("");
+      setForKind("daily");
+      setForPick(null);
+      setCategory("");
+      setReason("");
+      setEtims("");
     } catch (err) {
       setProblem(errorText(err, "Could not send the claim"));
     } finally {
@@ -141,7 +167,12 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
           onChange={(e) => setAmount(e.target.value)}
         />
       </FieldWrap>
-      <FieldWrap label="What for" required>
+      {!preview ? (
+        <FieldWrap label="No receipt? Say why (small amounts only, a few times a year)">
+          <Input value={reason} maxLength={200} placeholder="e.g. Boda boda, no receipt given" onChange={(e) => setReason(e.target.value)} />
+        </FieldWrap>
+      ) : null}
+      <FieldWrap label="What you bought" required>
         <Input
           value={description}
           maxLength={200}
@@ -150,14 +181,38 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
         />
       </FieldWrap>
       <fieldset className="minions-choice">
-        <legend>Who paid?</legend>
-        <button type="button" aria-pressed={whoPaid === "me"} onClick={() => setWhoPaid("me")}>
-          I paid, pay me back
+        <legend>What was it for?</legend>
+        {(Object.keys(FOR_NAME) as FormFor[]).map((k) => (
+          <button key={k} type="button" aria-pressed={forKind === k} onClick={() => (setForKind(k), setForPick(null))}>
+            {FOR_LABEL[k]}
+          </button>
+        ))}
+      </fieldset>
+      {forKind !== "daily" ? <ForPicker kind={forKind} value={forPick} onChange={setForPick} /> : null}
+      <FieldWrap label="Kind of cost" required>
+        <PickList
+          aria-label="Kind of cost"
+          placeholder="Transport, fuel, meals…"
+          value={category}
+          onChange={setCategory}
+          options={CATEGORIES.map(([value, label]) => ({ value, label }))}
+        />
+      </FieldWrap>
+      <fieldset className="minions-choice">
+        <legend>Whose money paid?</legend>
+        <button type="button" aria-pressed={whoPaid === "own"} onClick={() => setWhoPaid("own")}>
+          Mine, pay me back
+        </button>
+        <button type="button" aria-pressed={whoPaid === "petty_cash"} onClick={() => setWhoPaid("petty_cash")}>
+          Petty cash or the till
         </button>
         <button type="button" aria-pressed={whoPaid === "business"} onClick={() => setWhoPaid("business")}>
-          The business paid
+          The business's M-Pesa, card or bank
         </button>
       </fieldset>
+      <FieldWrap label="eTIMS invoice number (if the seller gave one)">
+        <Input value={etims} maxLength={40} onChange={(e) => setEtims(e.target.value)} />
+      </FieldWrap>
       {problem ? (
         <p className="minions-problem" role="alert">
           {problem}
@@ -308,5 +363,50 @@ function ClaimRow({
         )}
       </div>
     </li>
+  );
+}
+
+const FOR_NAME: Record<Exclude<ForKind, "trip" | "meeting">, string> = {
+  daily: "daily running",
+  task: "task",
+  project: "project",
+  vehicle: "vehicle",
+};
+type FormFor = keyof typeof FOR_NAME;
+const FOR_LABEL: Record<FormFor, string> = {
+  daily: "Daily running",
+  task: "A task",
+  project: "A project",
+  vehicle: "A vehicle",
+};
+
+/** The task (mine), project or vehicle a claim was for, searchable. */
+function ForPicker({ kind, value, onChange }: { kind: FormFor; value: PickOption | null; onChange: (o: PickOption | null) => void }) {
+  const [options, setOptions] = useState<PickOption[] | null>(null);
+  useEffect(() => {
+    setOptions(null);
+    const load =
+      kind === "task"
+        ? api.get<{ id: string; title: string; status: string }[]>("/api/projects/tasks?mine=true").then((ts) =>
+            ts.filter((t) => t.status !== "done").map((t) => ({ value: t.id, label: t.title })),
+          )
+        : listRecords(kind === "project" ? "projects" : "fleets", kind === "project" ? "project" : "vehicle").then((rows) =>
+            rows.map((r) => ({
+              value: String(r.id),
+              label: [r.name, r.plate_number].filter(Boolean).join(", ") || String(r.id),
+            })),
+          );
+    load.then(setOptions).catch(() => setOptions([]));
+  }, [kind]);
+  return (
+    <FieldWrap label={`Which ${FOR_NAME[kind]}`} required>
+      <PickList
+        aria-label={`Which ${kind}`}
+        placeholder="Search…"
+        value={value?.value ?? ""}
+        options={options}
+        onChange={(v) => onChange(options?.find((o) => o.value === v) ?? null)}
+      />
+    </FieldWrap>
   );
 }

@@ -60,7 +60,16 @@ class ExpenseClaimCreate(BaseModel):
     currency: str = "USD"
     receipt_url: str = ""
     # True: "I paid, pay me back"; False: "the business paid" (recorded, never paid out).
+    # paid_from says which money, and wins over reimburse when sent.
     reimburse: bool = True
+    paid_from: Literal["own", "petty_cash", "business"] | None = None
+    # What it was for (Guss and older apps send none: daily running).
+    for_kind: Literal["daily", "task", "project", "vehicle", "trip", "meeting"] = "daily"
+    for_id: str = Field(default="", max_length=64)
+    for_label: str = Field(default="", max_length=120)
+    category: Literal["transport", "fuel", "meals", "accommodation", "airtime", "supplies", "repairs", "cleaning", "other"] = "other"
+    no_receipt_reason: str = Field(default="", max_length=200)
+    etims_invoice_no: str = Field(default="", max_length=40)
 
 
 class ExpenseClaimStatusUpdate(BaseModel):
@@ -75,6 +84,8 @@ class ExpenseClaimResend(BaseModel):
     description: str | None = Field(default=None, min_length=1)
     amount_cents: int | None = Field(default=None, gt=0)
     reimburse: bool | None = None
+    no_receipt_reason: str | None = Field(default=None, max_length=200)
+    etims_invoice_no: str | None = Field(default=None, max_length=40)
 
 
 class ExpenseClaimPay(BaseModel):
@@ -117,6 +128,13 @@ class ExpenseClaimOut(BaseModel):
     paid_method: str = ""
     paid_reference: str = ""
     paid_at: datetime | None = None
+    for_kind: str = "daily"
+    for_id: str = ""
+    for_label: str = ""
+    category: str = "other"
+    paid_from: str = "own"
+    no_receipt_reason: str = ""
+    etims_invoice_no: str = ""
 
     model_config = {"from_attributes": True}
 

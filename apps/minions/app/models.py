@@ -86,6 +86,17 @@ class ExpenseClaim(Base):
     paid_method: Mapped[str] = mapped_column(Text, nullable=False, default="")
     paid_reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # What it was for (0016): daily running, or a task, project, vehicle,
+    # trip or meeting (its id and name as picked); a category; which money
+    # paid it (own = pay back; petty_cash or business = confirmed, not
+    # paid back); a reason standing in for the receipt; the eTIMS number.
+    for_kind: Mapped[str] = mapped_column(Text, nullable=False, default="daily")
+    for_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    for_label: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    category: Mapped[str] = mapped_column(Text, nullable=False, default="other")
+    paid_from: Mapped[str] = mapped_column(Text, nullable=False, default="own")
+    no_receipt_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    etims_invoice_no: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class ClaimReceipt(Base):
