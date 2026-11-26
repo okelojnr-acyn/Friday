@@ -54,7 +54,7 @@ resource(
             FieldSpec("fuel_type", "Fuel type", "select", options=FUEL_TYPES),
             FieldSpec("status", "Status", "select", options=VEHICLE_STATUSES, required=True),
             FieldSpec("odometer", "Odometer", "number"),
-            FieldSpec("assigned_driver_name", "Assigned driver", "pick", reference="fleets.driver"),
+            FieldSpec("assigned_driver_name", "Assigned driver", "pick", reference="fleets.driver,people:logistics"),
             FieldSpec("created_at", "Added", "datetime", form_visible=False),
         ),
     )
