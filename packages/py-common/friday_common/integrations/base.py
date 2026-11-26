@@ -22,6 +22,27 @@ class PaymentProvider(ABC):
         """Refund a previously completed payment, in full (omit
         `amount_cents`) or in part."""
 
+    # A pay request: an invoice sent to a customer to pay later (Paystack
+    # Payment Requests, Stripe Invoices, a Pesapal order). Every provider
+    # answers the same three, so Invoicing treats them alike; a provider
+    # without them simply isn't offered for sending invoices.
+    async def create_pay_request(
+        self, amount_cents: int, currency: str, *, email: str, name: str, description: str,
+        reference: str, due_days: int, metadata: dict,
+    ) -> dict:
+        """Returns {"ref": the provider's id for it, "url": where the
+        customer pays ("" when the provider only emails it)}."""
+        raise NotImplementedError
+
+    async def pay_request_status(self, ref: str) -> dict:
+        """The provider's own answer, never a webhook body:
+        {"paid": bool, "amount": cents paid, "currency": "KES"}."""
+        raise NotImplementedError
+
+    async def cancel_pay_request(self, ref: str) -> None:
+        """So a replaced or voided request can't be paid too."""
+        raise NotImplementedError
+
 
 class ChatProvider(ABC):
     """Slack, or anything else that can receive a plain-text

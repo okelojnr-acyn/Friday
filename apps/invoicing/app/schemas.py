@@ -153,6 +153,9 @@ class InvoiceOut(BaseModel):
     # Computed, not stored: kind=invoice, status=sent, past due_at, balance > 0.
     is_overdue: bool = False
     days_overdue: int = 0
+    # The open pay request: "paystack", "stripe", "pesapal" or "".
+    pay_request_provider: str = ""
+    pay_request_url: str = ""
 
     model_config = {"from_attributes": True}
 
@@ -173,6 +176,8 @@ class InvoiceOut(BaseModel):
             valid_until=inv.valid_until,
             is_overdue=overdue,
             days_overdue=(now - inv.due_at).days if overdue else 0,
+            pay_request_provider=inv.pay_request_provider if inv.pay_request_ref else "",
+            pay_request_url=inv.pay_request_url,
             status=inv.status,
             currency=inv.currency,
             source=inv.source,

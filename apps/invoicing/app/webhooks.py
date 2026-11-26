@@ -33,6 +33,8 @@ from .models import Customer, Invoice, InvoiceLine, Payment
 from .paystack_pay import parse_debt_reference, parse_reference, settle_debt
 from .paystack_pay import settle as settle_paystack
 
+from .pay_requests import settle as settle_pay_request
+
 router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
 external_router = APIRouter(prefix="/external/webhooks", tags=["external-webhooks"])
 
@@ -121,7 +123,9 @@ async def stripe_webhook(request: Request, session: AsyncSession = Depends(get_s
     org_id = metadata.get("org_id")
     invoice_id = metadata.get("invoice_id")
     if not org_id or not invoice_id:
-        raise HTTPException(400, "missing invoice metadata")
+        # Not one of Friday's (a Stripe Invoice's own payment intent, say):
+        # acknowledged, so Stripe doesn't keep retrying it; nothing is done.
+        return {"ignored": "not a Friday payment"}
 
     config = await get_integration_config(org_id, "stripe")
     if not config.get("secret_key"):
@@ -131,6 +135,12 @@ async def stripe_webhook(request: Request, session: AsyncSession = Depends(get_s
     if not StripeProvider(config).verify_webhook_signature(raw_body, sig_header):
         raise HTTPException(400, "invalid signature")
 
+    if event.get("type") == "invoice.paid":
+        # A pay request (Stripe Invoice): settled by asking Stripe, as the
+        # scheduled check would, only sooner.
+        await set_org_context(session, org_id)
+        await settle_pay_request(session, org_id, invoice_id, str(payment_intent.get("id") or ""))
+        return {"ok": True}
     if event.get("type") != "payment_intent.succeeded":
         return {"ignored": event.get("type")}
 
@@ -185,10 +195,18 @@ async def pesapal_webhook(
     stripe_webhook's PaymentIntent metadata carries org_id: nothing
     identifies which org's config to check until the reference is
     parsed."""
-    try:
-        org_id, invoice_id = order_merchant_reference.split(":", 1)
-    except ValueError:
+    # "{org_id}:{invoice_id}" from the till; a pay request adds ":<random>".
+    parts = order_merchant_reference.split(":")
+    if len(parts) not in (2, 3):
         raise HTTPException(400, "malformed merchant reference")
+    org_id, invoice_id = parts[0], parts[1]
+    if len(parts) == 3:
+        config = await get_integration_config(org_id, "pesapal")
+        if not config.get("consumer_key"):
+            raise HTTPException(400, "pesapal not configured for this org")
+        await set_org_context(session, org_id)
+        await settle_pay_request(session, org_id, invoice_id, order_tracking_id)
+        return {"ok": True}
 
     config = await get_integration_config(org_id, "pesapal")
     if not config.get("consumer_key"):

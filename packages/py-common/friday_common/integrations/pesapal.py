@@ -110,6 +110,23 @@ class PesapalProvider(PaymentProvider):
                 raise RuntimeError(f"Pesapal SubmitOrderRequest failed: {data['error']}")
             return {"id": data["order_tracking_id"], "redirect_url": data["redirect_url"]}
 
+    async def create_pay_request(
+        self, amount_cents: int, currency: str, *, email: str, name: str, description: str,
+        reference: str, due_days: int, metadata: dict,
+    ) -> dict:
+        """A Pesapal order for the invoice: Pesapal doesn't email it, so its
+        page ("url") goes in Friday's own invoice email. metadata carries
+        `merchant_reference`, `callback_url` and `ipn_url`."""
+        out = await self.create_payment_intent(amount_cents, currency, {**metadata, "email": email, "description": description})
+        return {"ref": out["id"], "url": out["redirect_url"]}
+
+    async def pay_request_status(self, ref: str) -> dict:
+        paid = await self.get_transaction_status(ref) == "COMPLETED"
+        return {"paid": paid, "amount": -1 if paid else 0, "currency": ""}  # -1: the amount it was sent for
+
+    async def cancel_pay_request(self, ref: str) -> None:
+        """Pesapal has no cancel: an order nobody pays just lapses."""
+
     async def get_transaction_status(self, order_tracking_id: str) -> str:
         """Returns Pesapal's authoritative payment status
         (payment_status_description, upper-cased: COMPLETED/FAILED/

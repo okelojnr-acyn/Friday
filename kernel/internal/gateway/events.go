@@ -92,6 +92,8 @@ var subscriptions = []subscription{
 	{Event: "minions.meeting.reminder", App: "minions", WebhookPath: "/internal/webhooks/meeting-reminder"},
 	// Scheduled for a task's due time (and 3 days later): Projects checks it.
 	{Event: "projects.task.due", App: "projects", WebhookPath: "/internal/webhooks/task-due"},
+	// Scheduled after a pay request is sent: Invoicing asks the provider if it's paid.
+	{Event: "invoicing.pay_request.check", App: "invoicing", WebhookPath: "/internal/webhooks/pay-request-check"},
 }
 
 
