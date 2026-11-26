@@ -68,8 +68,9 @@ async def test_ask_first_then_claim_against_it(client, as_principal, principal, 
 
 async def test_an_emergency_goes_one_higher_and_needs_its_receipt(client, as_principal, principal, events, monkeypatch):
     monkeypatch.setattr("app.main._receipt_problem", REAL_RECEIPT_RULE)
-    line = ({"user_id": "u-tom", "role": "team_leader", "name": "Tom"},
-            {"user_id": "u-bea", "role": "branch_manager", "name": "Bea"})
+    # Ids of their own: CI runs as a superuser (no RLS), so other tests' time off shows.
+    line = ({"user_id": "u-tom-sr", "role": "team_leader", "name": "Tom"},
+            {"user_id": "u-bea-sr", "role": "branch_manager", "name": "Bea"})
 
     async def approvers(_org, _user):
         return Approvers(limits={"team_leader": 2_000_000, "branch_manager": 5_000_000}, chain=line, top=())
