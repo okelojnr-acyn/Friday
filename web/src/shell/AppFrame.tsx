@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
+import { PageErrorBoundary } from "../ui/PageErrorBoundary";
 import { APP_ICONS } from "../ui/AppTile";
 import { Icon } from "../ui/Icon";
 import { navForPath, type NavItem } from "./appNav";
@@ -23,7 +24,12 @@ export function AppHint() {
 export function AppFrame() {
   const { pathname, search } = useLocation();
   const nav = navForPath(pathname);
-  if (!nav) return <Outlet />;
+  if (!nav)
+    return (
+      <PageErrorBoundary>
+        <Outlet />
+      </PageErrorBoundary>
+    );
 
   const isActive = (item: NavItem) => {
     const [path, query] = item.to.split("?");
@@ -69,7 +75,9 @@ export function AppFrame() {
         </nav>
         <div className="hub-main">
           <ActiveNav.Provider value={active ?? null}>
-            <Outlet />
+            <PageErrorBoundary>
+              <Outlet />
+            </PageErrorBoundary>
           </ActiveNav.Provider>
         </div>
       </div>

@@ -21,6 +21,9 @@ FieldType = Literal[
     # list; `reference` is an API path listing whom the caller may pick
     # ({"anyone": bool, "user_ids": [...]}).
     "person",
+    # A name picked from another resource's records (`reference` =
+    # "app.resource"), searchable, stored as the name (a vehicle's driver).
+    "pick",
 ]
 
 

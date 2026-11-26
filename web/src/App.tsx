@@ -1,7 +1,7 @@
 import { SupplierPage } from "./shell/SupplierPage";
 import { PaidPage } from "./shell/PaidPage";
 import { AccountPage } from "./shell/AccountPage";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { AuthProvider } from "./lib/auth";
 import { OrgSettingsProvider } from "./lib/orgSettings";
 import { RequireAuth } from "./shell/Layout";
@@ -79,9 +79,9 @@ export default function App() {
             <Route path="/web3/market" element={<MarketPage />} />
             {/* People is Minions' admin side (owner, 2026-11-22); /minions/ is the staff app. */}
             <Route path="/people" element={<PeoplePage />} />
-            <Route path="/people/:resource" element={<ResourcePage app="minions" />} />
+            <Route path="/people/:resource" element={<FreshResourcePage app="minions" />} />
             <Route path="/:app" element={<AppIndexRedirect />} />
-            <Route path="/:app/:resource" element={<ResourcePage />} />
+            <Route path="/:app/:resource" element={<FreshResourcePage />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -89,4 +89,12 @@ export default function App() {
       </OrgSettingsProvider>
     </AuthProvider>
   );
+}
+
+/** A new resource is a new page: its state (rows, view, open record)
+ * starts fresh, so one resource's rows never reach another's views
+ * (2026-11-26: purchase orders shown as product cards blanked the app). */
+function FreshResourcePage({ app }: { app?: string }) {
+  const params = useParams();
+  return <ResourcePage key={`${app ?? params.app}/${params.resource}`} app={app} />;
 }
