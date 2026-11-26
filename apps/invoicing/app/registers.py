@@ -16,15 +16,15 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from friday_common import Principal, get_current_principal, get_org_session
+from friday_common import Principal, get_current_principal, get_org_session, publish_event
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from friday_common.access import Scope, require
+from friday_common.access import Scope, require, spending_policy
 
-from .models import Invoice, Payment, PosRegister, PosShift
+from .models import Invoice, Payment, PosPaidOut, PosRegister, PosShift
 from .schemas import PosShiftOut
 
 router = APIRouter(prefix="/pos", tags=["pos-registers"])
@@ -301,11 +301,15 @@ async def shift_summary(session: AsyncSession, shift: PosShift) -> dict:
             sales += 1
     cash = by_method.get("cash", {}).get("cents", 0)
     refunds = by_method.get("refund", {}).get("cents", 0)  # negative
+    paid_out = await session.scalar(
+        select(func.coalesce(func.sum(PosPaidOut.amount_cents), 0)).where(PosPaidOut.shift_id == shift.id)
+    )
     return {
         "by_method": by_method,
         "sales": sales,
         "returns": returns,
-        "expected_cash_cents": shift.opening_float_cents + cash + refunds,
+        "paid_out_cents": int(paid_out),
+        "expected_cash_cents": shift.opening_float_cents + cash + refunds - int(paid_out),
     }
 
 
@@ -391,3 +395,81 @@ async def shift_for_sale(session: AsyncSession, principal: Principal, raw: objec
     if shift is None or str(shift.org_id) != principal.org_id:
         raise HTTPException(422, "shift_id is not a shift of this organisation")
     return sid
+
+
+class PaidOutIn(BaseModel):
+    amount_cents: int = Field(gt=0)
+    description: str = Field(min_length=1, max_length=200)
+    category: str = Field(default="other", max_length=20)
+
+
+class PaidOutOut(BaseModel):
+    id: uuid.UUID
+    amount_cents: int
+    description: str
+    category: str
+    by_email: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+@router.post("/shifts/{shift_id}/paid_outs", response_model=PaidOutOut, status_code=201)
+async def pay_out_of_the_till(
+    shift_id: uuid.UUID,
+    body: PaidOutIn,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("pos.sell")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Cash out of the drawer for a small business spend, only when the
+    spending policy allows it (off by default) and at most its most for one
+    slip. It's on the shift (less cash expected) and in the books (Dr 6900
+    Shop expenses, Cr Cash)."""
+    policy = await spending_policy(principal.org_id)
+    if not policy["till_payouts"]:
+        raise HTTPException(403, "paying out of the till is off; use petty cash (an owner can allow it in Business settings > Spending)")
+    most = int(policy["petty_slip_max"])
+    if body.amount_cents > most:
+        raise HTTPException(422, f"the till pays out at most {most / 100:,.0f} at a time")
+    shift = (await session.execute(select(PosShift).where(PosShift.id == shift_id).with_for_update())).scalars().first()
+    if shift is None or str(shift.org_id) != principal.org_id:
+        raise HTTPException(404, "shift not found")
+    if shift.status != "open":
+        raise HTTPException(400, "this shift is closed")
+    await till_location_check(session, scope, shift)
+    out = PosPaidOut(org_id=shift.org_id, shift_id=shift.id, amount_cents=body.amount_cents,
+                     description=body.description.strip(), category=body.category, by_user_id=principal.user_id,
+                     by_email=principal.email, created_at=datetime.now(UTC))
+    session.add(out)
+    await session.flush()
+    await publish_event(
+        "invoicing.till.paid_out",
+        principal.org_id,
+        {"paid_out_id": str(out.id), "amount_cents": out.amount_cents, "description": out.description, "category": out.category},
+        session=session,
+    )
+    await session.commit()
+    await session.refresh(out)
+    return out
+
+
+async def till_location_check(session: AsyncSession, scope: Scope, shift: PosShift) -> None:
+    if shift.register_id:
+        reg = await session.get(PosRegister, shift.register_id)
+        if reg is not None:
+            at_place(scope, reg.location_id)
+
+
+@router.get("/shifts/{shift_id}/paid_outs", response_model=list[PaidOutOut])
+async def list_paid_outs(
+    shift_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("pos.sell")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    rows = await session.execute(
+        select(PosPaidOut).where(PosPaidOut.org_id == uuid.UUID(principal.org_id), PosPaidOut.shift_id == shift_id)
+        .order_by(PosPaidOut.created_at)
+    )
+    return rows.scalars().all()

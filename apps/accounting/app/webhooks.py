@@ -37,6 +37,7 @@ MONEY_ACCOUNT = {
     "bank": "1030",
     "stripe": "1030",
     "cheque": "1030",
+    "petty_cash": "1040",
 }
 
 
@@ -503,6 +504,86 @@ async def trip_settled(body: dict, session: AsyncSession = Depends(get_session))
     for account, debit, credit, description in lines:
         session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=account.id,
                                 debit_cents=debit, credit_cents=credit, description=description))
+    await session.commit()
+
+
+@webhooks_router.post("/petty-cash-moved", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def petty_cash_moved(body: dict, session: AsyncSession = Depends(get_session)):
+    """Subscribed to minions.petty_cash.moved. A top-up: Dr 1040 Petty
+    cash, Cr the money it came from. A count over: Dr 1040 / Cr 6900; short:
+    Dr 6900 / Cr 1040. (A slip books as its claim, from 1040.)"""
+    payload = body.get("payload", {})
+    org_id = uuid.UUID(body["org_id"])
+    await set_org_context(session, str(org_id))
+    if not await first_delivery(session, body):
+        return
+    move_id = payload.get("move_id") or ""
+    if move_id and await _already_posted(session, org_id, "petty", move_id):
+        return
+    amount = int(payload.get("amount_cents") or 0)
+    if not amount:
+        return
+    await ensure_default_accounts(session, org_id, commit=False)
+    petty = await get_account_by_code(session, org_id, "1040")
+    if payload.get("kind") == "top_up":
+        other, memo = await get_account_by_code(session, org_id, MONEY_ACCOUNT.get(payload.get("method") or "cash", "1010")), "Petty cash topped up"
+    else:
+        other, memo = await get_account_by_code(session, org_id, "6900"), "Petty cash over" if amount > 0 else "Petty cash short"
+    now = datetime.now(UTC)
+    entry = JournalEntry(
+        org_id=org_id,
+        number=_new_entry_number(now),
+        entry_date=local_date(now, await business_tz(str(org_id))),
+        memo=f"{memo}: {payload.get('description') or ''}"[:500],
+        source="petty",
+        source_ref=move_id,
+        status="posted",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(entry)
+    await session.flush()
+    debit, credit = (petty, other) if amount > 0 else (other, petty)
+    for account, d, c in ((debit, abs(amount), 0), (credit, 0, abs(amount))):
+        session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=account.id,
+                                debit_cents=d, credit_cents=c, description=memo))
+    await session.commit()
+
+
+@webhooks_router.post("/till-paid-out", dependencies=[Depends(require_kernel_token)], status_code=204)
+async def till_paid_out(body: dict, session: AsyncSession = Depends(get_session)):
+    """Subscribed to invoicing.till.paid_out: Dr 6900 Shop expenses, Cr 1010
+    Cash (out of the drawer)."""
+    payload = body.get("payload", {})
+    org_id = uuid.UUID(body["org_id"])
+    await set_org_context(session, str(org_id))
+    if not await first_delivery(session, body):
+        return
+    ref = f"paidout-{payload.get('paid_out_id') or ''}"
+    if await _already_posted(session, org_id, "pos", ref):
+        return
+    amount = int(payload.get("amount_cents") or 0)
+    if amount <= 0:
+        return
+    await ensure_default_accounts(session, org_id, commit=False)
+    expenses = await get_account_by_code(session, org_id, "6900")
+    cash = await get_account_by_code(session, org_id, "1010")
+    now = datetime.now(UTC)
+    entry = JournalEntry(
+        org_id=org_id,
+        number=_new_entry_number(now),
+        entry_date=local_date(now, await business_tz(str(org_id))),
+        memo=f"Paid out of the till: {payload.get('description') or ''}"[:500],
+        source="pos",
+        source_ref=ref,
+        status="posted",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(entry)
+    await session.flush()
+    session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=expenses.id, debit_cents=amount, credit_cents=0, description="Shop expenses"))
+    session.add(JournalLine(org_id=org_id, journal_entry_id=entry.id, account_id=cash.id, debit_cents=0, credit_cents=amount, description="Out of the till"))
     await session.commit()
 
 

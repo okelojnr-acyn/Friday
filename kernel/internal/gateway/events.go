@@ -61,6 +61,8 @@ var subscriptions = []subscription{
 	// A trip's cash up front is booked like a salary advance (1210).
 	{Event: "minions.trip_advance.paid", App: "accounting", WebhookPath: "/internal/webhooks/advance-paid"},
 	{Event: "minions.trip.settled", App: "accounting", WebhookPath: "/internal/webhooks/trip-settled"},
+	{Event: "minions.petty_cash.moved", App: "accounting", WebhookPath: "/internal/webhooks/petty-cash-moved"},
+	{Event: "invoicing.till.paid_out", App: "accounting", WebhookPath: "/internal/webhooks/till-paid-out"},
 	{Event: "inventory.purchase.received", App: "accounting", WebhookPath: "/internal/webhooks/purchase-received"},
 	{Event: "inventory.purchase.paid", App: "accounting", WebhookPath: "/internal/webhooks/purchase-paid"},
 	{Event: "inventory.stock.adjusted", App: "accounting", WebhookPath: "/internal/webhooks/stock-adjusted"},

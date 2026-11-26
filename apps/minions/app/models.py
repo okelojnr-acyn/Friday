@@ -105,6 +105,10 @@ class ExpenseClaim(Base):
     )
     emergency_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     flag: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Which petty cash float paid it (0018).
+    float_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("petty_floats.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class ClaimReceipt(Base):
@@ -424,3 +428,40 @@ class SpendRequest(Base):
     settle_method: Mapped[str] = mapped_column(Text, nullable=False, default="")
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+class PettyFloat(Base):
+    """Petty cash (spending plan part C): a fixed float at a location, one
+    holder. What they should hold is the sum of its moves."""
+
+    __tablename__ = "petty_floats"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    location_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    holder_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    holder_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    float_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="KES")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PettyMove(Base):
+    """Money into or out of a float: a top-up (in), a slip (out), or what
+    a count found over (in) or short (out)."""
+
+    __tablename__ = "petty_moves"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    float_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("petty_floats.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    claim_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    method: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    by_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

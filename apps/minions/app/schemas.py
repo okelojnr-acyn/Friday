@@ -74,6 +74,8 @@ class ExpenseClaimCreate(BaseModel):
     # why (an emergency: always allowed, goes one level higher).
     request_id: uuid.UUID | None = None
     emergency_reason: str = Field(default="", max_length=300)
+    # Petty cash: which float it came out of (the only one when there's one).
+    float_id: uuid.UUID | None = None
 
 
 class ExpenseClaimStatusUpdate(BaseModel):
@@ -142,6 +144,7 @@ class ExpenseClaimOut(BaseModel):
     request_id: uuid.UUID | None = None
     emergency_reason: str = ""
     flag: str = ""
+    float_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}
 
@@ -401,3 +404,54 @@ class SpendRequestOut(BaseModel):
     submitted_at: datetime
 
     model_config = {"from_attributes": True}
+class PettyFloatCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    location_id: str = Field(default="", max_length=64)
+    holder_user_id: str = Field(min_length=1, max_length=64)
+    float_cents: int | None = Field(default=None, gt=0)  # None: the spending policy's
+
+
+class PettyFloatUpdate(BaseModel):
+    holder_user_id: str | None = Field(default=None, min_length=1, max_length=64)
+    float_cents: int | None = Field(default=None, gt=0)
+    active: bool | None = None
+
+
+class PettyTopUp(BaseModel):
+    method: Literal["cash", "mpesa", "bank"] = "cash"
+    reference: str = Field(default="", max_length=60)
+
+
+class PettyCount(BaseModel):
+    counted_cents: int = Field(ge=0)
+    note: str = Field(default="", max_length=300)
+
+
+class PettyMoveOut(BaseModel):
+    id: uuid.UUID
+    kind: str
+    amount_cents: int
+    claim_id: uuid.UUID | None = None
+    method: str = ""
+    reference: str = ""
+    note: str = ""
+    by_name: str = ""
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PettyFloatOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    location_id: str
+    holder_user_id: str
+    holder_name: str
+    float_cents: int
+    currency: str
+    active: bool
+    # For the holder and those who pay people; None for everyone else.
+    balance_cents: int | None = None
+    # Slips sent or approved but not yet confirmed out of the box.
+    pending_cents: int | None = None
+    moves: list[PettyMoveOut] = []
