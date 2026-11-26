@@ -252,6 +252,8 @@ class PurchaseOrderPay(BaseModel):
 
 class PurchaseOrderStatusUpdate(BaseModel):
     status: str
+    # Sending a request back to draft says why.
+    note: str = Field(default="", max_length=300)
     # Given when receiving: the supplier's invoice that came with the goods.
     supplier_invoice_no: str | None = Field(default=None, max_length=60)
     supplier_invoice_date: date | None = None
@@ -273,6 +275,9 @@ class PurchaseOrderOut(BaseModel):
     supplier_note: str = ""
     supplier_updated_at: datetime | None = None
     invoice_file_sha: str = ""
+    requested_by_name: str = ""
+    decided_by_name: str = ""
+    decision_note: str = ""
     created_at: datetime
     updated_at: datetime
     lines: list[PurchaseOrderLineOut]
@@ -300,6 +305,9 @@ class PurchaseOrderOut(BaseModel):
             supplier_note=po.supplier_note,
             supplier_updated_at=po.supplier_updated_at,
             invoice_file_sha=po.invoice_file_sha,
+            requested_by_name=po.requested_by_name,
+            decided_by_name=po.decided_by_name,
+            decision_note=po.decision_note,
             created_at=po.created_at,
             updated_at=po.updated_at,
             lines=[

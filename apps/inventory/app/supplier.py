@@ -36,10 +36,13 @@ def supplier_id(principal: Principal = Depends(get_current_principal)) -> uuid.U
         raise HTTPException(403, "this page is for suppliers") from None
 
 
+UNSENT = ("draft", "requested", "approved")
+
+
 async def _their_po(session: AsyncSession, principal: Principal, sid: uuid.UUID, po_id: uuid.UUID) -> PurchaseOrder:
     po = await session.get(PurchaseOrder, po_id)
-    # Drafts aren't sent yet: a supplier never sees one.
-    if po is None or str(po.org_id) != principal.org_id or po.supplier_id != sid or po.status == "draft":
+    # Not sent yet (a draft, or a request to buy): a supplier never sees one.
+    if po is None or str(po.org_id) != principal.org_id or po.supplier_id != sid or po.status in UNSENT:
         raise HTTPException(404, "purchase order not found")
     return po
 
@@ -55,7 +58,7 @@ async def my_purchase_orders(
         .where(
             PurchaseOrder.org_id == uuid.UUID(principal.org_id),
             PurchaseOrder.supplier_id == sid,
-            PurchaseOrder.status != "draft",
+            PurchaseOrder.status.not_in(UNSENT),
         )
         .order_by(PurchaseOrder.created_at.desc())
     )

@@ -12,6 +12,7 @@ import { PayWithCardPanel } from "../../apps/invoicing/PayWithCardPanel";
 import { DocumentActionsPanel } from "../../apps/invoicing/DocumentActionsPanel";
 import { CreatePurchaseOrderPanel } from "../../apps/inventory/CreatePurchaseOrderPanel";
 import { PayPurchaseOrderPanel } from "../../apps/inventory/PayPurchaseOrderPanel";
+import { RequestToBuyPanel } from "../../apps/inventory/RequestToBuyPanel";
 import { SupplierLinkPanel, SupplierStatusPanel } from "../../apps/inventory/SupplierPanels";
 import { ClaimReviewPanel } from "../../apps/minions/ClaimReviewPanel";
 import { AdvanceReviewPanel } from "../../apps/minions/AdvanceReviewPanel";
@@ -155,6 +156,7 @@ export function FormView({ spec, app, schema, record, onClose, onSaved }: FormVi
       ) : null}
       {isEdit && app === "inventory" && spec.name === "purchase_order" ? (
         <>
+          <RequestToBuyPanel record={record!} onChanged={onSaved} />
           <SupplierStatusPanel record={record!} />
           <PayPurchaseOrderPanel record={record!} onChanged={onSaved} />
         </>
