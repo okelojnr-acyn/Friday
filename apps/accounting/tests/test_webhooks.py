@@ -565,3 +565,26 @@ async def test_a_trip_settles_its_advance(client, kernel_auth_header, principal)
     assert by[await _account_id(client, "1210")] == (0, 700_000) and len(by) == 2
     by = await settle(1_000_000, 1_200_000, "mpesa")
     assert by[await _account_id(client, "1020")] == (0, 200_000)
+async def test_petty_cash_and_till_payouts_reach_the_books(client, kernel_auth_header, principal):
+    """Spending plan part C: a top-up moves money into 1040 Petty cash; a
+    short count is a shop expense; a till payout comes out of 1010 Cash."""
+    async def post(path, payload):
+        r = await client.post(path, headers=kernel_auth_header, json={"org_id": principal.org_id, "payload": payload})
+        assert r.status_code == 204
+
+    async def lines(ref):
+        [entry] = [e for e in await _journal_entries(client) if e["source_ref"] == ref]
+        return {line["account_id"]: (line["debit_cents"], line["credit_cents"]) for line in entry["lines"]}
+
+    top, short = str(uuid.uuid4()), str(uuid.uuid4())
+    await post("/internal/webhooks/petty-cash-moved", {"move_id": top, "kind": "top_up", "amount_cents": 1_000_000, "method": "mpesa"})
+    by = await lines(top)
+    assert by[await _account_id(client, "1040")] == (1_000_000, 0) and by[await _account_id(client, "1020")] == (0, 1_000_000)
+    await post("/internal/webhooks/petty-cash-moved", {"move_id": short, "kind": "count", "amount_cents": -5_000})
+    by = await lines(short)
+    assert by[await _account_id(client, "6900")] == (5_000, 0) and by[await _account_id(client, "1040")] == (0, 5_000)
+    out = str(uuid.uuid4())
+    for _ in range(2):  # a repeat books once
+        await post("/internal/webhooks/till-paid-out", {"paid_out_id": out, "amount_cents": 1_500, "description": "Water"})
+    by = await lines(f"paidout-{out}")
+    assert by[await _account_id(client, "1010")] == (0, 1_500)

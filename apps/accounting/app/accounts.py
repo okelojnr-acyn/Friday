@@ -26,6 +26,8 @@ DEFAULT_ACCOUNTS = (
     # cash account agree.
     ("1020", "M-Pesa", "asset"),
     ("1030", "Card and bank", "asset"),
+    # Petty cash boxes (spending plan part C), apart from the till.
+    ("1040", "Petty cash", "asset"),
     ("1200", "Accounts Receivable", "asset"),
     # Salary advances paid out, until payroll takes them back.
     ("1210", "Staff advances", "asset"),
