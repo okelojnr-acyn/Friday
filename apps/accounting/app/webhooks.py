@@ -474,7 +474,7 @@ async def trip_settled(body: dict, session: AsyncSession = Depends(get_session))
     method = payload.get("method") or "cash"
     balance = advance - spent  # > 0 given back (or off pay); < 0 paid to them
     staff_credit = spent if method == "payroll" and balance > 0 else advance
-    await ensure_default_accounts(session, org_id)
+    await ensure_default_accounts(session, org_id, commit=False)
     expenses = await get_account_by_code(session, org_id, "6900")
     advances = await get_account_by_code(session, org_id, "1210")
     money = await get_account_by_code(session, org_id, MONEY_ACCOUNT.get(method, "1010"))
