@@ -95,7 +95,7 @@ async def invoice_paid(body: dict, session: AsyncSession = Depends(get_session))
         vat_cents = tax_cents
     net_cents = amount_cents - vat_cents
 
-    await ensure_default_accounts(session, org_id)
+    await ensure_default_accounts(session, org_id, commit=False)
     revenue = await get_account_by_code(session, org_id, "4000")
     tax_payable = await get_account_by_code(session, org_id, "2200")
     # Where the money went: one debit (or credit, for a refund) per
@@ -182,7 +182,7 @@ async def purchase_received(body: dict, session: AsyncSession = Depends(get_sess
     if net_cents == 0 and vat_cents == 0:
         return
 
-    await ensure_default_accounts(session, org_id)
+    await ensure_default_accounts(session, org_id, commit=False)
     inventory_asset = await get_account_by_code(session, org_id, "1400")
     vat_input = await get_account_by_code(session, org_id, "1500")
     payable = await get_account_by_code(session, org_id, "2000")
@@ -224,7 +224,7 @@ async def stock_adjusted(body: dict, session: AsyncSession = Depends(get_session
     value = int(payload.get("value_cents", 0) or 0)
     if value == 0:
         return
-    await ensure_default_accounts(session, org_id)
+    await ensure_default_accounts(session, org_id, commit=False)
     inventory_asset = await get_account_by_code(session, org_id, "1400")
     other = await get_account_by_code(session, org_id, "3000" if value > 0 else "5100")
     now = datetime.now(UTC)
@@ -268,7 +268,7 @@ async def purchase_paid(body: dict, session: AsyncSession = Depends(get_session)
     if amount_cents <= 0:
         return
 
-    await ensure_default_accounts(session, org_id)
+    await ensure_default_accounts(session, org_id, commit=False)
     payable = await get_account_by_code(session, org_id, "2000")
     money = await get_account_by_code(session, org_id, MONEY_ACCOUNT.get(payload.get("method", ""), "1010"))
 
@@ -324,7 +324,7 @@ async def pos_sale_cogs(body: dict, session: AsyncSession = Depends(get_session)
     if cogs_cents == 0:
         return
 
-    await ensure_default_accounts(session, org_id)
+    await ensure_default_accounts(session, org_id, commit=False)
     cogs = await get_account_by_code(session, org_id, "5000")
     inventory_asset = await get_account_by_code(session, org_id, "1400")
 
@@ -383,7 +383,7 @@ async def claim_paid(body: dict, session: AsyncSession = Depends(get_session)):
     amount_cents = payload.get("amount_cents", 0) or 0
     if amount_cents <= 0:
         return
-    await ensure_default_accounts(session, org_id)
+    await ensure_default_accounts(session, org_id, commit=False)
     debit = await get_account_by_code(session, org_id, "2150" if payload.get("owed_booked") else "6900")
     cash = await get_account_by_code(session, org_id, MONEY_ACCOUNT.get(payload.get("method") or "cash", "1010"))
     now = datetime.now(UTC)
@@ -421,7 +421,7 @@ async def advance_paid(body: dict, session: AsyncSession = Depends(get_session))
     amount_cents = int(payload.get("amount_cents") or 0)
     if amount_cents <= 0:
         return
-    await ensure_default_accounts(session, org_id)
+    await ensure_default_accounts(session, org_id, commit=False)
     advances = await get_account_by_code(session, org_id, "1210")
     money = await get_account_by_code(session, org_id, MONEY_ACCOUNT.get(payload.get("method") or "cash", "1010"))
     now = datetime.now(UTC)
@@ -529,7 +529,7 @@ async def payroll_paid(body: dict, session: AsyncSession = Depends(get_session))
     if amount_cents <= 0:
         return
 
-    await ensure_default_accounts(session, org_id)
+    await ensure_default_accounts(session, org_id, commit=False)
     # (account, debit, credit, description). With a payslip breakdown
     # (Minions 0009): Dr salaries (gross) and the employer's share, Cr cash
     # (net) and what's owed to KRA, NSSF and SHA. Older events: gross = paid.
