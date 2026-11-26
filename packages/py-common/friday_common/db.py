@@ -129,7 +129,16 @@ async def set_org_context(session: AsyncSession, org_id: str) -> None:
     x = $1` is a syntax error) -- `set_config(name, value, is_local)` is
     the parameterized equivalent, with `is_local=true` matching `SET
     LOCAL`'s transaction-scoped lifetime.
+
+    Kept for the session's later transactions too: a handler that commits
+    midway (Accounting seeding a new business's accounts) and keeps going
+    lost it, and every query after ran with no business (CI as an
+    ordinary role caught it, 2026-11-26).
     """
     await session.execute(
         text("SELECT set_config('app.current_org_id', :org_id, true)"), {"org_id": org_id}
     )
+
+    @event.listens_for(session.sync_session, "after_begin")
+    def _again(_sess, _txn, connection) -> None:
+        connection.execute(text("SELECT set_config('app.current_org_id', :org_id, true)"), {"org_id": org_id})

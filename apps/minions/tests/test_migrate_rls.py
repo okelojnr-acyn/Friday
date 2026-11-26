@@ -4,6 +4,7 @@ update on a box with claims: forced row-level security, no business set,
 runner now lifts FORCE for each migration's transaction; this replays the
 case as an ordinary owner role with a row already there."""
 
+import os
 import uuid
 from urllib.parse import urlsplit, urlunsplit
 
@@ -23,7 +24,7 @@ STEPS = {
 
 async def test_a_migration_changes_rows_under_forced_rls(tmp_path):
     role, schema = "migrate_rls_owner", "migrate_rls_test"
-    admin = await asyncpg.connect(dsn_for_tests())
+    admin = await asyncpg.connect(os.environ.get("ADMIN_DATABASE_URL") or dsn_for_tests())  # one that makes roles
     db = await admin.fetchval("SELECT current_database()")
     try:
         await admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')

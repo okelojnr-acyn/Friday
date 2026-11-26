@@ -55,11 +55,13 @@ DEFAULT_ACCOUNTS = (
 )
 
 
-async def ensure_default_accounts(session: AsyncSession, org_id: uuid.UUID) -> None:
+async def ensure_default_accounts(session: AsyncSession, org_id: uuid.UUID, *, commit: bool = True) -> None:
     """Idempotent upsert-by-code -- safe to call on every request that
     needs an account to exist (every webhook handler, and the first
     GET /accounts) rather than needing a dedicated "on org install" hook,
-    which the kernel doesn't have."""
+    which the kernel doesn't have. Webhooks pass commit=False: their
+    entry, the accounts and "this event was handled" save together, so a
+    failure later in the handler is retried, never skipped."""
     existing = await session.execute(select(Account.code).where(Account.org_id == org_id))
     have = set(existing.scalars().all())
     missing = [a for a in DEFAULT_ACCOUNTS if a[0] not in have]
@@ -79,7 +81,8 @@ async def ensure_default_accounts(session: AsyncSession, org_id: uuid.UUID) -> N
         )
         .on_conflict_do_nothing(index_elements=["org_id", "code"])
     )
-    await session.commit()
+    if commit:
+        await session.commit()
 
 
 async def get_account_by_code(session: AsyncSession, org_id: uuid.UUID, code: str) -> Account:
