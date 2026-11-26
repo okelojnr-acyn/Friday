@@ -104,8 +104,10 @@ export function KanbanView({ spec, records, onCardClick, onMove }: KanbanViewPro
                     key={record.id}
                     className="kanban-card"
                     draggable
+                    tabIndex={0}
                     onDragStart={(e) => e.dataTransfer.setData("text/plain", record.id)}
                     onClick={() => onCardClick(record)}
+                    onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && onCardClick(record)}
                   >
                     <div className="kanban-card-title">
                       {titleField ? formatCellValue(titleField, record[titleField.name]) : record.id}
@@ -135,6 +137,21 @@ export function KanbanView({ spec, records, onCardClick, onMove }: KanbanViewPro
                           </span>
                         ) : null}
                       </div>
+                      {/* Moving without dragging: phones and keyboards. */}
+                      <select
+                        className="kanban-move"
+                        aria-label="Move to"
+                        value={col}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        onChange={(e) => e.target.value !== col && onMove(record, e.target.value)}
+                      >
+                        {columns.map((c) => (
+                          <option key={c} value={c}>
+                            {c === col ? c : `Move to ${c}`}
+                          </option>
+                        ))}
+                      </select>
                       {personField && personValue ? (
                         <Avatar label={initials(personValue)} title={personValue} size={22} />
                       ) : null}

@@ -14,6 +14,7 @@ export type FieldType =
   | "select"
   | "reference"
   | "email"
+  | "person"
   | "phone";
 
 export interface FieldSpec {

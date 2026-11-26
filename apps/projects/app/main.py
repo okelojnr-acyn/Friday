@@ -82,7 +82,7 @@ resource(
             ),
             FieldSpec("status", "Status", "select", options=TASK_STATUSES, required=True),
             FieldSpec("priority", "Priority", "select", options=TASK_PRIORITIES, required=True),
-            FieldSpec("assignee_email", "Assignee", "email"),
+            FieldSpec("assignee_email", "Assignee", "person", reference="/api/projects/tasks/assignable"),
             FieldSpec("assigned_by_name", "Given by", "text", form_visible=False),
             FieldSpec("due_at", "Due", "date"),
             FieldSpec("description", "Description", "textarea", list_visible=False),
@@ -271,6 +271,15 @@ async def list_tasks(
         query = query.where(Task.project_id == project_id)
     rows = await session.execute(query.order_by(Task.created_at.desc()))
     return rows.scalars().all()
+
+
+@tasks_router.get("/assignable")
+async def assignable_people(principal: Principal = Depends(get_current_principal)):
+    """Whom I may give tasks to (the form's Assignee list): myself and
+    whoever is down my line, or anyone."""
+    scope = scope_for(principal, "tasks.assign")
+    over = await _people_over(principal, scope) if scope and scope.kind != "own" else {principal.user_id}
+    return {"anyone": over is None, "user_ids": sorted(over or ())}
 
 
 @tasks_router.post("", response_model=TaskOut, status_code=201)

@@ -45,7 +45,7 @@ export const toDatetimeInputValue = toLocalDatetimeInput;
  * flag for priority, a clock for a due date -- without every ResourceSpec
  * having to declare UI hints the backend shouldn't need to know about. */
 export function isPersonField(field: FieldSpec): boolean {
-  return field.type === "email" && field.name !== "created_by";
+  return (field.type === "email" || field.type === "person") && field.name !== "created_by";
 }
 
 export function isDueDateField(field: FieldSpec): boolean {

@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import type { FieldSpec, RecordRow } from "../../lib/types";
 import { getReferenceLabelField, getReferenceOptions, labelForRecord } from "../../lib/referenceCache";
 import { createRecord } from "../../lib/resourceApi";
-import { ApiError } from "../../lib/api";
+import { api, ApiError } from "../../lib/api";
+import { listPeople } from "../../lib/people";
+import { PickList, type PickOption } from "../PickList";
 import { Input } from "../Field";
 
 interface ReferenceInputProps {
@@ -123,5 +125,41 @@ export function ReferenceInput({ field, value, onChange }: ReferenceInputProps) 
         </button>
       ) : null}
     </div>
+  );
+}
+
+/** type:"person" fields: someone in the business, stored by email, from
+ * a searchable list of whom I may pick (field.reference: an API path
+ * answering {anyone, user_ids}). */
+export function PersonInput({ field, value, onChange }: ReferenceInputProps) {
+  const [options, setOptions] = useState<PickOption[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      listPeople(),
+      field.reference ? api.get<{ anyone: boolean; user_ids: string[] }>(field.reference).catch(() => null) : null,
+    ])
+      .then(([people, allowed]) => {
+        const ok = allowed && !allowed.anyone ? new Set(allowed.user_ids) : null;
+        const rows = people
+          .filter((p) => !ok || ok.has(p.user_id))
+          .map((p) => ({ value: p.email, label: p.full_name || p.email, hint: p.role.replace(/_/g, " ") }))
+          .sort((a, b) => a.label.localeCompare(b.label));
+        if (!cancelled) setOptions(rows);
+      })
+      .catch(() => !cancelled && setOptions([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [field.reference]);
+  return (
+    <PickList
+      options={options}
+      value={(value as string) ?? ""}
+      onChange={onChange}
+      placeholder={`Search people…`}
+      required={field.required}
+      aria-label={field.label}
+    />
   );
 }

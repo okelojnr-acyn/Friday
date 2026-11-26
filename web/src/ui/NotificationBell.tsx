@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
+import { chime, setSound, soundOn } from "../lib/chime";
 import { Icon } from "./Icon";
 
 interface Notice {
@@ -35,11 +36,17 @@ export function NotificationBell() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const box = useRef<HTMLDivElement>(null);
+  const newest = useRef<number | null>(null);
+  const [sound, setSoundState] = useState(soundOn);
 
   const load = useCallback(() => {
     api
       .get<{ unread: number; items: Notice[] }>("/me/notifications")
       .then((r) => {
+        // A chime when a notice newer than any seen arrives (not on first load).
+        const top = r.items.reduce((m, n) => Math.max(m, n.id), 0);
+        if (newest.current !== null && top > newest.current && r.items.some((n) => n.id > newest.current! && !n.read_at)) chime();
+        newest.current = Math.max(newest.current ?? 0, top);
         setItems(r.items);
         setUnread(r.unread);
         setAvailable(true);
@@ -111,6 +118,17 @@ export function NotificationBell() {
         <div className="bell-panel" role="dialog" aria-label="Notifications">
           <div className="bell-head">
             <strong>Notifications</strong>
+            <button
+              type="button"
+              className="bell-link bell-sound"
+              aria-pressed={sound}
+              onClick={() => {
+                setSound(!sound);
+                setSoundState(!sound);
+              }}
+            >
+              {sound ? "Sound on" : "Sound off"}
+            </button>
             {unread > 0 ? (
               <button type="button" className="bell-link" onClick={() => markRead({ all: true })}>
                 Mark all read

@@ -1,3 +1,4 @@
+import { PickList } from "../../ui/PickList";
 import { localDay } from "../../lib/localTime";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -208,7 +209,7 @@ export function InvoiceEditorPage() {
     );
   }
 
-  const productNames = products.map((p) => String(p.name));
+  const productOptions = products.map((p) => ({ value: String(p.name), label: String(p.name), hint: [p.sku, money(Number(p.price_cents) || 0)].filter(Boolean).join(", ") }));
 
   return (
     <div className="page invoice-editor">
@@ -256,13 +257,7 @@ export function InvoiceEditorPage() {
             </div>
             {lines.map((l, i) => (
               <div className="invoice-line" role="row" key={i}>
-                <Input
-                  aria-label="Item"
-                  list="invoice-products"
-                  placeholder="Pick a product or type"
-                  value={l.description}
-                  onChange={(e) => pickProduct(i, e.target.value)}
-                />
+                <PickList aria-label="Item" free placeholder="Pick a product or type" value={l.description} onChange={(v) => pickProduct(i, v)} options={productOptions} />
                 <Input aria-label="Quantity" inputMode="decimal" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })} />
                 <Input aria-label="Price before tax" inputMode="decimal" placeholder="0.00" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: e.target.value, productId: l.productId })} />
                 <Input aria-label="Tax percent" inputMode="decimal" value={l.taxPercent} onChange={(e) => setLine(i, { taxPercent: e.target.value })} />
@@ -277,11 +272,6 @@ export function InvoiceEditorPage() {
                 </button>
               </div>
             ))}
-            <datalist id="invoice-products">
-              {productNames.map((n) => (
-                <option key={n} value={n} />
-              ))}
-            </datalist>
             <Button
               size="sm"
               className="btn-pill"

@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { api, ApiError } from "../lib/api";
 import { Button } from "../ui/Button";
-import { FieldWrap, Input, Select } from "../ui/Field";
+import { FieldWrap, Input } from "../ui/Field";
+import { PickList } from "../ui/PickList";
 
 export interface Person {
   user_id: string;
@@ -46,16 +47,7 @@ export function GiveTask({ people, onGiven }: { people: Person[]; onGiven: () =>
   return (
     <form className="minions-newclaim" onSubmit={give} aria-label="Give a task">
       <FieldWrap label="For" required>
-        <Select value={to} onChange={(e) => setTo(e.target.value)}>
-          <option value="" disabled>
-            Choose a person…
-          </option>
-          {people.map((p) => (
-            <option key={p.user_id} value={p.user_id}>
-              {p.name}
-            </option>
-          ))}
-        </Select>
+        <PickList aria-label="For" placeholder="Search your team…" value={to} onChange={setTo} options={people.map((p) => ({ value: p.user_id, label: p.name }))} />
       </FieldWrap>
       <FieldWrap label="What needs doing" required>
         <Input value={title} maxLength={200} placeholder="e.g. Count shelf 4" onChange={(e) => setTitle(e.target.value)} />
