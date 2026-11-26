@@ -18,6 +18,8 @@ export interface PosShift {
     by_method: Record<string, { count: number; cents: number }>;
     sales: number;
     returns: number;
+    /** Spending plan part C; missing on an older Invoicing. */
+    paid_out_cents?: number;
     expected_cash_cents: number;
   } | null;
 }

@@ -2487,6 +2487,7 @@ def _pays(principal: Principal) -> bool:
 
 async def _petty_view(session: AsyncSession, principal: Principal, f: PettyFloat) -> PettyFloatOut:
     out = PettyFloatOut.model_validate(f)
+    out.held_by_me = principal.user_id == f.holder_user_id
     if principal.user_id != f.holder_user_id and not _pays(principal):
         return out  # others see whose it is, not what's in it
     out.balance_cents = await session.scalar(

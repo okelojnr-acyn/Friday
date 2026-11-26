@@ -456,4 +456,5 @@ class PettyFloatOut(BaseModel):
     balance_cents: int | None = None
     # Slips sent or approved but not yet confirmed out of the box.
     pending_cents: int | None = None
+    held_by_me: bool = False
     moves: list[PettyMoveOut] = []

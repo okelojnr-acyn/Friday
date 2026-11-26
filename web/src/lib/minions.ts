@@ -35,6 +35,8 @@ export interface ExpenseClaim {
   emergency_reason?: string;
   /** e.g. "not asked first", "24% over the approved 5,000". */
   flag?: string;
+  /** Part C: the petty cash float it came out of. */
+  float_id?: string | null;
 }
 
 export type ForKind = "daily" | "task" | "project" | "vehicle" | "trip" | "meeting";
@@ -79,7 +81,38 @@ export interface ExpenseClaimCreate {
   etims_invoice_no?: string;
   request_id?: string;
   emergency_reason?: string;
+  /** Petty cash: which float it came out of. */
+  float_id?: string;
 }
+
+/** Petty cash (spending plan part C): a float per location, one holder.
+ * balance/pending/moves only for the holder and those who pay people. */
+export interface PettyFloat {
+  id: string;
+  name: string;
+  location_id: string;
+  holder_user_id: string;
+  holder_name: string;
+  float_cents: number;
+  currency: string;
+  balance_cents: number | null;
+  pending_cents: number | null;
+  held_by_me?: boolean;
+  moves: { id: string; kind: "top_up" | "slip" | "count"; amount_cents: number; note: string; by_name: string; created_at: string }[];
+}
+const PETTY = "/api/minions/petty_cash";
+/** An older Minions has no petty cash: none. */
+export const fetchPettyCash = () =>
+  api.get<PettyFloat[]>(PETTY).catch((err) => (err instanceof ApiError && err.status === 404 ? [] : Promise.reject(err)));
+export const createPettyCash = (body: { name: string; location_id: string; holder_user_id: string; float_cents?: number }) =>
+  api.post<PettyFloat>(PETTY, body);
+export const topUpPettyCash = (id: string, method: string, reference: string) =>
+  api.post<PettyFloat>(`${PETTY}/${id}/top_up`, { method, reference });
+export const countPettyCash = (id: string, counted_cents: number, note: string) =>
+  api.post<PettyFloat>(`${PETTY}/${id}/count`, { counted_cents, note });
+export const fetchPettySlips = () =>
+  api.get<ExpenseClaim[]>(`${PETTY}/slips`).catch(() => [] as ExpenseClaim[]);
+export const confirmPettySlip = (claimId: string) => api.post<ExpenseClaim>(`${PETTY}/slips/${claimId}/confirm`);
 
 /** Asking first (spending plan part B): a spend, or a trip with optional
  * cash up front. Claims go against it once approved. */

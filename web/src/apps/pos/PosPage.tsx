@@ -29,6 +29,7 @@ import { fmtQty, unitLabel, useUnits } from "../../lib/units";
 import { ProductTile, VariantPicker } from "./ProductTile";
 import { ProductEditor } from "../inventory/ProductEditor";
 import { ReturnsPanel } from "./ReturnsPanel";
+import { PayOut, useTillPayouts } from "./PayOut";
 import { categoryTint } from "../../lib/productImages";
 
 interface CartLine {
@@ -115,6 +116,8 @@ export function PosPage({
   const [paying, setPaying] = useState(false);
   const [paid, setPaid] = useState<{ change: number; total: number; drawer: string; receipt?: Receipt } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const payouts = useTillPayouts();
+  const [payingOut, setPayingOut] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [customName, setCustomName] = useState("");
   const [customPrice, setCustomPrice] = useState("");
@@ -820,6 +823,11 @@ export function PosPage({
             <button type="button" onClick={() => (setMenuOpen(false), onCloseRegister())}>
               <Icon name="calculator" size={18} /> Close register
             </button>
+            {payouts.allowed ? (
+              <button type="button" onClick={() => (setMenuOpen(false), setPayingOut(true))}>
+                <Icon name="calculator" size={18} /> Pay out of the till
+              </button>
+            ) : null}
             <button type="button" onClick={() => (setMenuOpen(false), onSwitchTill())}>
               <Icon name="storefront" size={18} /> Switch till
             </button>
@@ -1025,6 +1033,14 @@ export function PosPage({
             setChoosing(null);
           }}
           onClose={() => setChoosing(null)}
+        />
+      ) : null}
+      {payingOut ? (
+        <PayOut
+          shiftId={shift.id}
+          most={payouts.most}
+          onClose={() => setPayingOut(false)}
+          onDone={(text) => (setPayingOut(false), flash(text))}
         />
       ) : null}
       {notice ? <div className="till-notice glass">{notice}</div> : null}
