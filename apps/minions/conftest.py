@@ -66,6 +66,23 @@ def _no_reporting_line(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _receipts_not_checked(monkeypatch):
+    """No kernel in tests: the Standard spending policy. Claim tests that
+    aren't about receipts approve without one; test_claim_what_for.py
+    puts the real receipt rule back."""
+    from friday_common.access import STANDARD_SPENDING
+
+    async def standard(_org):
+        return dict(STANDARD_SPENDING)
+
+    async def fine(_session, _claim):
+        return None
+
+    monkeypatch.setattr("app.main.spending_policy", standard)
+    monkeypatch.setattr("app.main._receipt_problem", fine)
+
+
+@pytest.fixture(autouse=True)
 async def _dispose_engine_after_test():
     yield
     await dispose_engine()

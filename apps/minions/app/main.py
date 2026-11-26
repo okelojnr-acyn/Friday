@@ -24,7 +24,16 @@ from friday_common import (
 )
 from friday_common.clock import business_tz, local_date, month_bounds
 from friday_common.payroll_ke import band_tax_cents, kenya_deductions, nssf_tiers
-from friday_common.access import Scope, approvers_for, people_in, person_in_business, require, scope_for, who_can
+from friday_common.access import (
+    Scope,
+    approvers_for,
+    people_in,
+    person_in_business,
+    require,
+    scope_for,
+    spending_policy,
+    who_can,
+)
 from friday_common.integrations import AcynWalletProvider, GoogleCalendarProvider
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -925,12 +934,20 @@ async def create_expense_claim(
     """Self-service -- employee_id is always the caller's own resolved
     employee row, never client-supplied."""
     employee = await _resolve_my_employee(session, principal)
+    fields = body.model_dump()
+    # Which money paid it decides paying back; older apps send reimburse only.
+    fields["paid_from"] = body.paid_from or ("own" if body.reimburse else "business")
+    fields["reimburse"] = fields["paid_from"] == "own"
+    if body.for_kind != "daily" and not body.for_id.strip():
+        raise HTTPException(422, f"choose which {body.for_kind} it was for")
+    if body.for_kind == "daily":
+        fields["for_id"] = ""
     claim = ExpenseClaim(
         org_id=_org(principal),
         employee_id=employee.id,
         status="submitted",
         submitted_at=datetime.now(UTC),
-        **body.model_dump(),
+        **fields,
     )
     session.add(claim)
     await session.flush()
@@ -938,6 +955,34 @@ async def create_expense_claim(
     await session.commit()
     await session.refresh(claim)
     return claim
+
+
+async def _receipt_problem(session: AsyncSession, claim: ExpenseClaim) -> str | None:
+    """Why this claim can't be approved for want of a receipt, or None.
+    Receipts always (spending policy); a written reason stands in only
+    under the policy's amount, a few times a year per person."""
+    if claim.receipt_sha:
+        return None
+    policy = await spending_policy(str(claim.org_id))
+    under, per_year = int(policy["no_receipt_under"]), int(policy["no_receipt_per_year"])
+    money = f"{under / 100:,.0f} {claim.currency}"
+    if claim.amount_cents >= under:
+        return f"a receipt is needed for {money} or more; ask them to add the photo"
+    if not claim.no_receipt_reason.strip():
+        return "no receipt and no reason; ask them to add the photo, or say why there isn't one"
+    used = await session.scalar(
+        select(func.count()).where(
+            ExpenseClaim.employee_id == claim.employee_id,
+            ExpenseClaim.id != claim.id,
+            ExpenseClaim.receipt_sha == "",
+            ExpenseClaim.no_receipt_reason != "",
+            ExpenseClaim.status.in_(("approved", "paid")),
+            ExpenseClaim.decided_at >= datetime.now(UTC) - timedelta(days=365),
+        )
+    )
+    if used >= per_year:
+        return f"they've gone without a receipt {used} times this year (the most is {per_year}); a receipt is needed"
+    return None
 
 
 async def _route_claim(session: AsyncSession, claim: ExpenseClaim, employee: Employee) -> None:
@@ -1105,6 +1150,8 @@ async def set_expense_claim_status(
     if claim.status != "submitted":
         raise HTTPException(400, f"claim is '{claim.status}', not 'submitted'")
     claimant = await _check_decider(session, principal, scope, claim, "claim")
+    if body.status == "approved" and (problem := await _receipt_problem(session, claim)):
+        raise HTTPException(400, problem)
     claim.status = body.status
     claim.decision_note = note
     claim.decided_by_name = await _name_of(session, principal)
@@ -1178,6 +1225,8 @@ async def resend_expense_claim(
         raise HTTPException(400, f"claim is '{claim.status}'; only a rejected claim is sent again")
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(claim, field, value)
+    if body.reimburse is not None:
+        claim.paid_from = "own" if body.reimburse else ("business" if claim.paid_from == "own" else claim.paid_from)
     claim.status = "submitted"
     claim.submitted_at = datetime.now(UTC)
     claim.decision_note = claim.decided_by_name = ""
@@ -1199,9 +1248,11 @@ async def pay_expense_claim(
     claim = await _get_owned_claim(session, principal, claim_id)
     if claim.status != "approved":
         raise HTTPException(400, f"claim is '{claim.status}', not 'approved'")
-    if not claim.reimburse:
-        raise HTTPException(400, "the business paid this one; there's nothing to pay back")
     pay = body or ExpenseClaimPay()
+    # The business's own money (petty cash, its M-Pesa, card or bank):
+    # confirming it was paid books it; there's nothing to pay back.
+    if not claim.reimburse and pay.method == "crypto":
+        raise HTTPException(422, "say how the business paid: M-Pesa, bank or cash")
     reference = pay.reference.strip()
     if pay.method in ("mpesa", "bank") and not reference:
         raise HTTPException(422, "add the M-Pesa code or bank reference")
@@ -1227,7 +1278,8 @@ async def pay_expense_claim(
         principal.org_id,
         {
             "claim_id": str(claim.id),
-            "to_user_ids": [employee.user_id] if employee.user_id else [],
+            # Paid back: they're told. The business's own money: nothing to tell.
+            "to_user_ids": [employee.user_id] if employee.user_id and claim.reimburse else [],
             "method": pay.method,
             "reference": reference,
             "amount_cents": claim.amount_cents,

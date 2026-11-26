@@ -134,8 +134,12 @@ async def test_business_paid_claim_is_recorded_never_paid_out(client, as_princip
 
     as_principal(admin)
     await client.patch(f"/expense_claims/{biz['id']}/status", json={"status": "approved"})
+    # The business's money: confirmed with how it paid (booked then), never sent through the wallet.
+    assert biz["paid_from"] == "business"
     resp = await client.post(f"/expense_claims/{biz['id']}/pay")
-    assert resp.status_code == 400 and "business paid" in resp.json()["detail"]
+    assert resp.status_code == 422 and "how the business paid" in resp.json()["detail"]
+    resp = await client.post(f"/expense_claims/{biz['id']}/pay", json={"method": "mpesa", "reference": "QK12AB34"})
+    assert resp.status_code == 200 and resp.json()["status"] == "paid"
 
 
 async def test_receipt_photo_by_the_claimant_seen_by_approvers(client, as_principal, principal):

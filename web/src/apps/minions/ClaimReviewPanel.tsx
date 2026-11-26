@@ -45,9 +45,15 @@ export function ClaimReviewPanel({
         })}
         <span className="field-label">
           {" "}
-          · {claim.reimburse === false ? "business paid" : "pay back"}
+          · {claim.reimburse === false ? (claim.paid_from === "petty_cash" ? "petty cash" : "business paid") : "pay back"}
         </span>
       </div>
+      <p className="field-label">
+        For: {claim.for_kind && claim.for_kind !== "daily" ? `${claim.for_kind} "${claim.for_label || claim.for_id}"` : "daily running"}
+        {claim.category ? `, ${claim.category}` : ""}
+        {claim.etims_invoice_no ? `, eTIMS ${claim.etims_invoice_no}` : ""}
+        {!claim.receipt_sha && claim.no_receipt_reason ? `. No receipt: ${claim.no_receipt_reason}` : ""}
+      </p>
       {claim.status === "submitted" && claim.waiting_on_name ? (
         <p className="field-label">Waiting for {claim.waiting_on_name}</p>
       ) : null}
@@ -86,10 +92,8 @@ export function ClaimReviewPanel({
       {claim.status === "submitted" ? (
         <ClaimDecision claim={claim} onDone={done} />
       ) : null}
-      {claim.status === "approved" &&
-      claim.reimburse !== false &&
-      knowsMethods ? (
-        <ClaimMarkPaid claim={claim} onDone={done} />
+      {claim.status === "approved" && knowsMethods ? (
+        <ClaimMarkPaid claim={claim} onDone={done} business={claim.reimburse === false} />
       ) : null}
     </div>
   );

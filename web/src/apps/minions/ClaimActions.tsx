@@ -124,11 +124,14 @@ export function ClaimMarkPaid({
   claim,
   onDone,
   base = "/api/minions/expense_claims",
+  business = false,
 }: {
   claim: { id: string };
   onDone: (c: ExpenseClaim) => void;
   /** Whose route: claims by default, or /api/minions/salary_advances. */
   base?: string;
+  /** The business's own money paid it: confirm how (books it); no wallet. */
+  business?: boolean;
 }) {
   const [method, setMethod] = useState<Method>("mpesa");
   const [reference, setReference] = useState("");
@@ -161,12 +164,12 @@ export function ClaimMarkPaid({
           {error}
         </div>
       ) : null}
-      <FieldWrap label="Paid by">
+      <FieldWrap label={business ? "The business paid from" : "Paid by"}>
         <Select
           value={method}
           onChange={(e) => setMethod(e.target.value as Method)}
         >
-          {METHODS.map(([m, label]) => (
+          {METHODS.filter(([m]) => !business || m !== "crypto").map(([m, label]) => (
             <option key={m} value={m}>
               {label}
             </option>
@@ -188,7 +191,7 @@ export function ClaimMarkPaid({
           disabled={busy || (needsRef && !reference.trim())}
           onClick={pay}
         >
-          {method === "crypto" ? "Send payment" : "Mark as paid"}
+          {business ? "Confirm the business paid" : method === "crypto" ? "Send payment" : "Mark as paid"}
         </Button>
       </div>
     </div>

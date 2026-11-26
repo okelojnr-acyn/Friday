@@ -22,7 +22,29 @@ export interface ExpenseClaim {
   decided_by_name?: string;
   paid_method?: string;
   paid_reference?: string;
+  /** Spending plan part A; missing on an older Minions. */
+  for_kind?: ForKind;
+  for_id?: string;
+  for_label?: string;
+  category?: string;
+  paid_from?: PaidFrom;
+  no_receipt_reason?: string;
+  etims_invoice_no?: string;
 }
+
+export type ForKind = "daily" | "task" | "project" | "vehicle" | "trip" | "meeting";
+export type PaidFrom = "own" | "petty_cash" | "business";
+export const CATEGORIES = [
+  ["transport", "Transport"],
+  ["fuel", "Fuel"],
+  ["meals", "Meals"],
+  ["accommodation", "Accommodation"],
+  ["airtime", "Airtime and data"],
+  ["supplies", "Supplies"],
+  ["repairs", "Repairs"],
+  ["cleaning", "Cleaning"],
+  ["other", "Other"],
+] as const;
 
 /** Claims waiting for my decision (owners and admins: all waiting ones).
  * An older Minions ignores `waiting` and returns everything I can see. */
@@ -43,6 +65,13 @@ export interface ExpenseClaimCreate {
   currency?: string;
   receipt_url?: string;
   reimburse?: boolean;
+  paid_from?: PaidFrom;
+  for_kind?: ForKind;
+  for_id?: string;
+  for_label?: string;
+  category?: string;
+  no_receipt_reason?: string;
+  etims_invoice_no?: string;
 }
 
 export const fetchMyExpenseClaims = () =>

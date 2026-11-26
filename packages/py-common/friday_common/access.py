@@ -186,6 +186,38 @@ async def approvers_for(org_id: str, user_id: str) -> Approvers:
         return Approvers(limits=dict(APPROVAL_LIMIT_CENTS), chain=(), top=())
 
 
+# The Standard spending policy (kernel org/spending.go keeps the same
+# numbers): what applies until a business picks another, or on a kernel
+# from before the setting.
+STANDARD_SPENDING = {
+    "preset": "standard", "ask_first_member": 200_000, "ask_first_team_leader": 1_000_000,
+    "ask_first_branch_manager": 5_000_000, "trips_ask_first": True, "no_receipt_under": 100_000,
+    "no_receipt_per_year": 3, "tolerance_pct": 10, "till_payouts": False,
+    "petty_float": 1_000_000, "petty_slip_max": 200_000,
+}
+
+
+async def spending_policy(org_id: str) -> dict:
+    """The business's spending policy (Business settings > Spending).
+    Standard on a kernel without the setting; 503 when the kernel can't
+    answer (never guesses a looser rule)."""
+    import httpx
+
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{settings.kernel_internal_url}/people/{org_id}/spending-policy",
+                headers={"Authorization": f"Bearer {settings.kernel_events_token}"},
+            )
+        if resp.status_code == 404:
+            return dict(STANDARD_SPENDING)
+        resp.raise_for_status()
+        return {**STANDARD_SPENDING, **resp.json()}
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"couldn't read the spending policy: {exc}") from exc
+
+
 async def person_in_business(org_id: str, *, user_id: str = "", email: str = "") -> dict | None:
     """One member of the business ({user_id, role, name, email}) by id or
     email; None when they aren't one. Raises 503 when the kernel can't say
