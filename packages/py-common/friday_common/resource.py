@@ -17,6 +17,10 @@ from typing import Literal
 FieldType = Literal[
     "text", "textarea", "number", "currency", "boolean", "date",
     "datetime", "select", "reference", "email", "phone",
+    # A person in the business, stored by email, picked from a searchable
+    # list; `reference` is an API path listing whom the caller may pick
+    # ({"anyone": bool, "user_ids": [...]}).
+    "person",
 ]
 
 

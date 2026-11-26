@@ -194,6 +194,7 @@ function NewMeeting({ onMade }: { onMade: () => void }) {
   const [day, setDay] = useState(localDay());
   const [at, setAt] = useState("10:00");
   const [minutes, setMinutes] = useState("60");
+  const [find, setFind] = useState("");
   const [invited, setInvited] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -252,7 +253,10 @@ function NewMeeting({ onMade }: { onMade: () => void }) {
       {people.length ? (
         <fieldset className="minions-invite">
           <legend>Invite</legend>
-          {people.map((p) => (
+          {people.length > 8 ? (
+            <Input aria-label="Search people" placeholder="Search people…" value={find} onChange={(e) => setFind(e.target.value)} />
+          ) : null}
+          {people.filter((p) => invited.includes(p.user_id) || p.name.toLowerCase().includes(find.trim().toLowerCase())).map((p) => (
             <label key={p.user_id}>
               <input
                 type="checkbox"

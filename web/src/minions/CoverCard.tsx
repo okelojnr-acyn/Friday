@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError } from "../lib/api";
 import { localDay } from "../lib/localTime";
 import { Button } from "../ui/Button";
-import { FieldWrap, Input, Select } from "../ui/Field";
+import { FieldWrap, Input } from "../ui/Field";
+import { PickList } from "../ui/PickList";
 import { dayLabel } from "./TimeOff";
 
 interface Cover {
@@ -83,16 +84,7 @@ export function CoverCard() {
       {editing ? (
         <form className="minions-newclaim" onSubmit={save}>
           <FieldWrap label="Who decides for you" required>
-            <Select value={who} onChange={(e) => setWho(e.target.value)}>
-              <option value="" disabled>
-                Choose…
-              </option>
-              {people.map((p) => (
-                <option key={p.user_id} value={p.user_id}>
-                  {p.name}
-                </option>
-              ))}
-            </Select>
+            <PickList aria-label="Who decides for you" placeholder="Search people…" value={who} onChange={setWho} options={people.map((p) => ({ value: p.user_id, label: p.name }))} />
           </FieldWrap>
           <div className="minions-two">
             <FieldWrap label="From" required>

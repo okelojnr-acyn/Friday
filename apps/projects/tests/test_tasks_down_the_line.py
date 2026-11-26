@@ -137,3 +137,12 @@ async def test_overdue_is_scheduled_not_polled(client, as_principal, principal, 
     await client.patch(f"/tasks/{other['id']}", json={"status": "done"})
     await deliver(mine, "due-3")
     assert len([e for e, _ in events if e == "projects.task.overdue"]) == 2
+
+
+async def test_the_assignee_list_is_whom_i_may_task(client, as_principal, principal):
+    as_principal(who(principal, "u-tom", "team_leader", team=("u-sam",)))
+    assert (await client.get("/tasks/assignable")).json() == {"anyone": False, "user_ids": ["u-sam", "u-tom"]}
+    as_principal(who(principal, "u-sam"))
+    assert (await client.get("/tasks/assignable")).json() == {"anyone": False, "user_ids": ["u-sam"]}
+    as_principal(make_principal(org_id=principal.org_id, role="owner"))
+    assert (await client.get("/tasks/assignable")).json()["anyone"] is True
