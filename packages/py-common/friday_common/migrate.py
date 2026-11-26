@@ -45,7 +45,29 @@ async def run_migrations(dsn: str, schema: str, migrations_dir: Path) -> list[st
                 # Friday Host gives tenant roles a statement timeout; a
                 # migration on a big table may need longer.
                 await conn.execute("SET LOCAL statement_timeout = 0")
+                # A migration changes every business's rows, but forced
+                # row-level security shows it none (no business is set) or
+                # fails on '' as a uuid (2026-11-26: minions 0016 never ran
+                # on a box with claims). Lift FORCE for this transaction;
+                # the owner then sees all rows. Put back before commit.
+                forced = await conn.fetch(
+                    """SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                       WHERE n.nspname = $1 AND c.relkind = 'r' AND c.relforcerowsecurity
+                         AND pg_has_role(c.relowner, 'USAGE')""",
+                    schema,
+                )
+                for row in forced:
+                    await conn.execute(f'ALTER TABLE "{schema}"."{row["relname"]}" NO FORCE ROW LEVEL SECURITY')
                 await conn.execute(sql)
+                # shortcut: a migration can't drop FORCE on a table that had it; add an opt-out if one ever must.
+                still = await conn.fetch(
+                    """SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                       WHERE n.nspname = $1 AND c.relname = ANY($2::text[])""",
+                    schema,
+                    [row["relname"] for row in forced],
+                )
+                for row in still:  # a table the migration dropped is gone
+                    await conn.execute(f'ALTER TABLE "{schema}"."{row["relname"]}" FORCE ROW LEVEL SECURITY')
                 await conn.execute(
                     f'INSERT INTO "{schema}".schema_migrations (filename) VALUES ($1)', name
                 )
