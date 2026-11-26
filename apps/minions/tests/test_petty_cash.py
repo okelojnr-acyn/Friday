@@ -74,3 +74,11 @@ async def test_a_float_its_slips_top_ups_and_counts(client, as_principal, princi
     as_principal(admin)
     r = await client.post(f"/petty_cash/{f['id']}/top_up", json={"method": "cash"})
     assert r.json()["balance_cents"] == 1_000_000 and r.json()["moves"][0]["amount_cents"] == 60_000
+
+    # Handing over: only with the box counted together; short needs a reason.
+    hand = lambda **kw: client.patch(f"/petty_cash/{f['id']}", json={"holder_user_id": admin.user_id, **kw})  # noqa: E731
+    assert (await hand()).status_code == 422
+    assert (await hand(counted_cents=990_000)).status_code == 422  # 100 short, no reason
+    r = await hand(counted_cents=1_000_000)
+    assert r.status_code == 200 and r.json()["holder_name"] == "Boss"
+    assert r.json()["moves"][0]["note"] == "Handover to Boss"

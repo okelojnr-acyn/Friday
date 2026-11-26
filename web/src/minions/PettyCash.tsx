@@ -56,6 +56,7 @@ export function PettyCash() {
             float={f}
             slips={slips.filter((c) => c.float_id === f.id)}
             canTopUp={pays && !f.held_by_me}
+            pays={pays}
             onDone={load}
             onError={setError}
           />
@@ -70,12 +71,14 @@ function FloatCard({
   float: f,
   slips,
   canTopUp,
+  pays,
   onDone,
   onError,
 }: {
   float: PettyFloat;
   slips: ExpenseClaim[];
   canTopUp: boolean;
+  pays: boolean;
   onDone: () => void;
   onError: (m: string | null) => void;
 }) {
@@ -85,6 +88,10 @@ function FloatCard({
   const [method, setMethod] = useState("mpesa");
   const [reference, setReference] = useState("");
   const [busy, setBusy] = useState(false);
+  // Handing over (owners and admins): to whom, counted together first.
+  const [handing, setHanding] = useState(false);
+  const [people, setPeople] = useState<{ user_id: string; name: string }[]>([]);
+  const [nextHolder, setNextHolder] = useState("");
   const money = (c: number) => formatMoney(c, { currency: f.currency });
   const balance = f.balance_cents ?? 0;
   const pending = f.pending_cents ?? 0;
@@ -96,6 +103,8 @@ function FloatCard({
     try {
       await fn();
       setCounting(false);
+      setHanding(false);
+      setNextHolder("");
       setCounted("");
       setNote("");
       setReference("");
@@ -155,11 +164,64 @@ function FloatCard({
             </Button>
           </div>
         </div>
+      ) : handing ? (
+        <div className="form-grid">
+          <FieldWrap label="Hand it to" required>
+            <Select value={nextHolder} onChange={(e) => setNextHolder(e.target.value)}>
+              <option value="">Choose…</option>
+              {people
+                .filter((p) => p.user_id !== f.holder_user_id)
+                .map((p) => (
+                  <option key={p.user_id} value={p.user_id}>
+                    {p.name}
+                  </option>
+                ))}
+            </Select>
+          </FieldWrap>
+          <FieldWrap label={`Counted together with ${f.holder_name} (${f.currency})`} required>
+            <Input value={counted} inputMode="decimal" onChange={(e) => setCounted(e.target.value)} />
+          </FieldWrap>
+          <FieldWrap label="Note (needed if it's short)">
+            <Input value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} />
+          </FieldWrap>
+          <div className="minions-actions">
+            <Button
+              variant="primary"
+              disabled={busy || !nextHolder || !counted}
+              onClick={() =>
+                act(
+                  () => api.patch(`/api/minions/petty_cash/${f.id}`, { holder_user_id: nextHolder, counted_cents: cents(counted), note: note.trim() }),
+                  "Could not hand it over",
+                )
+              }
+            >
+              Hand over
+            </Button>
+            <Button variant="ghost" onClick={() => setHanding(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
       ) : (
         <div className="minions-actions">
           <Button size="sm" onClick={() => setCounting(true)}>
             Count it
           </Button>
+          {pays ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setHanding(true);
+                api
+                  .get<{ user_id: string; name: string; status: string }[]>("/api/minions/employees")
+                  .then((ps) => setPeople(ps.filter((p) => p.user_id && p.status === "active")))
+                  .catch(() => {});
+              }}
+            >
+              Hand over
+            </Button>
+          ) : null}
         </div>
       )}
 

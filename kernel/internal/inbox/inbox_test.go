@@ -44,6 +44,12 @@ func TestComposeAndMoney(t *testing.T) {
 	if m, _ := Compose("minions.approval.needed", Notice{Kind: "time_off", FromName: "Sam", Description: "Annual leave, 1-3 Dec, 3 days"}, nil); m.Title != "Sam asks for time off" || m.Body != "Annual leave, 1-3 Dec, 3 days" {
 		t.Errorf("time off asked: %+v", m)
 	}
+	if m, _ := Compose("inventory.purchase.requested", Notice{FromName: "sam@x.test", AmountCents: 1_000_000, Description: "PO-202611-AB12CD"}, nil); m.Title != "sam@x.test asks to buy" || m.Body != "PO-202611-AB12CD (10,000)" || m.Path("owner") != "/inventory/purchase_order" {
+		t.Errorf("purchase asked: %+v", m)
+	}
+	if m, _ := Compose("inventory.purchase.decided", Notice{Status: "rejected", DecidedByName: "Bea", Note: "second quote", Description: "PO-1"}, nil); m.Title != "Bea sent your request to buy back" || m.Body != "PO-1: second quote" {
+		t.Errorf("purchase sent back: %+v", m)
+	}
 	if _, ok := Compose("crm.opportunity.won", Notice{}, nil); ok {
 		t.Error("other events say nothing")
 	}
