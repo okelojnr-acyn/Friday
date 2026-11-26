@@ -4,6 +4,7 @@ import io
 import re
 import uuid
 from datetime import UTC, date, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from friday_common import (
@@ -87,6 +88,8 @@ from .schemas import (
     PettyFloatUpdate,
     PettyMoveOut,
     PettyTopUp,
+    ClaimsBilled,
+    SpentOut,
     SalaryAdvanceOut,
     SpendRequestCreate,
     SpendRequestOut,
@@ -958,6 +961,10 @@ async def create_expense_claim(
     fields["float_id"] = (
         await _petty_float_for(session, principal, body.amount_cents, body.float_id) if fields["paid_from"] == "petty_cash" else None
     )
+    if body.billable and not body.customer_id.strip():
+        raise HTTPException(422, "choose the customer it's charged to")
+    if not body.billable:
+        fields["customer_id"] = fields["customer_name"] = ""
     fields.update(await _asked_first(session, principal, employee, body))
     claim = ExpenseClaim(
         org_id=_org(principal),
@@ -2715,3 +2722,66 @@ async def confirm_petty_slip(
 
 
 app.include_router(petty_router)
+
+
+# Spending plan part D: spends charged on to a customer's invoice, and what
+# was spent on each project and task (approved or paid claims).
+spend_report_router = APIRouter(prefix="/spends", tags=["spends"])
+SPENT = ("approved", "paid")
+
+
+@spend_report_router.get("/billable", response_model=list[ExpenseClaimOut])
+async def billable_spends(
+    customer_id: str,
+    principal: Principal = Depends(get_current_principal),
+    _inv: Scope = Depends(require("invoices.write")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Approved spends charged to this customer and not on an invoice yet
+    (the invoice editor offers them)."""
+    rows = await session.execute(
+        select(ExpenseClaim).where(
+            ExpenseClaim.org_id == _org(principal), ExpenseClaim.billable, ExpenseClaim.customer_id == customer_id,
+            ExpenseClaim.billed_invoice_id == "", ExpenseClaim.status.in_(SPENT),
+        ).order_by(ExpenseClaim.submitted_at)
+    )
+    return rows.scalars().all()
+
+
+@spend_report_router.post("/billed", response_model=list[ExpenseClaimOut])
+async def mark_billed(
+    body: ClaimsBilled,
+    principal: Principal = Depends(get_current_principal),
+    _inv: Scope = Depends(require("invoices.write")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """These spends went on this invoice. All or none: one already on an
+    invoice (or not billable) refuses the lot, so nothing is charged twice."""
+    rows = (await session.execute(
+        select(ExpenseClaim).where(ExpenseClaim.org_id == _org(principal), ExpenseClaim.id.in_(body.claim_ids)).with_for_update()
+    )).scalars().all()
+    if len(rows) != len(set(body.claim_ids)) or any(not c.billable or c.billed_invoice_id or c.status not in SPENT for c in rows):
+        raise HTTPException(409, "some of these spends are already on an invoice or aren't charged on; reload and try again")
+    for c in rows:
+        c.billed_invoice_id = body.invoice_id
+    await session.commit()
+    return rows
+
+
+@spend_report_router.get("/spent", response_model=list[SpentOut])
+async def spent_on(
+    for_kind: Literal["project", "task"],
+    principal: Principal = Depends(get_current_principal),
+    _tasks: Scope = Depends(require("tasks.read")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """What was spent on each project (or task): approved and paid claims."""
+    rows = await session.execute(
+        select(ExpenseClaim.for_id, ExpenseClaim.currency, func.sum(ExpenseClaim.amount_cents))
+        .where(ExpenseClaim.org_id == _org(principal), ExpenseClaim.for_kind == for_kind, ExpenseClaim.status.in_(SPENT))
+        .group_by(ExpenseClaim.for_id, ExpenseClaim.currency)
+    )
+    return [SpentOut(for_id=f, currency=c, spent_cents=int(t)) for f, c, t in rows.all()]
+
+
+app.include_router(spend_report_router)

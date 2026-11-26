@@ -83,6 +83,9 @@ export interface ExpenseClaimCreate {
   emergency_reason?: string;
   /** Petty cash: which float it came out of. */
   float_id?: string;
+  billable?: boolean;
+  customer_id?: string;
+  customer_name?: string;
 }
 
 /** Petty cash (spending plan part C): a float per location, one holder.

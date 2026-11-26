@@ -61,6 +61,7 @@ resource(
             FieldSpec(
                 "opportunity_id", "Won opportunity", "reference", reference="crm.opportunity", list_visible=False
             ),
+            FieldSpec("budget_cents", "Budget", "currency", list_visible=False),
             FieldSpec("created_at", "Created", "datetime", form_visible=False),
         ),
     )

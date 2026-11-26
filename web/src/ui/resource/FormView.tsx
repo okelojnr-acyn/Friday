@@ -12,6 +12,7 @@ import { PayWithCardPanel } from "../../apps/invoicing/PayWithCardPanel";
 import { DocumentActionsPanel } from "../../apps/invoicing/DocumentActionsPanel";
 import { CreatePurchaseOrderPanel } from "../../apps/inventory/CreatePurchaseOrderPanel";
 import { PayPurchaseOrderPanel } from "../../apps/inventory/PayPurchaseOrderPanel";
+import { SpentPanel } from "../../apps/projects/SpentPanel";
 import { RequestToBuyPanel } from "../../apps/inventory/RequestToBuyPanel";
 import { SupplierLinkPanel, SupplierStatusPanel } from "../../apps/inventory/SupplierPanels";
 import { ClaimReviewPanel } from "../../apps/minions/ClaimReviewPanel";
@@ -162,6 +163,9 @@ export function FormView({ spec, app, schema, record, onClose, onSaved }: FormVi
         </>
       ) : null}
       {isEdit && app === "inventory" && spec.name === "supplier" ? <SupplierLinkPanel record={record!} /> : null}
+      {isEdit && app === "projects" && (spec.name === "project" || spec.name === "task") ? (
+        <SpentPanel record={record!} kind={spec.name} />
+      ) : null}
       {isEdit && app === "minions" && spec.name === "time_off" && record!.status === "submitted" ? (
         <div className="card card-padded" style={{ marginTop: 16 }}>
           {record!.waiting_on_name ? <p className="field-label">Waiting for {String(record!.waiting_on_name)}</p> : null}

@@ -20,6 +20,7 @@ import { AskFirst, requestTitle } from "./SpendRequests";
 import { PettyCash } from "./PettyCash";
 import { api } from "../lib/api";
 import { listRecords } from "../lib/resourceApi";
+import { getReferenceOptions } from "../lib/referenceCache";
 import { PickList, type PickOption } from "../ui/PickList";
 import { Button } from "../ui/Button";
 import { FieldWrap, Input } from "../ui/Field";
@@ -95,6 +96,10 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
   const [approvals, setApprovals] = useState<SpendRequest[]>([]);
   const [requestId, setRequestId] = useState("");
   const [emergency, setEmergency] = useState<string | null>(null);
+  // Charged on to a customer: their next invoice offers it.
+  const [chargeTo, setChargeTo] = useState<PickOption | null>(null);
+  const [charging, setCharging] = useState(false);
+  const [customers, setCustomers] = useState<PickOption[] | null>(null);
   // Petty cash: which box, when there's more than one.
   const [floats, setFloats] = useState<PettyFloat[]>([]);
   const [floatId, setFloatId] = useState("");
@@ -127,6 +132,7 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
     if (!description.trim()) return setProblem("Say what you bought");
     if (forKind !== "daily" && !requestId && !forPick) return setProblem(`Choose the ${FOR_NAME[forKind]} it was for`);
     if (!category) return setProblem("Choose what kind of cost it is");
+    if (charging && !chargeTo) return setProblem("Choose the customer it's charged to");
     if (!whoPaid) return setProblem("Say whose money paid");
     if (whoPaid === "petty_cash" && floats.length > 1 && !floatId) return setProblem("Say which petty cash it came out of");
     if (!photo && !reason.trim()) return setProblem("Take a photo of the receipt, or say why there isn't one");
@@ -148,6 +154,7 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
         etims_invoice_no: etims.trim(),
         ...(requestId ? { request_id: requestId } : {}),
         ...(emergency?.trim() ? { emergency_reason: emergency.trim() } : {}),
+        ...(charging && chargeTo ? { billable: true, customer_id: chargeTo.value, customer_name: chargeTo.label } : {}),
         ...(whoPaid === "petty_cash" && floatId ? { float_id: floatId } : {}),
       });
       if (photo) {
@@ -170,6 +177,8 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
       setEtims("");
       setRequestId("");
       setEmergency(null);
+      setCharging(false);
+      setChargeTo(null);
       setFloatId("");
     } catch (err) {
       const message = errorText(err, "Could not send the claim");
@@ -243,6 +252,31 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
           {forKind !== "daily" ? <ForPicker kind={forKind} value={forPick} onChange={setForPick} /> : null}
         </>
       )}
+      <label className="field-label" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input
+          type="checkbox"
+          checked={charging}
+          onChange={(e) => {
+            setCharging(e.target.checked);
+            if (e.target.checked && customers === null)
+              getReferenceOptions("invoicing", "customer")
+                .then((cs) => setCustomers(cs.map((c) => ({ value: String(c.id), label: String(c.name ?? c.id) }))))
+                .catch(() => setCustomers([]));
+          }}
+        />
+        Charge it to a customer (it goes on their next invoice)
+      </label>
+      {charging ? (
+        <FieldWrap label="Which customer" required>
+          <PickList
+            aria-label="Which customer"
+            placeholder="Search…"
+            value={chargeTo?.value ?? ""}
+            options={customers}
+            onChange={(v) => setChargeTo(customers?.find((o) => o.value === v) ?? null)}
+          />
+        </FieldWrap>
+      ) : null}
       <FieldWrap label="Kind of cost" required>
         <PickList
           aria-label="Kind of cost"

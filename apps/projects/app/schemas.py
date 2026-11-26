@@ -9,6 +9,7 @@ class ProjectCreate(BaseModel):
     description: str = ""
     status: str = "active"
     opportunity_id: uuid.UUID | None = None
+    budget_cents: int = Field(default=0, ge=0)
 
 
 class ProjectUpdate(BaseModel):
@@ -16,6 +17,7 @@ class ProjectUpdate(BaseModel):
     description: str | None = None
     status: str | None = None
     opportunity_id: uuid.UUID | None = None
+    budget_cents: int | None = Field(default=None, ge=0)
 
 
 class ProjectOut(BaseModel):
@@ -25,6 +27,7 @@ class ProjectOut(BaseModel):
     description: str
     status: str
     opportunity_id: uuid.UUID | None
+    budget_cents: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}

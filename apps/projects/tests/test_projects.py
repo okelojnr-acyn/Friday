@@ -23,3 +23,11 @@ async def test_updating_someone_elses_project_is_not_found(client, as_principal,
 
     as_principal(principal)
     assert (await client.get("/projects")).json()[0]["status"] == "active"
+
+
+async def test_a_project_has_a_budget(client):
+    """Spending plan part D: 0 means none; Minions has what was spent."""
+    p = (await client.post("/projects", json={"name": "Fit-out"})).json()
+    assert p["budget_cents"] == 0
+    r = await client.patch(f"/projects/{p['id']}", json={"budget_cents": 5_000_000})
+    assert r.status_code == 200 and r.json()["budget_cents"] == 5_000_000
