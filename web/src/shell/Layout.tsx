@@ -4,6 +4,7 @@ import { useAuth } from "../lib/auth";
 import { GussWidget } from "../ui/GussWidget";
 import { NewVersionBanner } from "../ui/NewVersionBanner";
 import { TopBar } from "../ui/TopBar";
+import { PageErrorBoundary } from "../ui/PageErrorBoundary";
 
 const STAFF_ROLES = ["member", "team_leader"];
 
@@ -30,7 +31,9 @@ function Layout() {
   return (
     <div>
       <TopBar email={session.email} role={session.role} onLogout={logout} />
-      <Outlet />
+      <PageErrorBoundary>
+        <Outlet />
+      </PageErrorBoundary>
       <GussWidget />
       <NewVersionBanner />
     </div>

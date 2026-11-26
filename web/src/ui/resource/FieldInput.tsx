@@ -1,3 +1,4 @@
+import { PickInput } from "./PickInput";
 import type { FieldSpec } from "../../lib/types";
 import { Checkbox, Input, Select, Textarea } from "../Field";
 import { PersonInput, ReferenceInput } from "./ReferenceInput";
@@ -94,6 +95,8 @@ export function FieldInput({ field, value, onChange }: FieldInputProps) {
       return <ReferenceInput field={field} value={value} onChange={onChange} />;
     case "person":
       return <PersonInput field={field} value={value} onChange={onChange} />;
+    case "pick":
+      return <PickInput field={field} value={value} onChange={onChange} />;
     case "text":
     default:
       return (

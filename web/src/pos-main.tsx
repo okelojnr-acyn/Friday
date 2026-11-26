@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import PosApp from "./apps/pos/PosApp";
+import { PageErrorBoundary } from "./ui/PageErrorBoundary";
 import "./ui/tokens.css";
 import "./ui/components.css";
 
@@ -28,7 +29,10 @@ const basename = window.location.pathname.startsWith("/pos.html") ? "/pos.html" 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter basename={basename}>
-      <PosApp />
+      {/* Sales waiting to send are kept on the till, so trying again loses none. */}
+      <PageErrorBoundary>
+        <PosApp />
+      </PageErrorBoundary>
     </BrowserRouter>
   </StrictMode>,
 );

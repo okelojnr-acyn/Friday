@@ -1,4 +1,5 @@
 import { NotificationBell } from "../ui/NotificationBell";
+import { PageErrorBoundary } from "../ui/PageErrorBoundary";
 import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import { fetchClaimsWaitingForMe } from "../lib/minions";
@@ -75,7 +76,9 @@ function MinionsLayout() {
         </span>
       </header>
       <main className="minions-main">
-        <Outlet />
+        <PageErrorBoundary>
+          <Outlet />
+        </PageErrorBoundary>
       </main>
       <nav className="minions-tabs" aria-label="Minions">
         {tabsFor(me).map((t) =>
