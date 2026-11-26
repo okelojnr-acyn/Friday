@@ -52,3 +52,27 @@ def _common() -> list[str]:
     from friday_common.migrate import COMMON_MIGRATIONS
 
     return [f.name for f in sorted(COMMON_MIGRATIONS.glob("*.sql"))]
+
+
+async def test_an_app_role_migrates_its_own_schema_without_rights_on_the_database(tmp_path):
+    """RELIABILITY-PLAN 6.1: each app logs in as a role that owns only its
+    schema (no CREATE on the database), as Friday Host's split makes it."""
+    role, schema = "migrate_app_only", "migrate_app_test"
+    admin = await asyncpg.connect(os.environ.get("ADMIN_DATABASE_URL") or dsn_for_tests())
+    db = await admin.fetchval("SELECT current_database()")
+    try:
+        await admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        await admin.execute(f"DROP ROLE IF EXISTS {role}")
+        await admin.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'pw' NOSUPERUSER NOBYPASSRLS")
+        await admin.execute(f'GRANT CONNECT ON DATABASE "{db}" TO {role}')
+        await admin.execute(f'REVOKE CREATE ON DATABASE "{db}" FROM {role}')
+        await admin.execute(f'CREATE SCHEMA "{schema}" AUTHORIZATION {role}')
+        (tmp_path / "0001_t.sql").write_text("CREATE TABLE t (id INT PRIMARY KEY);", encoding="utf-8")
+        parts = urlsplit(dsn_for_tests())
+        as_role = urlunsplit(parts._replace(netloc=f"{role}:pw@{parts.hostname}:{parts.port or 5432}"))
+        assert "0001_t.sql" in await run_migrations(as_role, schema, tmp_path)
+    finally:
+        await admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        await admin.execute(f'REVOKE ALL ON DATABASE "{db}" FROM {role}')
+        await admin.execute(f"DROP ROLE IF EXISTS {role}")
+        await admin.close()

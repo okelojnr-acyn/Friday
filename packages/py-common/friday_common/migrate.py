@@ -19,7 +19,11 @@ async def run_migrations(dsn: str, schema: str, migrations_dir: Path) -> list[st
     conn = await asyncpg.connect(dsn)
     applied: list[str] = []
     try:
-        await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+        # Only when missing: Postgres checks the right to create schemas in
+        # the database even for IF NOT EXISTS, and an app's own role
+        # (RELIABILITY-PLAN 6.1) owns its schema but can't create others.
+        if not await conn.fetchval("SELECT 1 FROM pg_namespace WHERE nspname = $1", schema):
+            await conn.execute(f'CREATE SCHEMA "{schema}"')
         await conn.execute(f"""
             CREATE TABLE IF NOT EXISTS "{schema}".schema_migrations (
                 filename TEXT PRIMARY KEY,
