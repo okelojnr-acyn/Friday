@@ -2490,14 +2490,14 @@ async def _petty_view(session: AsyncSession, principal: Principal, f: PettyFloat
     out.held_by_me = principal.user_id == f.holder_user_id
     if principal.user_id != f.holder_user_id and not _pays(principal):
         return out  # others see whose it is, not what's in it
-    out.balance_cents = await session.scalar(
+    out.balance_cents = int(await session.scalar(
         select(func.coalesce(func.sum(PettyMove.amount_cents), 0)).where(PettyMove.float_id == f.id)
-    )
-    out.pending_cents = await session.scalar(
+    ))
+    out.pending_cents = int(await session.scalar(
         select(func.coalesce(func.sum(ExpenseClaim.amount_cents), 0)).where(
             ExpenseClaim.float_id == f.id, ExpenseClaim.status.in_(("submitted", "approved"))
         )
-    )
+    ))
     moves = await session.execute(
         select(PettyMove).where(PettyMove.float_id == f.id).order_by(PettyMove.created_at.desc()).limit(20)
     )
