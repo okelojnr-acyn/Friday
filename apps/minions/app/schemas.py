@@ -76,6 +76,10 @@ class ExpenseClaimCreate(BaseModel):
     emergency_reason: str = Field(default="", max_length=300)
     # Petty cash: which float it came out of (the only one when there's one).
     float_id: uuid.UUID | None = None
+    # Charge it on to this customer (an Invoicing customer).
+    billable: bool = False
+    customer_id: str = Field(default="", max_length=64)
+    customer_name: str = Field(default="", max_length=120)
 
 
 class ExpenseClaimStatusUpdate(BaseModel):
@@ -145,6 +149,10 @@ class ExpenseClaimOut(BaseModel):
     emergency_reason: str = ""
     flag: str = ""
     float_id: uuid.UUID | None = None
+    billable: bool = False
+    customer_id: str = ""
+    customer_name: str = ""
+    billed_invoice_id: str = ""
 
     model_config = {"from_attributes": True}
 
@@ -460,3 +468,14 @@ class PettyFloatOut(BaseModel):
     moves: list[PettyMoveOut] = []
 
     model_config = {"from_attributes": True}
+
+
+class ClaimsBilled(BaseModel):
+    invoice_id: str = Field(min_length=1, max_length=64)
+    claim_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+
+
+class SpentOut(BaseModel):
+    for_id: str
+    currency: str
+    spent_cents: int

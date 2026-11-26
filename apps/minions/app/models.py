@@ -105,6 +105,11 @@ class ExpenseClaim(Base):
     )
     emergency_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     flag: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Charged on to a customer (0019), and the invoice it went on.
+    billable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    customer_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    customer_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    billed_invoice_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # Which petty cash float paid it (0018).
     float_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("petty_floats.id", ondelete="SET NULL"), nullable=True

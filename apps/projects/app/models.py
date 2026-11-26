@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, SmallInteger, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -31,6 +31,8 @@ class Project(Base):
     # schema. Optional: plenty of projects start with no sales history
     # at all (an internal initiative, a free pilot).
     opportunity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # What it may spend (0 = no budget); Minions has what was spent (0006).
+    budget_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

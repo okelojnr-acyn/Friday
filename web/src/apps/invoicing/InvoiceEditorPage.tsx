@@ -20,6 +20,16 @@ interface Line {
   /** Percent as typed ("16"); sent as basis points. */
   taxPercent: string;
   productId?: string;
+  /** A spend charged on to this customer (Minions); marked billed on save. */
+  claimId?: string;
+}
+
+interface BillableSpend {
+  id: string;
+  description: string;
+  amount_cents: number;
+  currency: string;
+  for_label?: string;
 }
 
 const CUSTOMER_FIELD: FieldSpec = {
@@ -79,6 +89,10 @@ export function InvoiceEditorPage() {
   const [done, setDone] = useState<{ invoice: RecordRow; sent: boolean; email: string } | null>(null);
   const [payLink, setPayLink] = useState<string | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
+  // Spends charged on to the picked customer, not on an invoice yet.
+  const [billable, setBillable] = useState<BillableSpend[]>([]);
+  const [markup, setMarkup] = useState("0");
+  const [billWarning, setBillWarning] = useState<string | null>(null);
 
   useEffect(() => {
     listRecords("inventory", "product").then(setProducts).catch(() => setProducts([]));
@@ -87,7 +101,32 @@ export function InvoiceEditorPage() {
     getReferenceOptions("invoicing", "customer").then(setCustomers);
   }, [customerId]);
 
+  useEffect(() => {
+    setBillable([]);
+    if (!customerId) return;
+    api
+      .get<BillableSpend[]>(`/api/minions/spends/billable?customer_id=${encodeURIComponent(String(customerId))}`)
+      .then(setBillable)
+      .catch(() => {}); // no Minions, or not allowed: nothing offered
+  }, [customerId]);
+
   const customer = customers.find((c) => c.id === customerId) ?? null;
+  const offered = billable.filter((b) => !lines.some((l) => l.claimId === b.id));
+
+  // At cost, or with a markup; one line per spend.
+  function addBillable() {
+    const m = 1 + (Number(markup) || 0) / 100;
+    setLines((cur) => [
+      ...cur.filter((l) => l.description.trim()),
+      ...offered.map((b) => ({
+        description: b.for_label ? `${b.description} (${b.for_label})` : b.description,
+        quantity: "1",
+        unitPrice: ((b.amount_cents * m) / 100).toFixed(2),
+        taxPercent: defaultTax,
+        claimId: b.id,
+      })),
+    ]);
+  }
   const termsDays = terms === "" ? Number(customer?.payment_terms_days ?? 0) : Number(terms);
   const due = addDays(termsDays);
   const totals = useMemo(
@@ -141,6 +180,17 @@ export function InvoiceEditorPage() {
           ...(l.productId ? { product_id: l.productId } : {}),
         })),
       });
+      const claimIds = valid.flatMap((l) => (l.claimId ? [l.claimId] : []));
+      if (claimIds.length) {
+        try {
+          await api.post("/api/minions/spends/billed", { invoice_id: String(invoice.id), claim_ids: claimIds });
+        } catch (err) {
+          // The invoice stands; say so, so nobody charges these spends again by hand.
+          setBillWarning(
+            `The invoice is saved, but its spends weren't marked as charged: ${err instanceof ApiError ? err.message : "try again"}. Check them before charging them again.`,
+          );
+        }
+      }
       const final = send ? await updateRecord("invoicing", "invoice", invoice.id, { status: "sent" }) : invoice;
       setDone({ invoice: final, sent: send, email: String(customer?.email ?? "") });
     } catch (err) {
@@ -179,6 +229,7 @@ export function InvoiceEditorPage() {
                 : "This customer has no email on file, so nothing was emailed. Share the pay link instead."
               : "It isn't sent yet. Open it from Invoices when you're ready."}
           </p>
+          {billWarning ? <div className="error-banner">{billWarning}</div> : null}
           {sent ? (
             <div style={{ display: "grid", gap: 8 }}>
               <Button variant={email ? "secondary" : "primary"} onClick={() => getPayLink(invoice.id)}>
@@ -227,6 +278,20 @@ export function InvoiceEditorPage() {
           <FieldWrap label="Bill to">
             <ReferenceInput field={CUSTOMER_FIELD} value={customerId} onChange={setCustomerId} />
           </FieldWrap>
+          {offered.length ? (
+            <div className="invoice-form-row" role="group" aria-label="Spends charged to this customer">
+              <p className="field-label" style={{ margin: 0 }}>
+                {offered.length} spend{offered.length === 1 ? "" : "s"} charged to this customer (
+                {money(offered.reduce((t, b) => t + b.amount_cents, 0))} at cost).
+              </p>
+              <FieldWrap label="Markup %">
+                <Input value={markup} inputMode="decimal" onChange={(e) => setMarkup(e.target.value)} />
+              </FieldWrap>
+              <Button size="sm" className="btn-pill" onClick={addBillable}>
+                Add them
+              </Button>
+            </div>
+          ) : null}
           <div className="invoice-form-row">
             <FieldWrap label="Due">
               <Select value={terms} onChange={(e) => setTerms(e.target.value)}>
