@@ -263,7 +263,8 @@ async def _resolve_my_employee(session: AsyncSession, principal: Principal) -> E
     own doc comment in models.py for why), claiming it by backfilling
     user_id on first match. 404s if nobody's provisioned this person as
     an employee yet, rather than silently creating one -- that's an
-    admin action (POST /employees)."""
+    admin action (POST /employees) -- except for owners and admins
+    themselves, whose own row is made on first use."""
     rows = await session.execute(
         select(Employee).where(Employee.org_id == _org(principal), Employee.user_id == principal.user_id)
     )
@@ -276,7 +277,13 @@ async def _resolve_my_employee(session: AsyncSession, principal: Principal) -> E
     )
     employee = rows.scalars().first()
     if employee is None:
-        raise HTTPException(404, "you're not set up as an employee yet -- ask an admin to add you")
+        if principal.role not in ("owner", "admin") or principal.via:
+            raise HTTPException(404, "You're not on the staff list yet. An owner or admin adds you in People.")
+        # Owners and admins are the ones who'd add them: no step for that
+        # (2026-11-26, the owner's first claim met this error).
+        employee = Employee(org_id=_org(principal), name=principal.email.split("@")[0], email=principal.email,
+                            status="active", created_at=datetime.now(UTC), updated_at=datetime.now(UTC))
+        session.add(employee)
     employee.user_id = principal.user_id
     await session.commit()
     await session.refresh(employee)

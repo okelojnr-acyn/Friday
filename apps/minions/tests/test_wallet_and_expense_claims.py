@@ -185,3 +185,16 @@ async def test_withdraw_a_waiting_claim_and_payouts_reach_the_books(client, as_p
     as_principal(boss)
     assert (await client.post(f"/expense_claims/{other['id']}/withdraw")).status_code in (403, 404)
     assert [e for e, _ in sent if e.endswith(".paid")] == []
+
+
+async def test_an_owner_or_admin_claims_without_adding_themselves_first(client, as_principal, principal):
+    """2026-11-26: the owner's first claim met "not set up as an employee";
+    owners and admins are who'd add them, so their own row is made."""
+    admin = make_principal(org_id=principal.org_id, role="admin", email="boss@example.com")
+    as_principal(admin)
+    r = await client.post("/expense_claims", json={"description": "Taxi", "amount_cents": 2500})
+    assert r.status_code == 201, r.text
+    assert [e["email"] for e in (await client.get("/employees")).json()] == ["boss@example.com"]
+    as_principal(principal)  # staff still need adding
+    r = await client.post("/expense_claims", json={"description": "Taxi", "amount_cents": 2500})
+    assert r.status_code == 404 and "People" in r.json()["detail"]
