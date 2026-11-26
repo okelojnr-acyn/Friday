@@ -836,12 +836,12 @@ async def get_purchase_order(
     return PurchaseOrderOut.from_model(po)
 
 
-async def _request_to_buy(principal: Principal, po: PurchaseOrder, body: PurchaseOrderStatusUpdate) -> None:
+async def _request_to_buy(session: AsyncSession, principal: Principal, po: PurchaseOrder, body: PurchaseOrderStatusUpdate) -> None:
     """Spending plan part D. Sending a draft for approval records who asked;
     someone else approves it within their limit, or sends it back with a
     reason. Ordering (or receiving) a draft straight away is open up to the
-    person's ask-first amount; owners and admins always.
-    shortcut: approvers aren't told on Guss or the bell yet; requests show as "requested" in Purchase orders."""
+    person's ask-first amount; owners and admins always. Whoever may decide
+    is told (the bell and Guss), and so is the asker once it's decided."""
     to, was = body.status, po.status
     total = sum(line.total_cost_cents for line in po.lines)
     if to == "requested":
@@ -849,6 +849,15 @@ async def _request_to_buy(principal: Principal, po: PurchaseOrder, body: Purchas
             raise HTTPException(400, f"only a draft is sent for approval; this one is {was}")
         po.requested_by_user_id, po.requested_by_name = principal.user_id, principal.email
         po.decided_by_name = po.decision_note = ""
+        who = await approvers_for(principal.org_id, principal.user_id)
+        person = who.pick(total)
+        await publish_event(
+            "inventory.purchase.requested",
+            principal.org_id,
+            {"po_id": str(po.id), "to_user_ids": [person["user_id"]] if person else [p["user_id"] for p in who.top],
+             "from_name": principal.email, "amount_cents": total, "description": po.number},
+            session=session,
+        )
         return
     if to == "approved" or (to == "draft" and was == "requested"):
         if was != "requested":
@@ -865,6 +874,14 @@ async def _request_to_buy(principal: Principal, po: PurchaseOrder, body: Purchas
         if to == "draft" and not body.note.strip():
             raise HTTPException(422, "say why it's sent back")
         po.decided_by_name, po.decision_note = principal.email, body.note.strip()
+        await publish_event(
+            "inventory.purchase.decided",
+            principal.org_id,
+            {"po_id": str(po.id), "to_user_ids": [po.requested_by_user_id] if po.requested_by_user_id else [],
+             "status": "approved" if to == "approved" else "rejected", "note": po.decision_note,
+             "decided_by_name": principal.email, "amount_cents": total, "description": po.number},
+            session=session,
+        )
         return
     if to in ("ordered", "received") and was in ("draft", "requested"):
         if was == "requested":
@@ -890,7 +907,7 @@ async def set_purchase_order_status(
         raise HTTPException(422, f"status must be one of {PURCHASE_ORDER_STATUSES}")
     po = await _get_owned_po(session, principal, po_id)
     previous_status = po.status
-    await _request_to_buy(principal, po, body)
+    await _request_to_buy(session, principal, po, body)
     po.status = body.status
     po.updated_at = datetime.now(UTC)
     if body.supplier_invoice_no is not None:

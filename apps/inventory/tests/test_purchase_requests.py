@@ -14,10 +14,18 @@ def standard(monkeypatch):
         return dict(STANDARD_SPENDING)  # staff: 2,000
 
     async def approvers(_org, _user):
-        return Approvers(limits={"team_leader": 200_000, "branch_manager": 2_000_000}, chain=(), top=())
+        boss = {"user_id": "u-bm", "role": "branch_manager", "name": "Bea"}
+        return Approvers(limits={"team_leader": 200_000, "branch_manager": 2_000_000}, chain=(boss,), top=())
+
+    sent = []
+
+    async def publish(event_type, org_id, payload, **_):
+        sent.append((event_type, payload))
 
     monkeypatch.setattr("app.main.spending_policy", policy)
     monkeypatch.setattr("app.main.approvers_for", approvers)
+    monkeypatch.setattr("app.main.publish_event", publish)
+    return sent
 
 
 def _as(principal, user_id, role):
@@ -25,7 +33,7 @@ def _as(principal, user_id, role):
     return p.__class__(**{**p.__dict__, "user_id": user_id})
 
 
-async def test_a_request_to_buy_comes_before_the_order(client, as_principal, principal):
+async def test_a_request_to_buy_comes_before_the_order(client, as_principal, principal, standard):
     buyer, leader, manager = _as(principal, "u-buy", "member"), _as(principal, "u-tl", "team_leader"), _as(principal, "u-bm", "branch_manager")
     as_principal(buyer)
     line = lambda cost: {"lines": [{"description": "Cement", "quantity": 10, "unit_cost_cents": cost}]}  # noqa: E731
@@ -54,3 +62,7 @@ async def test_a_request_to_buy_comes_before_the_order(client, as_principal, pri
     assert (await status(big, "approved")).json()["decided_by_name"] == manager.email
     as_principal(buyer)
     assert (await status(big, "ordered")).status_code == 200
+    # Bea (her limit covers 10,000) was told twice; the buyer heard both decisions.
+    asked = [p["to_user_ids"] for e, p in standard if e == "inventory.purchase.requested"]
+    decided = [(p["status"], p["to_user_ids"]) for e, p in standard if e == "inventory.purchase.decided"]
+    assert asked == [["u-bm"], ["u-bm"]] and decided == [("rejected", ["u-buy"]), ("approved", ["u-buy"])]

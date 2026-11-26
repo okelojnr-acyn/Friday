@@ -128,6 +128,13 @@ func Compose(typ string, n Notice, loc *time.Location) (Message, bool) {
 			return Message{n.DecidedByName + " turned down your time off", what + ": " + n.Note, "/minions/calendar", "/minions/calendar"}, true
 		}
 		return Message{n.DecidedByName + " approved your time off", what, "/minions/calendar", "/minions/calendar"}, true
+	case "inventory.purchase.requested":
+		return Message{n.FromName + " asks to buy", what + " (" + amount + ")", "/minions/team", "/inventory/purchase_order"}, true
+	case "inventory.purchase.decided":
+		if n.Status == "rejected" {
+			return Message{n.DecidedByName + " sent your request to buy back", what + ": " + n.Note, "/minions/", "/inventory/purchase_order"}, true
+		}
+		return Message{n.DecidedByName + " approved your request to buy", what + " (" + amount + "). It can be ordered.", "/minions/", "/inventory/purchase_order"}, true
 	case "minions.spend_request.decided":
 		if n.Status == "rejected" {
 			return Message{n.DecidedByName + " turned down your request", what + " (" + amount + "): " + n.Note,

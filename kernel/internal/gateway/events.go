@@ -81,6 +81,8 @@ var subscriptions = []subscription{
 	{Event: "minions.salary_advance.decided", App: "notify"},
 	{Event: "minions.salary_advance.paid", App: "notify"},
 	{Event: "minions.spend_request.decided", App: "notify"},
+	{Event: "inventory.purchase.requested", App: "notify"},
+	{Event: "inventory.purchase.decided", App: "notify"},
 	{Event: "minions.trip_advance.paid", App: "notify"},
 	{Event: "minions.trip.settled", App: "notify"},
 	{Event: "minions.time_off.decided", App: "notify"},
