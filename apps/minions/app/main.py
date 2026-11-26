@@ -36,6 +36,7 @@ from friday_common.access import (
 )
 from friday_common.integrations import AcynWalletProvider, GoogleCalendarProvider
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
@@ -55,6 +56,8 @@ from .models import (
     Meeting,
     ApprovalCover,
     MeetingAttendee,
+    PettyFloat,
+    PettyMove,
     SalaryAdvance,
     SpendRequest,
     TimeOff,
@@ -78,6 +81,12 @@ from .schemas import (
     MeetingUpdate,
     MyPayrollLineOut,
     SalaryAdvanceCreate,
+    PettyCount,
+    PettyFloatCreate,
+    PettyFloatOut,
+    PettyFloatUpdate,
+    PettyMoveOut,
+    PettyTopUp,
     SalaryAdvanceOut,
     SpendRequestCreate,
     SpendRequestOut,
@@ -946,6 +955,9 @@ async def create_expense_claim(
         raise HTTPException(422, f"choose which {body.for_kind} it was for")
     if body.for_kind == "daily":
         fields["for_id"] = ""
+    fields["float_id"] = (
+        await _petty_float_for(session, principal, body.amount_cents, body.float_id) if fields["paid_from"] == "petty_cash" else None
+    )
     fields.update(await _asked_first(session, principal, employee, body))
     claim = ExpenseClaim(
         org_id=_org(principal),
@@ -1313,6 +1325,8 @@ async def pay_expense_claim(
     if claim.status != "approved":
         raise HTTPException(400, f"claim is '{claim.status}', not 'approved'")
     pay = body or ExpenseClaimPay()
+    if claim.float_id:
+        raise HTTPException(400, "this came out of petty cash; its holder confirms it under Petty cash")
     if claim.reimburse and claim.request_id:
         trip = await session.get(SpendRequest, claim.request_id)
         if trip and trip.advance_paid_at and trip.status == "approved":
@@ -2456,3 +2470,248 @@ async def settle_trip(
 
 
 app.include_router(spend_router)
+
+
+# Petty cash (spending plan part C, Friday Host docs/SPENDING-PLAN.md): a
+# fixed float per location with one holder (imprest). Every movement is a
+# row, so what the holder should have is their sum. A petty cash claim is
+# the slip: once approved, the holder confirms it came out of the box.
+# Someone other than the holder tops it back up to the float; counts book
+# what's over or short.
+petty_router = APIRouter(prefix="/petty_cash", tags=["petty-cash"])
+
+
+def _pays(principal: Principal) -> bool:
+    return principal.role in ("owner", "admin") and not principal.via
+
+
+async def _petty_view(session: AsyncSession, principal: Principal, f: PettyFloat) -> PettyFloatOut:
+    out = PettyFloatOut.model_validate(f)
+    out.held_by_me = principal.user_id == f.holder_user_id
+    if principal.user_id != f.holder_user_id and not _pays(principal):
+        return out  # others see whose it is, not what's in it
+    out.balance_cents = int(await session.scalar(
+        select(func.coalesce(func.sum(PettyMove.amount_cents), 0)).where(PettyMove.float_id == f.id)
+    ))
+    out.pending_cents = int(await session.scalar(
+        select(func.coalesce(func.sum(ExpenseClaim.amount_cents), 0)).where(
+            ExpenseClaim.float_id == f.id, ExpenseClaim.status.in_(("submitted", "approved"))
+        )
+    ))
+    moves = await session.execute(
+        select(PettyMove).where(PettyMove.float_id == f.id).order_by(PettyMove.created_at.desc()).limit(20)
+    )
+    out.moves = [PettyMoveOut.model_validate(m) for m in moves.scalars()]
+    return out
+
+
+async def _get_float(session: AsyncSession, principal: Principal, float_id: uuid.UUID) -> PettyFloat:
+    f = await session.get(PettyFloat, float_id)
+    if f is None or str(f.org_id) != principal.org_id:
+        raise HTTPException(404, "petty cash not found")
+    return f
+
+
+async def _holder(session: AsyncSession, principal: Principal, user_id: str) -> Employee:
+    holder = await session.scalar(
+        select(Employee).where(Employee.org_id == _org(principal), Employee.user_id == user_id, Employee.status == "active")
+    )
+    if holder is None:
+        raise HTTPException(422, "the holder must be someone on the staff list who has signed in")
+    return holder
+
+
+async def _petty_float_for(session: AsyncSession, principal: Principal, amount_cents: int, float_id: uuid.UUID | None) -> uuid.UUID | None:
+    """The float a petty cash claim came out of (the only one when there's
+    one; none set up: recorded as before), at most the policy's most for
+    one slip."""
+    floats = (await session.execute(
+        select(PettyFloat.id).where(PettyFloat.org_id == _org(principal), PettyFloat.active)
+    )).scalars().all()
+    if not floats:
+        return None
+    if float_id is None and len(floats) == 1:
+        float_id = floats[0]
+    if float_id not in floats:
+        raise HTTPException(422, "say which petty cash it came out of")
+    most = int((await spending_policy(principal.org_id))["petty_slip_max"])
+    if amount_cents > most:
+        raise HTTPException(422, f"petty cash pays at most {most / 100:,.0f} at a time; ask first and use the business's money")
+    return float_id
+
+
+async def _petty_moved(session: AsyncSession, principal: Principal, f: PettyFloat, move: PettyMove) -> None:
+    """Books a top-up or a count's difference (a slip books as its claim)."""
+    await publish_event(
+        "minions.petty_cash.moved",
+        principal.org_id,
+        {"move_id": str(move.id), "float_id": str(f.id), "kind": move.kind, "amount_cents": move.amount_cents,
+         "method": move.method, "currency": f.currency, "description": f.name},
+        session=session,
+    )
+
+
+@petty_router.get("", response_model=list[PettyFloatOut])
+async def list_petty_cash(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Every active float (the claim form picks one); what's in it only for
+    its holder and those who pay people."""
+    rows = await session.execute(
+        select(PettyFloat).where(PettyFloat.org_id == _org(principal), PettyFloat.active).order_by(PettyFloat.name)
+    )
+    return [await _petty_view(session, principal, f) for f in rows.scalars()]
+
+
+@petty_router.post("", response_model=PettyFloatOut, status_code=201)
+async def create_petty_cash(
+    body: PettyFloatCreate,
+    principal: Principal = Depends(get_current_principal),
+    _pay: Scope = Depends(require("pay.write")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """One float per location, its size the policy's unless given. It
+    starts empty: someone other than the holder funds it (top up)."""
+    holder = await _holder(session, principal, body.holder_user_id)
+    f = PettyFloat(
+        org_id=_org(principal), name=body.name.strip(), location_id=body.location_id, holder_user_id=holder.user_id,
+        holder_name=holder.name, float_cents=body.float_cents or int((await spending_policy(principal.org_id))["petty_float"]),
+        currency=await _business_currency(session, principal, holder), active=True, created_at=datetime.now(UTC),
+    )
+    session.add(f)
+    try:
+        await session.commit()
+    except IntegrityError:
+        raise HTTPException(409, "that location already has petty cash") from None
+    return await _petty_view(session, principal, f)
+
+
+@petty_router.patch("/{float_id}", response_model=PettyFloatOut)
+async def update_petty_cash(
+    float_id: uuid.UUID,
+    body: PettyFloatUpdate,
+    principal: Principal = Depends(get_current_principal),
+    _pay: Scope = Depends(require("pay.write")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """A new holder (count it together first), a new size, or closed.
+    shortcut: handing over doesn't force a count; add one if floats go missing at handovers."""
+    f = await _get_float(session, principal, float_id)
+    if body.holder_user_id is not None:
+        holder = await _holder(session, principal, body.holder_user_id)
+        f.holder_user_id, f.holder_name = holder.user_id, holder.name
+    if body.float_cents is not None:
+        f.float_cents = body.float_cents
+    if body.active is not None:
+        f.active = body.active
+    await session.commit()
+    return await _petty_view(session, principal, f)
+
+
+@petty_router.post("/{float_id}/top_up", response_model=PettyFloatOut)
+async def top_up_petty_cash(
+    float_id: uuid.UUID,
+    body: PettyTopUp,
+    principal: Principal = Depends(get_current_principal),
+    _pay: Scope = Depends(require("pay.write")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Back up to the float: its size less what it should hold now. By
+    someone other than the holder (the standard check on petty cash)."""
+    f = await _get_float(session, principal, float_id)
+    if principal.user_id == f.holder_user_id:
+        raise HTTPException(403, "someone other than the holder tops it up")
+    reference = body.reference.strip()
+    if body.method in ("mpesa", "bank") and not reference:
+        raise HTTPException(422, "add the M-Pesa code or bank reference")
+    balance = (await _petty_view(session, principal, f)).balance_cents or 0
+    amount = f.float_cents - balance
+    if amount <= 0:
+        raise HTTPException(400, "it's already full")
+    move = PettyMove(org_id=f.org_id, float_id=f.id, kind="top_up", amount_cents=amount, method=body.method,
+                     reference=reference, by_name=await _name_of(session, principal), created_at=datetime.now(UTC))
+    session.add(move)
+    await session.flush()
+    await _petty_moved(session, principal, f, move)
+    await session.commit()
+    return await _petty_view(session, principal, f)
+
+
+@petty_router.post("/{float_id}/count", response_model=PettyFloatOut)
+async def count_petty_cash(
+    float_id: uuid.UUID,
+    body: PettyCount,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The holder (or whoever pays people) counts the box. Expected: what
+    it should hold less slips sent but not yet confirmed (that cash is
+    already out). Over or short is booked, and short needs a reason."""
+    f = await _get_float(session, principal, float_id)
+    if principal.user_id != f.holder_user_id and not _pays(principal):
+        raise HTTPException(403, "the holder, an owner or an admin counts it")
+    view = await _petty_view(session, principal, f)
+    diff = body.counted_cents - ((view.balance_cents or 0) - (view.pending_cents or 0))
+    if diff < 0 and not body.note.strip():
+        raise HTTPException(422, f"it's {-diff / 100:,.2f} short; say why")
+    move = PettyMove(org_id=f.org_id, float_id=f.id, kind="count", amount_cents=diff, note=body.note.strip(),
+                     by_name=await _name_of(session, principal), created_at=datetime.now(UTC))
+    session.add(move)  # a count that agrees is kept too: it shows when it was last counted
+    await session.flush()
+    if diff:
+        await _petty_moved(session, principal, f, move)
+    await session.commit()
+    return await _petty_view(session, principal, f)
+
+
+@petty_router.get("/slips", response_model=list[ExpenseClaimOut])
+async def petty_slips_to_confirm(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Approved petty cash claims on floats I hold (owners and admins: all)."""
+    q = (
+        select(ExpenseClaim)
+        .join(PettyFloat, PettyFloat.id == ExpenseClaim.float_id)
+        .where(ExpenseClaim.org_id == _org(principal), ExpenseClaim.status == "approved")
+    )
+    if not _pays(principal):
+        q = q.where(PettyFloat.holder_user_id == principal.user_id)
+    return (await session.execute(q.order_by(ExpenseClaim.submitted_at))).scalars().all()
+
+
+@petty_router.post("/slips/{claim_id}/confirm", response_model=ExpenseClaimOut)
+async def confirm_petty_slip(
+    claim_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The holder confirms an approved slip came out of the box: it comes
+    off what they should hold and the books take it from petty cash."""
+    claim = await _get_owned_claim(session, principal, claim_id)
+    if claim.float_id is None:
+        raise HTTPException(400, "this claim didn't come out of petty cash")
+    f = await _get_float(session, principal, claim.float_id)
+    if principal.user_id != f.holder_user_id and not _pays(principal):
+        raise HTTPException(403, f"{f.holder_name or 'the holder'} confirms what comes out of {f.name}")
+    if claim.status != "approved":
+        raise HTTPException(400, f"claim is '{claim.status}', not 'approved'")
+    now = datetime.now(UTC)
+    claim.status, claim.paid_method, claim.paid_at = "paid", "petty_cash", now
+    session.add(PettyMove(org_id=f.org_id, float_id=f.id, kind="slip", amount_cents=-claim.amount_cents,
+                          claim_id=claim.id, by_name=await _name_of(session, principal), created_at=now))
+    await publish_event(
+        "minions.expense_claim.paid",
+        principal.org_id,
+        {"claim_id": str(claim.id), "to_user_ids": [], "method": "petty_cash", "reference": "",
+         "amount_cents": claim.amount_cents, "currency": claim.currency,
+         "owed_booked": bool(re.search(r"\(Guss [0-9a-f]{8}\)$", claim.description)), "description": claim.description},
+        session=session,
+    )
+    await session.commit()
+    await session.refresh(claim)
+    return claim
+
+
+app.include_router(petty_router)

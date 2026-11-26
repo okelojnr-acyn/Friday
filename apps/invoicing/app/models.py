@@ -276,3 +276,20 @@ class PosShift(Base):
     # the shift they happened during.
     opened_by_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     opened_by_email: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PosPaidOut(Base):
+    """Cash paid out of the till during a shift (spending plan part C),
+    when the business allows it; it comes off the cash expected."""
+
+    __tablename__ = "pos_paid_outs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    shift_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pos_shifts.id", ondelete="CASCADE"), nullable=False)
+    amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(Text, nullable=False, default="other")
+    by_user_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    by_email: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

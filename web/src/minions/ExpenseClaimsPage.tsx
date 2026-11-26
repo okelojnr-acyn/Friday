@@ -3,6 +3,8 @@ import { ApiError } from "../lib/api";
 import {
   fetchMyExpenseClaims,
   fetchMyOpenRequests,
+  fetchPettyCash,
+  type PettyFloat,
   openClaimReceipt,
   resendExpenseClaim,
   submitExpenseClaim,
@@ -15,6 +17,7 @@ import {
   type SpendRequest,
 } from "../lib/minions";
 import { AskFirst, requestTitle } from "./SpendRequests";
+import { PettyCash } from "./PettyCash";
 import { api } from "../lib/api";
 import { listRecords } from "../lib/resourceApi";
 import { PickList, type PickOption } from "../ui/PickList";
@@ -50,6 +53,7 @@ export function ExpenseClaimsPage() {
 
       <NewClaim onSent={(c) => setClaims((cur) => [c, ...(cur ?? [])])} onError={setError} />
       <AskFirst />
+      <PettyCash />
 
       {claims === null && !error ? <div className="spinner">Loading your claims…</div> : null}
       {claims && claims.length === 0 ? (
@@ -91,12 +95,18 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
   const [approvals, setApprovals] = useState<SpendRequest[]>([]);
   const [requestId, setRequestId] = useState("");
   const [emergency, setEmergency] = useState<string | null>(null);
+  // Petty cash: which box, when there's more than one.
+  const [floats, setFloats] = useState<PettyFloat[]>([]);
+  const [floatId, setFloatId] = useState("");
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMyOpenRequests()
       .then((rs) => setApprovals(rs.filter((r) => r.kind === "spend")))
+      .catch(() => {});
+    fetchPettyCash()
+      .then(setFloats)
       .catch(() => {});
   }, []);
 
@@ -118,6 +128,7 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
     if (forKind !== "daily" && !requestId && !forPick) return setProblem(`Choose the ${FOR_NAME[forKind]} it was for`);
     if (!category) return setProblem("Choose what kind of cost it is");
     if (!whoPaid) return setProblem("Say whose money paid");
+    if (whoPaid === "petty_cash" && floats.length > 1 && !floatId) return setProblem("Say which petty cash it came out of");
     if (!photo && !reason.trim()) return setProblem("Take a photo of the receipt, or say why there isn't one");
     setProblem(null);
     onError(null);
@@ -137,6 +148,7 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
         etims_invoice_no: etims.trim(),
         ...(requestId ? { request_id: requestId } : {}),
         ...(emergency?.trim() ? { emergency_reason: emergency.trim() } : {}),
+        ...(whoPaid === "petty_cash" && floatId ? { float_id: floatId } : {}),
       });
       if (photo) {
         try {
@@ -158,6 +170,7 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
       setEtims("");
       setRequestId("");
       setEmergency(null);
+      setFloatId("");
     } catch (err) {
       const message = errorText(err, "Could not send the claim");
       if (message.includes("asking first") && emergency === null) setEmergency("");
@@ -251,6 +264,16 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
           The business's M-Pesa, card or bank
         </button>
       </fieldset>
+      {whoPaid === "petty_cash" && floats.length > 1 ? (
+        <FieldWrap label="Which petty cash" required>
+          <PickList
+            aria-label="Which petty cash"
+            value={floatId}
+            onChange={setFloatId}
+            options={floats.map((f) => ({ value: f.id, label: `${f.name} (${f.holder_name})` }))}
+          />
+        </FieldWrap>
+      ) : null}
       <FieldWrap label="eTIMS invoice number (if the seller gave one)">
         <Input value={etims} maxLength={40} onChange={(e) => setEtims(e.target.value)} />
       </FieldWrap>

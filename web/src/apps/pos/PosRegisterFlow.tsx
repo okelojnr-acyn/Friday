@@ -276,6 +276,12 @@ export function CloseRegister({
             <span>Opening float</span>
             <span>{formatMoney(closed.opening_float_cents)}</span>
           </div>
+          {closed.summary?.paid_out_cents ? (
+            <div className="till-row">
+              <span>Paid out of the till</span>
+              <span>{formatMoney(-closed.summary.paid_out_cents)}</span>
+            </div>
+          ) : null}
           <div className="till-row">
             <span>Cash expected</span>
             <span>{formatMoney(expected)}</span>
