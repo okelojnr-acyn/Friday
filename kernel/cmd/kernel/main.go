@@ -51,6 +51,12 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "dbcheck" {
 		os.Exit(runDBCheck())
 	}
+	if len(os.Args) > 1 && os.Args[1] == "preset" {
+		if err := runPreset(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "bootstrap" {
 		if err := runBootstrap(os.Args[2:]); err != nil {
 			log.Fatal(err)
@@ -62,7 +68,7 @@ func main() {
 	// server on arguments it doesn't know hung CI for 20 minutes
 	// (2026-11-15); say what's wrong instead.
 	if len(os.Args) > 1 {
-		log.Fatalf("unknown command %q; commands: bootstrap, export, dbcheck (no arguments starts the server)", strings.Join(os.Args[1:], " "))
+		log.Fatalf("unknown command %q; commands: bootstrap, preset, export, dbcheck (no arguments starts the server)", strings.Join(os.Args[1:], " "))
 	}
 	ctx := context.Background()
 
