@@ -62,13 +62,24 @@ jobs:
           --health-timeout 3s
           --health-retries 30
     env:
-      DATABASE_URL: postgresql+asyncpg://friday:friday@localhost:5432/friday
+      # Tests run as an ordinary role that owns its schemas, as each
+      # install's role does on the box: row-level security applies. A
+      # superuser skips it, which hid a migration that failed on real data
+      # (2026-11-26, minions 0016). ADMIN_DATABASE_URL is for tests that
+      # make roles.
+      DATABASE_URL: postgresql+asyncpg://friday_app:friday_app@localhost:5432/friday
+      ADMIN_DATABASE_URL: postgresql://friday:friday@localhost:5432/friday
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r apps/${{ matrix.app }}/requirements.txt -r apps/${{ matrix.app }}/requirements-dev.txt
+      - name: An ordinary role, like the box's
+        env:
+          PGPASSWORD: friday
+        run: |
+          psql -h localhost -U friday -d friday -v ON_ERROR_STOP=1 -c "CREATE ROLE friday_app LOGIN PASSWORD 'friday_app' NOSUPERUSER NOBYPASSRLS NOCREATEROLE" -c "GRANT CREATE ON DATABASE friday TO friday_app"
       - run: pytest apps/${{ matrix.app }}
 
   pos-engine:
