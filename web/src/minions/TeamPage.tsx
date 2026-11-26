@@ -9,6 +9,7 @@ import { formatMoney } from "../lib/orgSettings";
 import { claimReceiptBlob, fetchClaimsWaitingForMe, type ExpenseClaim } from "../lib/minions";
 import { ClaimDecision } from "../apps/minions/ClaimActions";
 import { GiveTask } from "./GiveTask";
+import { OpenTrips, WaitingRequests } from "./SpendRequests";
 
 interface TeamTask {
   id: string;
@@ -84,6 +85,12 @@ export function TeamPage() {
                   {c.category ? `, ${c.category}` : ""}
                   {!c.receipt_sha && c.no_receipt_reason ? `. No receipt: ${c.no_receipt_reason}` : ""}
                 </p>
+                {c.flag ? (
+                  <p className="field-label minions-flag">
+                    {c.flag[0].toUpperCase() + c.flag.slice(1)}
+                    {c.emergency_reason ? `: ${c.emergency_reason}` : ""}
+                  </p>
+                ) : null}
                 <p className="field-label">
                   {nameOf(c.employee_id)}, {c.reimburse === false ? (c.paid_from === "petty_cash" ? "paid from petty cash" : "the business paid") : "wants it paid back"},{" "}
                   {new Date(c.submitted_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
@@ -96,6 +103,8 @@ export function TeamPage() {
       </section>
 
       <CoverCard />
+      <WaitingRequests />
+      <OpenTrips />
       <WaitingAdvances />
       <WaitingTimeOff
         Decision={({ item, onDone }) => <ClaimDecision claim={item} onDone={onDone} base="/api/minions/time_off" />}

@@ -69,11 +69,14 @@ def _no_reporting_line(monkeypatch):
 def _receipts_not_checked(monkeypatch):
     """No kernel in tests: the Standard spending policy. Claim tests that
     aren't about receipts approve without one; test_claim_what_for.py
-    puts the real receipt rule back."""
+    puts the real receipt rule back. Spends never need asking first here
+    either."""
     from friday_common.access import STANDARD_SPENDING
 
     async def standard(_org):
-        return dict(STANDARD_SPENDING)
+        # Asking first is off too (test_spend_requests.py puts it back).
+        never = 10**12
+        return {**STANDARD_SPENDING, "ask_first_member": never, "ask_first_team_leader": never, "ask_first_branch_manager": never}
 
     async def fine(_session, _claim):
         return None

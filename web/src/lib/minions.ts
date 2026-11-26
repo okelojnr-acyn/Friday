@@ -30,6 +30,11 @@ export interface ExpenseClaim {
   paid_from?: PaidFrom;
   no_receipt_reason?: string;
   etims_invoice_no?: string;
+  /** Spending plan part B; missing on an older Minions. */
+  request_id?: string | null;
+  emergency_reason?: string;
+  /** e.g. "not asked first", "24% over the approved 5,000". */
+  flag?: string;
 }
 
 export type ForKind = "daily" | "task" | "project" | "vehicle" | "trip" | "meeting";
@@ -72,7 +77,54 @@ export interface ExpenseClaimCreate {
   category?: string;
   no_receipt_reason?: string;
   etims_invoice_no?: string;
+  request_id?: string;
+  emergency_reason?: string;
 }
+
+/** Asking first (spending plan part B): a spend, or a trip with optional
+ * cash up front. Claims go against it once approved. */
+export interface SpendRequest {
+  id: string;
+  employee_id: string;
+  kind: "spend" | "trip";
+  description: string;
+  amount_cents: number;
+  currency: string;
+  for_kind: ForKind;
+  for_id: string;
+  for_label: string;
+  category: string;
+  destination: string;
+  starts_on: string | null;
+  ends_on: string | null;
+  advance_cents: number;
+  status: "submitted" | "approved" | "rejected" | "withdrawn" | "closed";
+  waiting_on_name: string;
+  decision_note: string;
+  decided_by_name: string;
+  advance_paid_at: string | null;
+  spent_cents: number;
+  submitted_at: string;
+}
+
+export type SpendRequestCreate = Partial<
+  Pick<SpendRequest, "kind" | "for_kind" | "for_id" | "for_label" | "category" | "destination" | "starts_on" | "ends_on" | "advance_cents">
+> & { description: string; amount_cents: number };
+
+const SPEND = "/api/minions/spend_requests";
+/** An older Minions has no spend requests: an empty list. */
+const orNone = (p: Promise<SpendRequest[]>) => p.catch((err) => (err instanceof ApiError && err.status === 404 ? [] : Promise.reject(err)));
+export const fetchMySpendRequests = () => orNone(api.get<SpendRequest[]>(`${SPEND}?mine=true`));
+export const fetchMyOpenRequests = () => orNone(api.get<SpendRequest[]>(`${SPEND}?mine=true&open=true`));
+export const fetchRequestsWaitingForMe = () => orNone(api.get<SpendRequest[]>(`${SPEND}?waiting=true`));
+export const fetchOpenTrips = () =>
+  orNone(api.get<SpendRequest[]>(`${SPEND}?open=true`)).then((rs) => rs.filter((r) => r.kind === "trip"));
+export const askFirst = (body: SpendRequestCreate) => api.post<SpendRequest>(SPEND, body);
+export const withdrawSpendRequest = (id: string) => api.post<SpendRequest>(`${SPEND}/${id}/withdraw`);
+export const payTripAdvance = (id: string, method: string, reference: string) =>
+  api.post<SpendRequest>(`${SPEND}/${id}/advance`, { method, reference });
+export const settleRequest = (id: string, method: string, reference: string) =>
+  api.post<SpendRequest>(`${SPEND}/${id}/settle`, { method, reference });
 
 export const fetchMyExpenseClaims = () =>
   api.get<ExpenseClaim[]>("/api/minions/expense_claims?mine=true");

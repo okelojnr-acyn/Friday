@@ -540,3 +540,28 @@ async def test_an_advance_is_owed_by_staff_until_payroll_takes_it_back(client, k
     assert entry["total_debit_cents"] == entry["total_credit_cents"] == 5_000_000
     by = {line["account_id"]: line for line in entry["lines"]}
     assert by[await _account_id(client, "1210")]["credit_cents"] == 1_000_000
+
+
+async def test_a_trip_settles_its_advance(client, kernel_auth_header, principal):
+    """Spending plan part B: 10,000 up front, 7,000 spent. Given back in cash:
+    Dr 6900 7,000 + Dr cash 3,000 / Cr 1210 10,000. Off pay: only the 7,000
+    leaves 1210. Overspent: the rest comes out of M-Pesa."""
+    async def settle(advance, spent, method):
+        ref = str(uuid.uuid4())
+        payload = {"request_id": ref, "advance_cents": advance, "spent_cents": spent, "method": method, "description": "Nakuru"}
+        for _ in range(2):  # a repeat delivery books once
+            r = await client.post("/internal/webhooks/trip-settled", headers=kernel_auth_header,
+                                  json={"org_id": principal.org_id, "payload": payload})
+            assert r.status_code == 204
+        [entry] = [e for e in await _journal_entries(client) if e["source_ref"] == ref]
+        assert entry["total_debit_cents"] == entry["total_credit_cents"]
+        return {line["account_id"]: (line["debit_cents"], line["credit_cents"]) for line in entry["lines"]}
+
+    by = await settle(1_000_000, 700_000, "cash")
+    assert by[await _account_id(client, "6900")] == (700_000, 0)
+    assert by[await _account_id(client, "1010")] == (300_000, 0)
+    assert by[await _account_id(client, "1210")] == (0, 1_000_000)
+    by = await settle(1_000_000, 700_000, "payroll")
+    assert by[await _account_id(client, "1210")] == (0, 700_000) and len(by) == 2
+    by = await settle(1_000_000, 1_200_000, "mpesa")
+    assert by[await _account_id(client, "1020")] == (0, 200_000)

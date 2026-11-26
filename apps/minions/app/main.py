@@ -56,6 +56,7 @@ from .models import (
     ApprovalCover,
     MeetingAttendee,
     SalaryAdvance,
+    SpendRequest,
     TimeOff,
     PayrollLine,
     PayrollRun,
@@ -78,6 +79,9 @@ from .schemas import (
     MyPayrollLineOut,
     SalaryAdvanceCreate,
     SalaryAdvanceOut,
+    SpendRequestCreate,
+    SpendRequestOut,
+    TripSettle,
     TimeOffCreate,
     TimeOffOut,
     PayrollRunCreate,
@@ -942,6 +946,7 @@ async def create_expense_claim(
         raise HTTPException(422, f"choose which {body.for_kind} it was for")
     if body.for_kind == "daily":
         fields["for_id"] = ""
+    fields.update(await _asked_first(session, principal, employee, body))
     claim = ExpenseClaim(
         org_id=_org(principal),
         employee_id=employee.id,
@@ -957,12 +962,67 @@ async def create_expense_claim(
     return claim
 
 
+def _ask_first_above(policy: dict, role: str) -> int | None:
+    """The most a role spends without asking first (0: always ask); None
+    for owners and admins, who never need to."""
+    if role in ("owner", "admin"):
+        return None
+    return int(policy.get({"team_leader": "ask_first_team_leader", "branch_manager": "ask_first_branch_manager"}.get(role, "ask_first_member"), 0))
+
+
+async def _asked_first(session: AsyncSession, principal: Principal, employee: Employee, body: ExpenseClaimCreate) -> dict:
+    """Spending plan part B. A claim carries the approved request it was
+    spent under (a trip picked on the form is one), inheriting what it was
+    for, and is flagged when its request's claims go past the approval by
+    more than the tolerance. Without one, a spend over the role's
+    ask-first amount (or any trip) needs an emergency reason; Guss's claims
+    are for money already spent, so they're flagged, never refused."""
+    request_id = body.request_id
+    if request_id is None and body.for_kind == "trip":
+        try:
+            request_id = uuid.UUID(body.for_id)
+        except ValueError:
+            request_id = None
+    policy = await spending_policy(principal.org_id)
+    from_guss = bool(re.search(r"\(Guss [0-9a-f]{8}\)$", body.description))
+    if request_id is not None:
+        req = await session.get(SpendRequest, request_id)
+        if req is None or req.org_id != employee.org_id or req.employee_id != employee.id:
+            raise HTTPException(404, "that request isn't one of yours")
+        if req.status != "approved":
+            raise HTTPException(400, f"that request is '{req.status}'; claims go against an approved one")
+        claimed = await session.scalar(
+            select(func.coalesce(func.sum(ExpenseClaim.amount_cents), 0)).where(
+                ExpenseClaim.request_id == req.id, ExpenseClaim.status.in_(("submitted", "approved", "paid"))
+            )
+        )
+        total, most = claimed + body.amount_cents, req.amount_cents * (100 + int(policy["tolerance_pct"])) // 100
+        flag = f"{(total - req.amount_cents) * 100 // req.amount_cents}% over the approved {req.amount_cents / 100:,.0f}" if total > most else ""
+        return {"request_id": req.id, "for_kind": req.for_kind if req.kind == "spend" else "trip",
+                "for_id": req.for_id if req.kind == "spend" else str(req.id),
+                "for_label": req.for_label if req.kind == "spend" else (req.destination or req.description),
+                "emergency_reason": "", "flag": flag}
+    limit = _ask_first_above(policy, principal.role)
+    trip = body.for_kind == "trip" and bool(policy["trips_ask_first"]) and principal.role not in ("owner", "admin")
+    if not trip and (limit is None or body.amount_cents <= limit):
+        return {"request_id": None, "emergency_reason": ""}
+    reason = body.emergency_reason.strip()
+    if from_guss and not reason:
+        return {"request_id": None, "flag": "not asked first (from Guss)"}
+    if not reason:
+        what = "a trip" if trip else f"a spend over {limit / 100:,.0f}"
+        raise HTTPException(422, f"{what} needs asking first; ask first, or say why it was an emergency")
+    return {"request_id": None, "emergency_reason": reason, "flag": "not asked first"}
+
+
 async def _receipt_problem(session: AsyncSession, claim: ExpenseClaim) -> str | None:
     """Why this claim can't be approved for want of a receipt, or None.
     Receipts always (spending policy); a written reason stands in only
     under the policy's amount, a few times a year per person."""
     if claim.receipt_sha:
         return None
+    if claim.emergency_reason:
+        return "a spend that wasn't asked first needs its receipt; ask them to add the photo"
     policy = await spending_policy(str(claim.org_id))
     under, per_year = int(policy["no_receipt_under"]), int(policy["no_receipt_per_year"])
     money = f"{under / 100:,.0f} {claim.currency}"
@@ -986,7 +1046,8 @@ async def _receipt_problem(session: AsyncSession, claim: ExpenseClaim) -> str | 
 
 
 async def _route_claim(session: AsyncSession, claim: ExpenseClaim, employee: Employee) -> None:
-    await _route_request(session, claim, employee, "expense_claim")
+    # Not asked first: one level higher than usual (spending plan part B).
+    await _route_request(session, claim, employee, "expense_claim", skip=1 if claim.emergency_reason else 0)
 
 
 def _may_decide(who, role: str, amount_cents: int) -> bool:
@@ -996,7 +1057,7 @@ def _may_decide(who, role: str, amount_cents: int) -> bool:
     return limit is not None and amount_cents <= limit
 
 
-async def _available_approver(session: AsyncSession, org_id: str, who, amount_cents: int) -> dict | None:
+async def _available_approver(session: AsyncSession, org_id: str, who, amount_cents: int, skip: int = 0) -> dict | None:
     """The nearest person up the line who may decide this amount and is
     here: someone covering for them while they're away, if that person's
     limit covers it; else, if they're on approved time off today, the next
@@ -1021,17 +1082,20 @@ async def _available_approver(session: AsyncSession, org_id: str, who, amount_ce
             .limit(1)
         )
         if away is None:
+            if skip:
+                skip -= 1
+                continue
             return person
     return None
 
 
-async def _route_request(session: AsyncSession, claim, employee: Employee, kind: str) -> None:
+async def _route_request(session: AsyncSession, claim, employee: Employee, kind: str, skip: int = 0) -> None:
     """Sends a waiting request (a claim, an advance) to the nearest person
     up the requester's reporting line whose limit covers it, else to the
     owners and admins, and tells them (minions.approval.needed). Published
     in `session`, so it goes out only if the request is saved."""
     who = await approvers_for(str(claim.org_id), employee.user_id)
-    person = await _available_approver(session, str(claim.org_id), who, claim.amount_cents)
+    person = await _available_approver(session, str(claim.org_id), who, claim.amount_cents, skip)
     if person:
         claim.waiting_on_user_id = person["user_id"]
         claim.waiting_on_name = person.get("name") or person.get("email") or "your manager"
@@ -1249,6 +1313,10 @@ async def pay_expense_claim(
     if claim.status != "approved":
         raise HTTPException(400, f"claim is '{claim.status}', not 'approved'")
     pay = body or ExpenseClaimPay()
+    if claim.reimburse and claim.request_id:
+        trip = await session.get(SpendRequest, claim.request_id)
+        if trip and trip.advance_paid_at and trip.status == "approved":
+            raise HTTPException(400, "this comes out of the trip's advance; settle the trip instead")
     # The business's own money (petty cash, its M-Pesa, card or bank):
     # confirming it was paid books it; there's nothing to pay back.
     if not claim.reimburse and pay.method == "crypto":
@@ -2138,3 +2206,253 @@ app.include_router(presence_router)
 from .announcements import router as announcements_router  # noqa: E402
 
 app.include_router(announcements_router)
+
+
+# Asking first (spending plan part B, Friday Host docs/SPENDING-PLAN.md):
+# a spend request, or a trip with an optional cash advance, routed up the
+# reporting line like a claim. Claims go against it; a trip is closed by
+# settling its advance against its claims.
+spend_router = APIRouter(prefix="/spend_requests", tags=["spend-requests"])
+
+
+async def _get_owned_request(session: AsyncSession, principal: Principal, request_id: uuid.UUID) -> SpendRequest:
+    req = await session.get(SpendRequest, request_id)
+    if req is None or str(req.org_id) != principal.org_id:
+        raise HTTPException(404, "request not found")
+    return req
+
+
+@spend_router.get("", response_model=list[SpendRequestOut])
+async def list_spend_requests(
+    mine: bool = False,
+    waiting: bool = False,
+    open: bool = False,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("claims.read")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Like claims: mine, waiting for me, or whose I can see. `open`: the
+    approved ones still taking claims (the claim form's picker)."""
+    q = select(SpendRequest).where(SpendRequest.org_id == _org(principal))
+    if open:
+        q = q.where(SpendRequest.status == "approved")
+    if waiting:
+        q = q.where(SpendRequest.status == "submitted")
+        if principal.role not in ("owner", "admin"):
+            q = q.where(SpendRequest.waiting_on_user_id == principal.user_id)
+    elif mine or scope.kind == "own":
+        me = await _resolve_my_employee(session, principal)
+        q = q.where(SpendRequest.employee_id == me.id)
+    else:
+        ids = await _visible_employee_ids(session, principal, scope)
+        if ids is not None:
+            q = q.where(SpendRequest.employee_id.in_(ids))
+    return (await session.execute(q.order_by(SpendRequest.submitted_at.desc()))).scalars().all()
+
+
+@spend_router.post("", response_model=SpendRequestOut, status_code=201)
+async def ask_first(
+    body: SpendRequestCreate,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Mine only. A trip says where and when; its advance is at most its
+    estimate."""
+    me = await _resolve_my_employee(session, principal)
+    if body.kind == "spend" and body.for_kind not in ("daily", "trip") and not body.for_id.strip():
+        raise HTTPException(422, f"choose which {body.for_kind} it's for")
+    if body.kind == "trip":
+        if not body.destination.strip() or body.starts_on is None or body.ends_on is None:
+            raise HTTPException(422, "say where the trip is to and when")
+        if body.ends_on < body.starts_on:
+            raise HTTPException(422, "the trip ends before it starts")
+        if body.advance_cents > body.amount_cents:
+            raise HTTPException(422, "the cash up front can't be more than the trip's estimate")
+    elif body.advance_cents:
+        raise HTTPException(422, "only a trip takes cash up front")
+    fields = body.model_dump()
+    if body.kind == "trip" or body.for_kind in ("daily", "trip"):
+        fields.update(for_kind="trip" if body.kind == "trip" else "daily", for_id="", for_label="")
+    fields.update(description=body.description.strip(), destination=body.destination.strip())
+    req = SpendRequest(
+        org_id=_org(principal),
+        employee_id=me.id,
+        currency=await _business_currency(session, principal, me),
+        status="submitted",
+        submitted_at=datetime.now(UTC),
+        **fields,
+    )
+    session.add(req)
+    await session.flush()
+    await _route_request(session, req, me, "trip" if req.kind == "trip" else "spend_request")
+    await session.commit()
+    await session.refresh(req)
+    return req
+
+
+@spend_router.post("/{request_id}/withdraw", response_model=SpendRequestOut)
+async def withdraw_spend_request(
+    request_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_org_session),
+):
+    req = await _get_owned_request(session, principal, request_id)
+    me = await _resolve_my_employee(session, principal)
+    if req.employee_id != me.id:
+        raise HTTPException(403, "only the person who asked takes it back")
+    if req.status != "submitted":
+        raise HTTPException(400, f"the request is '{req.status}'; only a waiting one is taken back")
+    req.status = "withdrawn"
+    req.waiting_on_user_id = req.waiting_on_name = ""
+    await session.commit()
+    await session.refresh(req)
+    return req
+
+
+@spend_router.patch("/{request_id}/status", response_model=SpendRequestOut)
+async def decide_spend_request(
+    request_id: uuid.UUID,
+    body: ExpenseClaimStatusUpdate,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("claims.approve")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Approve, or reject with a reason; same rules as a claim."""
+    if body.status not in ("approved", "rejected"):
+        raise HTTPException(422, "status must be 'approved' or 'rejected'")
+    note = body.note.strip()
+    if body.status == "rejected" and not note:
+        raise HTTPException(422, "say why it's rejected")
+    req = await _get_owned_request(session, principal, request_id)
+    if req.status != "submitted":
+        raise HTTPException(400, f"the request is '{req.status}', not waiting")
+    asker = await _check_decider(session, principal, scope, req, "request")
+    req.status = body.status
+    req.decision_note = note
+    req.decided_by_name = await _name_of(session, principal)
+    req.decided_at = datetime.now(UTC)
+    req.waiting_on_user_id = req.waiting_on_name = ""
+    await publish_event(
+        "minions.spend_request.decided",
+        principal.org_id,
+        {
+            "request_id": str(req.id),
+            "kind": req.kind,
+            "to_user_ids": [asker.user_id] if asker.user_id else [],
+            "status": req.status,
+            "note": note,
+            "decided_by_name": req.decided_by_name,
+            "amount_cents": req.amount_cents,
+            "currency": req.currency,
+            "description": req.destination or req.description,
+        },
+        session=session,
+    )
+    await session.commit()
+    await session.refresh(req)
+    return req
+
+
+@spend_router.post("/{request_id}/advance", response_model=SpendRequestOut)
+async def pay_trip_advance(
+    request_id: uuid.UUID,
+    body: ExpenseClaimPay,
+    principal: Principal = Depends(get_current_principal),
+    _pay: Scope = Depends(require("pay.write")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Pays an approved trip's cash up front; the books hold it as owed by
+    the person (1210 Staff advances) until the trip is settled."""
+    req = await _get_owned_request(session, principal, request_id)
+    if req.kind != "trip" or req.advance_cents <= 0:
+        raise HTTPException(400, "this request has no cash up front")
+    if req.status != "approved" or req.advance_paid_at:
+        raise HTTPException(400, "only an approved trip's advance is paid, once")
+    if body.method == "crypto":
+        raise HTTPException(422, "pay a trip advance by M-Pesa, bank or cash")
+    reference = body.reference.strip()
+    if body.method in ("mpesa", "bank") and not reference:
+        raise HTTPException(422, "add the M-Pesa code or bank reference")
+    employee = await _get_owned_employee(session, principal, req.employee_id)
+    req.advance_method, req.advance_reference, req.advance_paid_at = body.method, reference, datetime.now(UTC)
+    await publish_event(
+        "minions.trip_advance.paid",
+        principal.org_id,
+        {
+            "advance_id": str(req.id),
+            "to_user_ids": [employee.user_id] if employee.user_id else [],
+            "amount_cents": req.advance_cents,
+            "currency": req.currency,
+            "method": body.method,
+            "description": f"Trip advance: {req.destination}",
+        },
+        session=session,
+    )
+    await session.commit()
+    await session.refresh(req)
+    return req
+
+
+@spend_router.post("/{request_id}/settle", response_model=SpendRequestOut)
+async def settle_trip(
+    request_id: uuid.UUID,
+    body: TripSettle,
+    principal: Principal = Depends(get_current_principal),
+    _pay: Scope = Depends(require("pay.write")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Closes an approved request. A trip whose advance was paid is
+    squared: its approved own-money claims are covered by the advance
+    (marked paid); what's left comes back (cash, M-Pesa, bank) or off the
+    next pay, and an overspend is paid to the person. Its waiting claims
+    are decided first."""
+    req = await _get_owned_request(session, principal, request_id)
+    if req.status != "approved":
+        raise HTTPException(400, f"the request is '{req.status}'; only an approved one is closed")
+    now = datetime.now(UTC)
+    if req.advance_paid_at:
+        claims = (await session.execute(
+            select(ExpenseClaim).where(ExpenseClaim.request_id == req.id, ExpenseClaim.reimburse,
+                                       ExpenseClaim.status.in_(("submitted", "approved")))
+        )).scalars().all()
+        if any(c.status == "submitted" for c in claims):
+            raise HTTPException(400, "decide the trip's waiting claims first")
+        spent = sum(c.amount_cents for c in claims)
+        balance = req.advance_cents - spent  # > 0: they give back; < 0: they're owed
+        if balance < 0 and body.method == "payroll":
+            raise HTTPException(422, "they spent more than the advance; pay them the rest by M-Pesa, bank or cash")
+        reference = body.reference.strip()
+        if balance and body.method in ("mpesa", "bank") and not reference:
+            raise HTTPException(422, "add the M-Pesa code or bank reference")
+        for c in claims:
+            c.status, c.paid_method, c.paid_reference, c.paid_at = "paid", "advance", f"Trip {str(req.id)[:8]}", now
+        if balance > 0 and body.method == "payroll":
+            # Taken off the next pay like a salary advance (still in 1210 until then).
+            session.add(SalaryAdvance(
+                org_id=req.org_id, employee_id=req.employee_id, description=f"Unused trip advance: {req.destination}",
+                amount_cents=balance, currency=req.currency, months=1, status="paid",
+                paid_method="trip", paid_reference=str(req.id), paid_at=now, submitted_at=now,
+            ))
+        req.spent_cents, req.settle_method = spent, body.method if balance else ""
+        employee = await _get_owned_employee(session, principal, req.employee_id)
+        await publish_event(
+            "minions.trip.settled",
+            principal.org_id,
+            {
+                "request_id": str(req.id),
+                "to_user_ids": [employee.user_id] if employee.user_id else [],
+                "advance_cents": req.advance_cents,
+                "spent_cents": spent,
+                "method": body.method,
+                "currency": req.currency,
+                "description": req.destination,
+            },
+            session=session,
+        )
+    req.status, req.closed_at = "closed", now
+    await session.commit()
+    await session.refresh(req)
+    return req
+
+
+app.include_router(spend_router)
