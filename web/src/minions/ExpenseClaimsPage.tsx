@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ApiError } from "../lib/api";
 import {
   fetchMyExpenseClaims,
+  fetchMyOpenRequests,
   openClaimReceipt,
   resendExpenseClaim,
   submitExpenseClaim,
@@ -11,7 +12,9 @@ import {
   type ExpenseClaim,
   type ForKind,
   type PaidFrom,
+  type SpendRequest,
 } from "../lib/minions";
+import { AskFirst, requestTitle } from "./SpendRequests";
 import { api } from "../lib/api";
 import { listRecords } from "../lib/resourceApi";
 import { PickList, type PickOption } from "../ui/PickList";
@@ -46,6 +49,7 @@ export function ExpenseClaimsPage() {
       ) : null}
 
       <NewClaim onSent={(c) => setClaims((cur) => [c, ...(cur ?? [])])} onError={setError} />
+      <AskFirst />
 
       {claims === null && !error ? <div className="spinner">Loading your claims…</div> : null}
       {claims && claims.length === 0 ? (
@@ -82,8 +86,19 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
   const [category, setCategory] = useState("");
   const [reason, setReason] = useState("");
   const [etims, setEtims] = useState("");
+  // Asked first: the approval it was spent under; else, when the server
+  // says it needed asking, why it was an emergency.
+  const [approvals, setApprovals] = useState<SpendRequest[]>([]);
+  const [requestId, setRequestId] = useState("");
+  const [emergency, setEmergency] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchMyOpenRequests()
+      .then((rs) => setApprovals(rs.filter((r) => r.kind === "spend")))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!photo) {
@@ -100,7 +115,7 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
     const cents = Math.round(Number.parseFloat(amount || "0") * 100);
     if (!Number.isFinite(cents) || cents <= 0) return setProblem("Enter the amount on the receipt");
     if (!description.trim()) return setProblem("Say what you bought");
-    if (forKind !== "daily" && !forPick) return setProblem(`Choose the ${FOR_NAME[forKind]} it was for`);
+    if (forKind !== "daily" && !requestId && !forPick) return setProblem(`Choose the ${FOR_NAME[forKind]} it was for`);
     if (!category) return setProblem("Choose what kind of cost it is");
     if (!whoPaid) return setProblem("Say whose money paid");
     if (!photo && !reason.trim()) return setProblem("Take a photo of the receipt, or say why there isn't one");
@@ -120,6 +135,8 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
         category,
         no_receipt_reason: photo ? "" : reason.trim(),
         etims_invoice_no: etims.trim(),
+        ...(requestId ? { request_id: requestId } : {}),
+        ...(emergency?.trim() ? { emergency_reason: emergency.trim() } : {}),
       });
       if (photo) {
         try {
@@ -139,8 +156,12 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
       setCategory("");
       setReason("");
       setEtims("");
+      setRequestId("");
+      setEmergency(null);
     } catch (err) {
-      setProblem(errorText(err, "Could not send the claim"));
+      const message = errorText(err, "Could not send the claim");
+      if (message.includes("asking first") && emergency === null) setEmergency("");
+      setProblem(message);
     } finally {
       setSending(false);
     }
@@ -180,15 +201,35 @@ function NewClaim({ onSent, onError }: { onSent: (c: ExpenseClaim) => void; onEr
           onChange={(e) => setDescription(e.target.value)}
         />
       </FieldWrap>
-      <fieldset className="minions-choice">
-        <legend>What was it for?</legend>
-        {(Object.keys(FOR_NAME) as FormFor[]).map((k) => (
-          <button key={k} type="button" aria-pressed={forKind === k} onClick={() => (setForKind(k), setForPick(null))}>
-            {FOR_LABEL[k]}
-          </button>
-        ))}
-      </fieldset>
-      {forKind !== "daily" ? <ForPicker kind={forKind} value={forPick} onChange={setForPick} /> : null}
+      {approvals.length ? (
+        <FieldWrap label="Asked first? Pick the approval">
+          <PickList
+            aria-label="Asked first"
+            value={requestId}
+            onChange={setRequestId}
+            options={[{ value: "", label: "No" }, ...approvals.map((r) => ({ value: r.id, label: requestTitle(r) }))]}
+          />
+        </FieldWrap>
+      ) : null}
+      {emergency !== null && !requestId ? (
+        <FieldWrap label="An emergency? Say why you couldn't ask first" required>
+          <Input value={emergency} maxLength={300} placeholder="e.g. A pipe burst at night" onChange={(e) => setEmergency(e.target.value)} />
+        </FieldWrap>
+      ) : null}
+      {/* An approval already says what it was for. */}
+      {requestId ? null : (
+        <>
+          <fieldset className="minions-choice">
+            <legend>What was it for?</legend>
+            {(Object.keys(FOR_NAME) as FormFor[]).map((k) => (
+              <button key={k} type="button" aria-pressed={forKind === k} onClick={() => (setForKind(k), setForPick(null))}>
+                {FOR_LABEL[k]}
+              </button>
+            ))}
+          </fieldset>
+          {forKind !== "daily" ? <ForPicker kind={forKind} value={forPick} onChange={setForPick} /> : null}
+        </>
+      )}
       <FieldWrap label="Kind of cost" required>
         <PickList
           aria-label="Kind of cost"
@@ -366,11 +407,13 @@ function ClaimRow({
   );
 }
 
-const FOR_NAME: Record<Exclude<ForKind, "trip" | "meeting">, string> = {
+const FOR_NAME: Record<ForKind, string> = {
   daily: "daily running",
   task: "task",
   project: "project",
   vehicle: "vehicle",
+  trip: "trip",
+  meeting: "meeting",
 };
 type FormFor = keyof typeof FOR_NAME;
 const FOR_LABEL: Record<FormFor, string> = {
@@ -378,15 +421,28 @@ const FOR_LABEL: Record<FormFor, string> = {
   task: "A task",
   project: "A project",
   vehicle: "A vehicle",
+  trip: "A trip",
+  meeting: "A meeting",
 };
 
-/** The task (mine), project or vehicle a claim was for, searchable. */
+/** The task (mine), project, vehicle, approved trip (mine) or meeting
+ * (mine, the last 60 days) a claim was for, searchable. */
 function ForPicker({ kind, value, onChange }: { kind: FormFor; value: PickOption | null; onChange: (o: PickOption | null) => void }) {
   const [options, setOptions] = useState<PickOption[] | null>(null);
   useEffect(() => {
     setOptions(null);
+    const since = new Date(Date.now() - 60 * 86_400_000).toISOString();
     const load =
-      kind === "task"
+      kind === "trip"
+        ? fetchMyOpenRequests().then((rs) => rs.filter((r) => r.kind === "trip").map((r) => ({ value: r.id, label: requestTitle(r) })))
+        : kind === "meeting"
+        ? api.get<{ id: string; title: string; starts_at: string }[]>(`/api/minions/meetings?mine=true&start=${since}`).then((ms) =>
+            ms.map((m) => ({
+              value: m.id,
+              label: `${m.title}, ${new Date(m.starts_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`,
+            })),
+          )
+        : kind === "task"
         ? api.get<{ id: string; title: string; status: string }[]>("/api/projects/tasks?mine=true").then((ts) =>
             ts.filter((t) => t.status !== "done").map((t) => ({ value: t.id, label: t.title })),
           )

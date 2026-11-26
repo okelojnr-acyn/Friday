@@ -70,6 +70,10 @@ class ExpenseClaimCreate(BaseModel):
     category: Literal["transport", "fuel", "meals", "accommodation", "airtime", "supplies", "repairs", "cleaning", "other"] = "other"
     no_receipt_reason: str = Field(default="", max_length=200)
     etims_invoice_no: str = Field(default="", max_length=40)
+    # Asked first: the approved request it was spent under; or, not asked,
+    # why (an emergency: always allowed, goes one level higher).
+    request_id: uuid.UUID | None = None
+    emergency_reason: str = Field(default="", max_length=300)
 
 
 class ExpenseClaimStatusUpdate(BaseModel):
@@ -135,6 +139,9 @@ class ExpenseClaimOut(BaseModel):
     paid_from: str = "own"
     no_receipt_reason: str = ""
     etims_invoice_no: str = ""
+    request_id: uuid.UUID | None = None
+    emergency_reason: str = ""
+    flag: str = ""
 
     model_config = {"from_attributes": True}
 
@@ -334,3 +341,63 @@ class CoverSet(BaseModel):
     delegate_user_id: str = Field(min_length=1, max_length=64)
     starts_on: date
     ends_on: date
+
+
+FOR_KINDS = Literal["daily", "task", "project", "vehicle", "trip", "meeting"]
+CATEGORIES = Literal["transport", "fuel", "meals", "accommodation", "airtime", "supplies", "repairs", "cleaning", "other"]
+
+
+class SpendRequestCreate(BaseModel):
+    """Asking first. A trip says where and when, and may ask for cash up
+    front (at most its estimate)."""
+
+    kind: Literal["spend", "trip"] = "spend"
+    description: str = Field(min_length=1, max_length=300)
+    amount_cents: int = Field(gt=0)
+    for_kind: FOR_KINDS = "daily"
+    for_id: str = Field(default="", max_length=64)
+    for_label: str = Field(default="", max_length=120)
+    category: CATEGORIES = "other"
+    destination: str = Field(default="", max_length=120)
+    starts_on: date | None = None
+    ends_on: date | None = None
+    advance_cents: int = Field(default=0, ge=0)
+
+
+class TripSettle(BaseModel):
+    """How a trip's advance is squared: what's left comes back (cash,
+    M-Pesa, bank) or off the next pay (payroll); an overspend is paid to
+    the person (cash, M-Pesa, bank)."""
+
+    method: Literal["cash", "mpesa", "bank", "payroll"] = "cash"
+    reference: str = Field(default="", max_length=60)
+
+
+class SpendRequestOut(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    kind: str
+    description: str
+    amount_cents: int
+    currency: str
+    for_kind: str
+    for_id: str
+    for_label: str
+    category: str
+    destination: str = ""
+    starts_on: date | None = None
+    ends_on: date | None = None
+    advance_cents: int = 0
+    status: str
+    waiting_on_name: str = ""
+    decision_note: str = ""
+    decided_by_name: str = ""
+    advance_method: str = ""
+    advance_reference: str = ""
+    advance_paid_at: datetime | None = None
+    spent_cents: int = 0
+    settle_method: str = ""
+    closed_at: datetime | None = None
+    submitted_at: datetime
+
+    model_config = {"from_attributes": True}

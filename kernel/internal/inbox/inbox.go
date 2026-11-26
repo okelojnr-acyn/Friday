@@ -21,7 +21,7 @@ import (
 // Notice is what an event names: who to tell and the facts to say.
 type Notice struct {
 	ToUserIDs     []string `json:"to_user_ids"`
-	Kind          string   `json:"kind"` // approval.needed: expense_claim or salary_advance
+	Kind          string   `json:"kind"` // approval.needed: expense_claim, salary_advance, time_off, spend_request or trip
 	FromName      string   `json:"from_name"`
 	AmountCents   int64    `json:"amount_cents"`
 	Currency      string   `json:"currency"`
@@ -100,6 +100,10 @@ func Compose(typ string, n Notice, loc *time.Location) (Message, bool) {
 		if n.Kind == "time_off" {
 			return Message{n.FromName + " asks for time off", what, "/minions/team", "/people/time_off"}, true
 		}
+		if n.Kind == "spend_request" || n.Kind == "trip" {
+			ask := map[string]string{"spend_request": " asks first to spend", "trip": " asks to go on a trip"}[n.Kind]
+			return Message{n.FromName + ask, amount + " for " + what, "/minions/team", "/minions/team"}, true
+		}
 		if n.Kind == "salary_advance" {
 			body := amount
 			if what != "" {
@@ -124,6 +128,19 @@ func Compose(typ string, n Notice, loc *time.Location) (Message, bool) {
 			return Message{n.DecidedByName + " turned down your time off", what + ": " + n.Note, "/minions/calendar", "/minions/calendar"}, true
 		}
 		return Message{n.DecidedByName + " approved your time off", what, "/minions/calendar", "/minions/calendar"}, true
+	case "minions.spend_request.decided":
+		if n.Status == "rejected" {
+			return Message{n.DecidedByName + " turned down your request", what + " (" + amount + "): " + n.Note,
+				"/minions/expense-claims", "/minions/expense-claims"}, true
+		}
+		return Message{n.DecidedByName + " approved your request", what + " (" + amount + "). Claim against it when you spend.",
+			"/minions/expense-claims", "/minions/expense-claims"}, true
+	case "minions.trip_advance.paid":
+		how := map[string]string{"mpesa": " by M-Pesa", "bank": " by bank transfer", "cash": " in cash"}[n.Method]
+		return Message{"Your trip advance was paid", amount + how + ". Claim the trip's spends against it.",
+			"/minions/expense-claims", "/minions/expense-claims"}, true
+	case "minions.trip.settled":
+		return Message{"Your trip was settled", what, "/minions/expense-claims", "/minions/expense-claims"}, true
 	case "minions.salary_advance.paid":
 		how := map[string]string{"mpesa": " by M-Pesa", "bank": " by bank transfer", "cash": " in cash", "crypto": " to your wallet"}[n.Method]
 		return Message{"Your salary advance was paid", amount + how + ". It comes off your next pay.", "/minions/payroll", "/minions/payroll"}, true
