@@ -23,3 +23,30 @@ export function saveSession(session: Session): void {
 export function clearSession(): void {
   localStorage.removeItem(STORAGE_KEY);
 }
+
+// A sign-in just made on this page (passkey or code) already proves who's
+// at the till; the clock-in takes it instead of asking for the finger a
+// second time (owner, 27 Nov). Two minutes, this tab only.
+const FRESH_KEY = "friday.signedInAt";
+const FRESH_MS = 2 * 60_000;
+
+export function markSignedInNow(): void {
+  // The till's own sign-in only: a Friday sign-in in this tab says nothing
+  // about whose till session is stored.
+  if (STORAGE_KEY !== "friday.pos.session") return;
+  try {
+    sessionStorage.setItem(FRESH_KEY, String(Date.now()));
+  } catch {
+    /* private mode: the till asks again, as before */
+  }
+}
+
+export function takeFreshSignIn(now = Date.now()): boolean {
+  try {
+    const at = Number(sessionStorage.getItem(FRESH_KEY));
+    sessionStorage.removeItem(FRESH_KEY);
+    return at > 0 && now - at < FRESH_MS;
+  } catch {
+    return false;
+  }
+}

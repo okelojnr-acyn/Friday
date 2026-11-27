@@ -320,7 +320,14 @@ export function PosPage({
         if (mode === "qty") return { ...l, quantity: next === "" ? l.quantity : value };
         return { ...l, unit_price_cents: next === "" ? l.unit_price_cents : Math.round(value * 100) };
       }),
-    );
+    );    // A quantity typed past the shelf gets the same warning as a tap.
+    const line = lines[selected];
+    const product = line?.product_id ? products.find((p) => p.id === line.product_id) : undefined;
+    if (mode === "qty" && product && next !== "") {
+      const others = lines.filter((l, i) => i !== selected && l.product_id === product.id).reduce((n, l) => n + l.quantity, 0);
+      const short = shortWarning(product, others + value);
+      if (short) flash(short);
+    }
   }
 
   function pressKey(key: string) {
