@@ -15,6 +15,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
+	"github.com/acyn-innovation/friday/kernel/internal/db"
 	"github.com/acyn-innovation/friday/kernel/internal/mail"
 )
 
@@ -76,6 +77,10 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	if exists {
 		writeError(w, http.StatusConflict, "an account with that email already exists -- log in instead")
+		return
+	}
+	if err := db.CheckOrgCap(ctx, h.Pool); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
@@ -168,6 +173,14 @@ func (h *Handlers) completeSignup(w http.ResponseWriter, r *http.Request, email,
 		return
 	}
 	defer tx.Rollback(ctx)
+	if err := db.CheckOrgCap(ctx, tx); err != nil {
+		code := http.StatusInternalServerError
+		if errors.Is(err, db.ErrOrgCap) {
+			code = http.StatusForbidden
+		}
+		writeError(w, code, err.Error())
+		return
+	}
 
 	var orgID string
 	slug := slugify(orgName)

@@ -78,6 +78,9 @@ func bootstrap(ctx context.Context, pool *pgxpool.Pool, orgName, email, fullName
 		return "", false, err
 	}
 	defer tx.Rollback(ctx)
+	if err := db.CheckOrgCap(ctx, tx); err != nil {
+		return "", false, err
+	}
 
 	base := strings.Trim(bootstrapSlug.ReplaceAllString(strings.ToLower(orgName), "-"), "-")
 	if base == "" {
