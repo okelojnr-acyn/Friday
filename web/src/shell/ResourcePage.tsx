@@ -25,10 +25,8 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
   const resource = params.resource ?? "";
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<string | null>(null);
-  // Invoices: till receipts are hidden unless asked for (plan 18).
-  const [showTill, setShowTill] = useState(false);
   const nav = useActiveNav();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [schema, setSchema] = useState<ResourceSpec[] | null>(null);
   const [records, setRecords] = useState<RecordRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,6 +38,18 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
   // one click away.
   const isProducts = app === "inventory" && resource === "product";
   const isInvoices = app === "invoicing" && resource === "invoice";
+  // Invoices: every till sale is an invoice too (source "pos"). They sit
+  // under their own switch, in the URL (?show=till), so they neither bury
+  // real invoices nor vanish unnoticed (owner, 27 Nov: the old ghost
+  // "Show till receipts" button was ignored, and tab counts included them).
+  const tillView = isInvoices && searchParams.get("show") === "till";
+  function showTill(on: boolean) {
+    const next = new URLSearchParams(searchParams);
+    if (on) next.set("show", "till");
+    else next.delete("show");
+    setSearchParams(next, { replace: true });
+    setStatus(null);
+  }
   const [productCards, setProductCards] = useState(true);
 
   useEffect(() => {
@@ -94,17 +104,23 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
   // their lists (All · Draft · Sent · Paid …), from the status/stage field.
   const statusField = spec?.fields.find((f) => (f.name === "status" || f.name === "stage") && f.type === "select" && f.options?.length) ?? null;
 
+  const tillCount = isInvoices && records ? records.filter((r) => r.source === "pos").length : 0;
+  // The records on the chosen side of the switch; tabs and totals count these.
+  const baseRecords = useMemo(
+    () => (records && isInvoices ? records.filter((r) => (r.source === "pos") === tillView) : records),
+    [records, isInvoices, tillView],
+  );
+
   const visibleRecords = useMemo(() => {
-    if (!records) return records;
+    if (!baseRecords) return baseRecords;
     const q = query.trim().toLowerCase();
-    return records.filter(
+    return baseRecords.filter(
       (r) =>
         (!activeFilter || r[activeFilter.field.name] === activeFilter.value) &&
         (!status || !statusField || r[statusField.name] === status) &&
-        (showTill || !isInvoices || r.source !== "pos") &&
         (!q || Object.values(r).some((v) => typeof v === "string" && v.toLowerCase().includes(q))),
     );
-  }, [records, activeFilter, query, status, statusField, showTill, isInvoices]);
+  }, [baseRecords, activeFilter, query, status, statusField]);
 
   if (error) return <div className="page error-banner">{error}</div>;
   if (!schema) return <div className="page spinner">Loading...</div>;
@@ -193,11 +209,6 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
               <Icon name="barcode" size={14} /> Bulk add
             </Button>
           ) : null}
-          {isInvoices ? (
-            <Button variant="ghost" size="sm" className="btn-pill" onClick={() => setShowTill((v) => !v)}>
-              {showTill ? "Hide till receipts" : "Show till receipts"}
-            </Button>
-          ) : null}
           {/* Rarely used: kept quiet so New is the one clear action. */}
           <Button variant="ghost" size="sm" className="btn-pill" onClick={() => setImportingCsv(true)} title="Import from a CSV file">
             <Icon name="upload" size={14} /> Import
@@ -210,10 +221,21 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
 
       {error ? <div className="error-banner" style={{ marginBottom: 16 }}>{error}</div> : null}
 
-      {statusField && records && view !== "kanban" ? (
+      {isInvoices && records && tillCount > 0 ? (
+        <div className="segmented" role="tablist" aria-label="Show">
+          <button type="button" role="tab" aria-selected={!tillView} className={!tillView ? "active" : ""} onClick={() => showTill(false)}>
+            Invoices <span className="status-tab-count">{records.length - tillCount}</span>
+          </button>
+          <button type="button" role="tab" aria-selected={tillView} className={tillView ? "active" : ""} onClick={() => showTill(true)}>
+            Till receipts <span className="status-tab-count">{tillCount}</span>
+          </button>
+        </div>
+      ) : null}
+
+      {statusField && baseRecords && view !== "kanban" ? (
         <div className="status-tabs" role="tablist" aria-label={statusField.label}>
           {[null, ...(statusField.options ?? [])].map((opt) => {
-            const n = opt === null ? records.length : records.filter((r) => r[statusField.name] === opt).length;
+            const n = opt === null ? baseRecords.length : baseRecords.filter((r) => r[statusField.name] === opt).length;
             if (opt !== null && n === 0) return null;
             return (
               <button
@@ -243,7 +265,7 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
           spec={spec}
           records={visibleRecords}
           onRowClick={setEditing}
-          filtered={(records?.length ?? 0) > 0}
+          filtered={(baseRecords?.length ?? 0) > 0}
           emptyAction={
             <Button variant="primary" size="sm" className="btn-pill" onClick={() => setEditing("new")}>
               <Icon name="plus" size={14} /> New {spec.label.toLowerCase()}

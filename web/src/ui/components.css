@@ -627,6 +627,44 @@
 .cell-nowrap {
   white-space: nowrap;
 }
+/* Two or three ways to cut one list (Invoices | Till receipts), above its tabs. */
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: var(--space-3);
+  border-radius: var(--radius-pill);
+  background: rgba(10, 10, 8, 0.05);
+  border: 1px solid var(--border);
+}
+.segmented button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms;
+}
+.segmented button:hover {
+  color: var(--text);
+}
+.segmented button.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(20, 16, 8, 0.1);
+}
+.segmented button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .status-tabs {
   display: flex;
   gap: var(--space-1);
