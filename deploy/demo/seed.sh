@@ -5,10 +5,14 @@ set -eu
 cd /opt/friday-demo
 dc() { docker compose -p friday-demo -f compose.yml -f compose.demo.yml --env-file .env "$@"; }
 psql() { dc exec -T postgres psql -U friday -d friday -v ON_ERROR_STOP=1 -At "$@"; }
+# From empty every time: a business left by an earlier run goes first.
+OLD=$(psql -c "SELECT id FROM core.orgs LIMIT 1")
+[ -z "$OLD" ] || dc exec -T kernel ./kernel delete-org "$OLD" --yes
+psql -c "DELETE FROM core.users"
 ORG=$(dc exec -T kernel ./kernel bootstrap "Mama Njeri Supermarket" owner@demo.fridayhost.dev | tail -1)
 dc exec -T kernel ./kernel preset "$ORG" supermarket KE 1 5 >/dev/null
 # The cashier: staff with the cashier job (sign-in by the demo button only).
-psql -c "INSERT INTO core.users (email, password_hash, full_name) VALUES ('cashier@demo.fridayhost.dev', '', 'Wanjiku Kamau') ON CONFLICT (email) DO NOTHING"
+psql -c "INSERT INTO core.users (email, full_name) VALUES ('cashier@demo.fridayhost.dev', 'Wanjiku Kamau') ON CONFLICT (email) DO NOTHING"
 psql -c "INSERT INTO core.memberships (org_id, user_id, role, perms) SELECT '$ORG', id, 'member', '{cashier}' FROM core.users WHERE email = 'cashier@demo.fridayhost.dev' ON CONFLICT DO NOTHING"
 psql -c "INSERT INTO core.membership_locations (org_id, user_id, location_id) SELECT '$ORG', u.id, l.id FROM core.users u, core.locations l WHERE u.email = 'cashier@demo.fridayhost.dev' AND l.org_id = '$ORG' ON CONFLICT DO NOTHING"
 psql -c "UPDATE core.users SET full_name = 'Njeri Mwangi' WHERE email = 'owner@demo.fridayhost.dev'"
