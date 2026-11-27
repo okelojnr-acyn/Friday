@@ -30,6 +30,8 @@ import { ProductTile, VariantPicker } from "./ProductTile";
 import { ProductEditor } from "../inventory/ProductEditor";
 import { ReturnsPanel } from "./ReturnsPanel";
 import { Handover } from "./Handover";
+import { OverrideApproval } from "./OverrideApproval";
+import { overridesNeedingApproval } from "./overrides";
 import { PayOut, useTillPayouts } from "./PayOut";
 import { categoryTint } from "../../lib/productImages";
 
@@ -120,6 +122,10 @@ export function PosPage({
   const payouts = useTillPayouts();
   const [payingOut, setPayingOut] = useState(false);
   const [handingOver, setHandingOver] = useState(false);
+  // A manager's OK for this order's price cuts and big discounts, kept for
+  // exactly the changes it saw (any later change asks again).
+  const [approval, setApproval] = useState<{ key: string; by: string } | null>(null);
+  const [approving, setApproving] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [customName, setCustomName] = useState("");
   const [customPrice, setCustomPrice] = useState("");
@@ -397,6 +403,7 @@ export function PosPage({
     const t = tillTotals(sale.lines, (id) => (id ? byId.get(id)?.tax_code ?? "" : ""), settings);
     const out: Sale = {
       ...sale,
+      ...(approval && approval.key === overridesKey && overrides.length ? { override_approved_by: approval.by } : {}),
       amount_cents: t.total,
       prices_include_tax: inclusive,
       lines: sale.lines.map((l, i) => {
@@ -700,6 +707,8 @@ export function PosPage({
   const [choosing, setChoosing] = useState<ShelfProduct | null>(null);
   // Owners and admins can add a product (photo, variants) from the till.
   const canManageProducts = session?.role === "owner" || session?.role === "admin";
+  const overrides = overridesNeedingApproval(lines, (id) => byId.get(id)?.price_cents, session?.role);
+  const overridesKey = overrides.join("|");
   const [newProduct, setNewProduct] = useState(false);
 
   if (!ready) {
@@ -956,7 +965,12 @@ export function PosPage({
               disabled={selected === null}
               allowSign
             />
-            <button type="button" className="till-pay" disabled={lines.length === 0} onClick={() => setPaying(true)}>
+            <button
+              type="button"
+              className="till-pay"
+              disabled={lines.length === 0}
+              onClick={() => (overrides.length && approval?.key !== overridesKey ? setApproving(true) : setPaying(true))}
+            >
               <span>Payment</span>
               <span>{formatMoney(totals.total)}</span>
             </button>
@@ -1063,6 +1077,17 @@ export function PosPage({
           most={payouts.most}
           onClose={() => setPayingOut(false)}
           onDone={(text) => (setPayingOut(false), flash(text))}
+        />
+      ) : null}
+      {approving ? (
+        <OverrideApproval
+          reasons={overrides}
+          onClose={() => setApproving(false)}
+          onApproved={(by) => {
+            setApproval({ key: overridesKey, by });
+            setApproving(false);
+            setPaying(true);
+          }}
         />
       ) : null}
       {handingOver ? (

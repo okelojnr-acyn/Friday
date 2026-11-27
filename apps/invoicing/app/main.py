@@ -693,6 +693,7 @@ async def _apply_pos_sale_lines(
     # priced the sale.
     invoice.buyer_pin = normalize_pin(body.get("buyer_pin"))[:20]
     invoice.buyer_name = str(body.get("buyer_name") or "").strip()[:120]
+    invoice.override_approved_by = str(body.get("override_approved_by") or "").strip()[:200]
     if isinstance(body.get("prices_include_tax"), bool):
         invoice.prices_include_tax = body["prices_include_tax"]
     return charged_cents

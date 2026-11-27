@@ -102,6 +102,8 @@ class Invoice(Base):
     # KRA eTIMS (0012).
     buyer_pin: Mapped[str] = mapped_column(Text, nullable=False, default="")
     buyer_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The leader or manager whose till PIN allowed a price cut or big discount.
+    override_approved_by: Mapped[str] = mapped_column(Text, nullable=False, default="")
     prices_include_tax: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # 'till' or 'guss' (0014): where a POS sale was made.
     channel: Mapped[str] = mapped_column(Text, nullable=False, default="till")

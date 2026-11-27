@@ -156,6 +156,8 @@ class InvoiceOut(BaseModel):
     # The open pay request: "paystack", "stripe", "pesapal" or "".
     pay_request_provider: str = ""
     pay_request_url: str = ""
+    # Who allowed a till sale's price cut or big discount ("" when none).
+    override_approved_by: str = ""
 
     model_config = {"from_attributes": True}
 
@@ -184,6 +186,7 @@ class InvoiceOut(BaseModel):
             source_ref=inv.source_ref,
             cashier_user_id=inv.cashier_user_id,
             cashier_email=inv.cashier_email,
+            override_approved_by=getattr(inv, "override_approved_by", "") or "",
             due_at=inv.due_at,
             recurring_interval=inv.recurring_interval,
             next_recurrence_at=inv.next_recurrence_at,
