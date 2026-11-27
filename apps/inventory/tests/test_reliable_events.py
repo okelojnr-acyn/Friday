@@ -86,8 +86,11 @@ async def test_an_event_saved_with_its_change_commits_and_rolls_back_with_it(mon
         await session.commit()
     import asyncio
 
-    for _ in range(50):  # the after-commit send runs as a task
-        if sent:
+    # The after-commit send runs as a task, and marks the row delivered
+    # only after the send returns: wait for that, not just the send.
+    for _ in range(100):
+        rows = await outbox_rows()
+        if rows and rows[0].delivered_at is not None:
             break
         await asyncio.sleep(0.02)
     (row,) = await outbox_rows()
