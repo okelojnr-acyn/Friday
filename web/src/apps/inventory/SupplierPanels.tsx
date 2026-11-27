@@ -1,3 +1,4 @@
+import { fullDate } from "../../ui/resource/fieldFormat";
 import { useState } from "react";
 import { api, ApiError } from "../../lib/api";
 import { KERNEL_URL } from "../../lib/runtimeConfig";
@@ -95,7 +96,7 @@ export function SupplierStatusPanel({ record }: { record: RecordRow }) {
     <Card style={{ marginTop: 12 }}>
       <div className="field-label">
         Supplier: {status || "no reply yet"}
-        {record.supplier_updated_at ? ` (${new Date(String(record.supplier_updated_at)).toLocaleString()})` : ""}
+        {record.supplier_updated_at ? ` (${fullDate(String(record.supplier_updated_at))})` : ""}
         {record.supplier_note ? ` · "${String(record.supplier_note)}"` : ""}
       </div>
       {hasFile ? (

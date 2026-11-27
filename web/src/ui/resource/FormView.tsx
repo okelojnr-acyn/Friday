@@ -120,7 +120,7 @@ export function FormView({ spec, app, schema, record, onClose, onSaved }: FormVi
           <div className="field-label">Nothing on this record is editable here.</div>
         ) : (
           fields.map((field) => (
-            <FieldWrap key={field.name} label={field.label} required={field.required}>
+            <FieldWrap key={field.name} label={field.label} required={field.required} hint={field.help}>
               <FieldInput
                 field={field}
                 value={values[field.name]}

@@ -6,6 +6,7 @@ import { PriorityFlag } from "../PriorityFlag";
 import { statusTone } from "../Badge";
 import {
   formatCellValue,
+  humanize,
   initials,
   isDueDateField,
   isOverdue,
@@ -14,6 +15,7 @@ import {
   sumCents,
 } from "./fieldFormat";
 import { formatMoney } from "../../lib/orgSettings";
+import { ReferenceCell } from "./ListView";
 
 interface KanbanViewProps {
   spec: ResourceSpec;
@@ -70,7 +72,7 @@ export function KanbanView({ spec, records, onCardClick, onMove }: KanbanViewPro
             <div className="kanban-column-header">
               <div className="kanban-column-title-row">
                 <span>
-                  {col} <span className="kanban-column-count">{cardsInColumn.length}</span>
+                  {humanize(col)} <span className="kanban-column-count">{cardsInColumn.length}</span>
                 </span>
                 {sum !== null ? (
                   <span className="kanban-column-sum">{formatMoney(sum, { whole: true })}</span>
@@ -110,7 +112,13 @@ export function KanbanView({ spec, records, onCardClick, onMove }: KanbanViewPro
                     onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && onCardClick(record)}
                   >
                     <div className="kanban-card-title">
-                      {titleField ? formatCellValue(titleField, record[titleField.name]) : record.id}
+                      {titleField?.type === "reference" ? (
+                        <ReferenceCell field={titleField} value={record[titleField.name]} />
+                      ) : titleField ? (
+                        formatCellValue(titleField, record[titleField.name])
+                      ) : (
+                        humanize(spec.name)
+                      )}
                     </div>
                     {subFields.slice(0, 1).map((f) => (
                       <div key={f.name} className="kanban-card-sub">
@@ -148,7 +156,7 @@ export function KanbanView({ spec, records, onCardClick, onMove }: KanbanViewPro
                       >
                         {columns.map((c) => (
                           <option key={c} value={c}>
-                            {c === col ? c : `Move to ${c}`}
+                            {c === col ? humanize(c) : `Move to ${humanize(c)}`}
                           </option>
                         ))}
                       </select>

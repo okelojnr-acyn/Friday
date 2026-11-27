@@ -1,7 +1,9 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
+import { api } from "../lib/api";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { PageErrorBoundary } from "../ui/PageErrorBoundary";
 import { APP_ICONS } from "../ui/AppTile";
+import { AppMark } from "../ui/AppMark";
 import { Icon } from "../ui/Icon";
 import { navForPath, type NavItem } from "./appNav";
 
@@ -45,7 +47,7 @@ export function AppFrame() {
         <nav className="hub-nav" aria-label={nav.label}>
           <Link to={nav.sections[0][1][0].to} className="app-frame-title">
             <span className="app-tile-icon app-tile-icon-sm" style={{ ["--tile" as string]: tile?.color }}>
-              <Icon name={tile?.icon ?? "app-window"} size={18} />
+              {tile ? <AppMark app={nav.app} size={20} /> : <Icon name="app-window" size={18} />}
             </span>
             <span>{nav.label}</span>
           </Link>
@@ -67,6 +69,7 @@ export function AppFrame() {
                   >
                     <Icon name={item.icon} size={16} />
                     <span>{item.label}</span>
+                    {item.waiting ? <WaitingCount {...item.waiting} /> : null}
                   </Link>
                 ),
               )}
@@ -83,4 +86,29 @@ export function AppFrame() {
       </div>
     </div>
   );
+}
+
+/** How many in a queue are waiting for someone, beside its rail entry.
+ * Nothing when none are, or when this person can't read the list.
+ * shortcut: counts the first page the list returns; give the APIs a count
+ * endpoint if a queue ever holds more than a page. */
+function WaitingCount({ path, statuses }: { path: string; statuses: string[] }) {
+  const [n, setN] = useState(0);
+  const { pathname } = useLocation();
+  useEffect(() => {
+    let live = true;
+    api
+      .get<{ status?: string }[]>(path)
+      .then((rows) => live && setN(Array.isArray(rows) ? rows.filter((r) => statuses.includes(String(r.status))).length : 0))
+      .catch(() => live && setN(0));
+    return () => {
+      live = false;
+    };
+    // Recount when the person moves between pages (they may have just dealt with one).
+  }, [path, statuses, pathname]);
+  return n > 0 ? (
+    <span className="hub-nav-count" aria-label={`${n} waiting`}>
+      {n}
+    </span>
+  ) : null;
 }

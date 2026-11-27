@@ -3,7 +3,7 @@ import { ApiError } from "../../lib/api";
 import { saveOrgSettings, useOrgSettings, type TaxProfile, type TaxRate } from "../../lib/orgSettings";
 import { Button } from "../../ui/Button";
 import { Checkbox, FieldWrap, Input, Select, Textarea } from "../../ui/Field";
-import { SaveRow } from "./SaveRow";
+import { SaveRow, reloadSaved } from "./SaveRow";
 import { VatReturnCard } from "./VatReturnCard";
 import { PayrollReturnsCard } from "./PayrollReturnsCard";
 
@@ -66,7 +66,7 @@ export function TaxSection({ canEdit }: { canEdit: boolean }) {
     setSaving(true);
     try {
       await saveOrgSettings({ tax: { ...p, rates: parsed } });
-      window.location.reload();
+      reloadSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save.");
       setSaving(false);

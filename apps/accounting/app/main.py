@@ -46,9 +46,9 @@ resource(
         views=("list", "form"),
         search_fields=("code", "name"),
         fields=(
-            FieldSpec("code", "Code", "text", required=True),
+            FieldSpec("code", "Code", "text", required=True, help="A short number that sorts the account in reports, e.g. 1000 for cash. Assets start with 1, liabilities 2, equity 3, income 4, expenses 5-6."),
             FieldSpec("name", "Name", "text", required=True),
-            FieldSpec("type", "Type", "select", options=ACCOUNT_TYPES, required=True),
+            FieldSpec("type", "Type", "select", options=ACCOUNT_TYPES, required=True, help="Decides which report the account lands on: assets, liabilities and equity on the balance sheet; income and expenses on profit & loss."),
             FieldSpec("parent_id", "Parent", "reference", reference="accounting.account", list_visible=False),
             FieldSpec("is_active", "Active", "boolean"),
             FieldSpec("created_at", "Created", "datetime", form_visible=False),
@@ -69,7 +69,7 @@ resource(
             FieldSpec("entry_date", "Date", "date", required=True),
             FieldSpec("memo", "Memo", "text"),
             FieldSpec("source", "Source", "select", options=JOURNAL_SOURCES, form_visible=False),
-            FieldSpec("status", "Status", "select", options=JOURNAL_STATUSES, required=True),
+            FieldSpec("status", "Status", "select", options=JOURNAL_STATUSES, required=True, help="A draft changes nothing. Posted entries move the balances; correct a posted entry with a new one rather than editing it."),
             FieldSpec("total_debit_cents", "Debit total", "currency", form_visible=False),
             FieldSpec("total_credit_cents", "Credit total", "currency", form_visible=False),
             FieldSpec("created_at", "Created", "datetime", form_visible=False),
@@ -89,7 +89,7 @@ resource(
             FieldSpec("name", "Name", "text", required=True),
             FieldSpec("start_date", "Start", "date", required=True),
             FieldSpec("end_date", "End", "date", required=True),
-            FieldSpec("status", "Status", "select", options=FISCAL_PERIOD_STATUSES, required=True),
+            FieldSpec("status", "Status", "select", options=FISCAL_PERIOD_STATUSES, required=True, help="Closing a period locks its entries so last month's books can't change by accident."),
         ),
     )
 )

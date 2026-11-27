@@ -202,7 +202,7 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
                   variant={view === v ? "primary" : "secondary"}
                   onClick={() => setView(v)}
                 >
-                  {v === "kanban" ? <Icon name="kanban" size={14} /> : null} {v}
+                  {v === "kanban" ? <Icon name="kanban" size={14} /> : null} {v === "kanban" ? "Board" : "List"}
                 </Button>
               ))
             : null}
@@ -344,7 +344,12 @@ export function AppIndexRedirect() {
       .catch(() => setFirstResource(null));
   }, [app]);
 
-  if (firstResource === undefined) return <div className="page spinner">Loading...</div>;
-  if (firstResource === null) return <div className="page empty-state">This app has nothing to show yet.</div>;
+  if (firstResource === undefined) return <div className="page spinner">Loading…</div>;
+  if (firstResource === null)
+    return (
+      <div className="page empty-state">
+        There's no page here. <Link to="/">Go to your apps</Link>
+      </div>
+    );
   return <Navigate to={`${appPath(app)}/${firstResource}`} replace />;
 }
