@@ -40,6 +40,8 @@ class Customer(Base):
     # Days after an invoice is created that it's due -- see create_invoice,
     # which sets due_at from this at creation time (net-30 by default).
     payment_terms_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    # The most this customer may owe on credit sales; None or 0 = no limit.
+    credit_limit_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
