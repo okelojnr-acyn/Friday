@@ -147,6 +147,11 @@ jobs:
           }
           # No rules (no file, then a comment only): through to the app.
           code 502
+          # Scanner probes get no answer: the connection is dropped.
+          for path in /.env /.git/config /wp-login.php /index.php; do
+            p=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:8080$path" || true)
+            [ "$p" = 000 ] || { echo "probe $path answered $p"; exit 1; }
+          done
           rules "# no rules"; code 502
           # Everyone blocked but Friday Host.
           rules "@fw_deny {" "client_ip 0.0.0.0/0 ::/0" "not client_ip 192.0.2.1/32" "}" \

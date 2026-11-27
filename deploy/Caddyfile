@@ -7,6 +7,14 @@ import /etc/caddy/sites/*.caddy
 	encode zstd gzip
 	# route keeps the written order, so the firewall runs first.
 	route {
+		# Scanners probing for other software's secrets get no answer at
+		# all; Friday serves none of these paths.
+		@probe path /.env* /.git* /.aws* /.ssh* /wp-* /wordpress* /xmlrpc.php /phpmyadmin* /server-status *.php *.asp *.aspx *.jsp *.cgi
+		abort @probe
+		# Nothing Friday takes is bigger (CSV imports, product photos).
+		request_body {
+			max_size 50MB
+		}
 		# Website rules from Friday Host's Firewall page: Friday Host
 		# writes firewall/web.caddy next to this file and reloads Caddy.
 		# None by default (an empty glob is fine).
