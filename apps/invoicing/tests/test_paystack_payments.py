@@ -460,3 +460,36 @@ async def test_an_online_shop_order_is_paid_like_a_till_sale(client, principal, 
     sale = [p for t, p in events if t == "invoicing.pos_sale.recorded"]
     assert sale and sale[0]["shop_order_id"] == order_id and sale[0]["lines"][0]["quantity"] == 2
     assert (await client.post("/shop/checkout", json=body)).status_code == 409, "already paid"
+
+
+async def test_an_online_order_paid_on_collection(client, principal, as_principal, paystack, monkeypatch):
+    from friday_common import Principal
+
+    async def no_vat(org_id):
+        return {"vat_registered": False}
+
+    events = []
+
+    async def capture(event_type, org_id, payload, **kw):
+        events.append((event_type, payload))
+
+    monkeypatch.setattr("app.main.get_etims_config", no_vat)
+    monkeypatch.setattr("app.events.publish_event", capture)
+    order = {
+        "order_id": "22222222-3333-4444-5555-666666666666",
+        "number": "W9",
+        "total_cents": 48000,
+        "currency": "KES",
+        "lines": [{"product_id": "66666666-7777-8888-9999-000000000000", "name": "Rice 2kg", "quantity": 1, "unit_price_cents": 48000}],
+    }
+    # The shopper started paying online and gave up.
+    as_principal(Principal(user_id="shop:k1", org_id=principal.org_id, role="shop", email="", via="shop"))
+    started = await client.post("/shop/checkout", json={**order, "fallback_email": "o@duka.test"})
+    assert started.status_code == 201
+    as_principal(principal)
+    assert (await client.post("/shop/collect", json={**order, "method": "bitcoin"})).status_code == 422
+    r = await client.post("/shop/collect", json={**order, "method": "cash"})
+    assert r.status_code == 201 and r.json()["invoice_number"] == "WEB-W9", "the same invoice, not a second one"
+    sale = [p for t, p in events if t == "invoicing.pos_sale.recorded"]
+    assert len(sale) == 1 and sale[0]["shop_order_id"] == order["order_id"]
+    assert (await client.post("/shop/collect", json={**order, "method": "cash"})).status_code == 409

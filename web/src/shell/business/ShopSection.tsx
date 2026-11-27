@@ -18,7 +18,11 @@ export function ShopSection({ canEdit }: { canEdit: boolean }) {
   function load() {
     api
       .get<ShopKey[]>("/orgs/shop-keys")
-      .then(setKeys)
+      .then((ks) => {
+        setKeys(ks);
+        // The business website's address (Friday Host made its key) comes filled in.
+        setSites((now) => now || ks.find((k) => k.origins.length)?.origins.join(", ") || "");
+      })
       .catch((err) =>
         setError(err instanceof ApiError && err.status === 404 ? "Update Friday to use an online shop." : "Could not load the shop keys."),
       );
@@ -43,6 +47,8 @@ export function ShopSection({ canEdit }: { canEdit: boolean }) {
   if (!canEdit) return <p className="field-label">Owners and admins manage the online shop.</p>;
 
   const catalogURL = (k: ShopKey) => `${KERNEL_URL}/public/catalog?key=${k.key}`;
+  // What a shop built elsewhere (Lovable, Vercel, Claude Code) needs, ready to paste.
+  const settingsFor = (k: ShopKey) => `FRIDAY_API_URL=${KERNEL_URL}\nFRIDAY_SHOP_KEY=${k.key}`;
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <p className="field-label">
@@ -56,9 +62,15 @@ export function ShopSection({ canEdit }: { canEdit: boolean }) {
           <p className="field-label" style={{ margin: "0 0 8px" }}>
             {k.origins.length ? `Only on ${k.origins.join(", ")}` : "Any website can use it"}
           </p>
+          <pre style={{ margin: "0 0 8px", padding: 8, background: "var(--surface-2, rgba(0,0,0,.04))", borderRadius: 6, whiteSpace: "pre-wrap", wordBreak: "break-all", fontSize: 13 }}>
+            {settingsFor(k)}
+          </pre>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Button size="sm" variant="secondary" onClick={() => window.open(catalogURL(k), "_blank", "noopener")}>
               See the catalogue
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => navigator.clipboard?.writeText(settingsFor(k)).catch(() => {})}>
+              Copy settings
             </Button>
             <Button size="sm" variant="secondary" disabled={busy} onClick={() => run(() => api.del(`/orgs/shop-keys/${k.id}`))}>
               Revoke

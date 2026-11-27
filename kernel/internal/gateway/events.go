@@ -66,6 +66,8 @@ var subscriptions = []subscription{
 	{Event: "inventory.purchase.received", App: "accounting", WebhookPath: "/internal/webhooks/purchase-received"},
 	{Event: "inventory.purchase.paid", App: "accounting", WebhookPath: "/internal/webhooks/purchase-paid"},
 	{Event: "inventory.stock.adjusted", App: "accounting", WebhookPath: "/internal/webhooks/stock-adjusted"},
+	// Online shop orders: the shopper's email (Deliverer.Local["shopmail"]).
+	{Event: "inventory.shop_order.updated", App: "shopmail"},
 	// Tell people: their inbox (the bell) and Guss (Deliverer.Local["notify"]).
 	{Event: "minions.approval.needed", App: "notify"},
 	{Event: "minions.expense_claim.decided", App: "notify"},

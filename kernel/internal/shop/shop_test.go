@@ -277,3 +277,47 @@ func TestShopPayUsesTheStoredOrder(t *testing.T) {
 		t.Fatalf("paid order paid again: %d", w.Code)
 	}
 }
+
+type sentMail struct{ to, subject, body string }
+type fakeMailer struct{ sent []sentMail }
+
+func (f *fakeMailer) Send(to, subject, body string) error {
+	f.sent = append(f.sent, sentMail{to, subject, body})
+	return nil
+}
+
+func TestShopperEmails(t *testing.T) {
+	dsn := os.Getenv("KERNEL_TEST_DATABASE_URL")
+	if dsn == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("KERNEL_TEST_DATABASE_URL must be set in CI")
+		}
+		t.Skip("KERNEL_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err := db.Migrate(ctx, pool, "../../migrations"); err != nil {
+		t.Fatal(err)
+	}
+	var orgID string
+	pool.QueryRow(ctx, `INSERT INTO core.orgs (name, slug, currency) VALUES ('Mama Duka', $1, 'KES') RETURNING id::text`,
+		fmt.Sprintf("mail-%d", time.Now().UnixNano())).Scan(&orgID)
+	f := &fakeMailer{}
+	m := &Mail{Pool: pool, Mailer: f}
+	pay := `{"number":"W1","status":"paid","email":"w@x.test","customer_name":"Wanjiru","fulfilment":"pickup","total_cents":70000}`
+	if err := m.Deliver(ctx, "e1", orgID, "inventory.shop_order.updated", []byte(pay)); err != nil {
+		t.Fatal(err)
+	}
+	ready := strings.Replace(strings.Replace(pay, `"paid"`, `"ready"`, 1), `"pickup"`, `"delivery"`, 1)
+	m.Deliver(ctx, "e2", orgID, "inventory.shop_order.updated", []byte(ready))
+	m.Deliver(ctx, "e3", orgID, "inventory.shop_order.updated", []byte(strings.Replace(pay, `"w@x.test"`, `""`, 1)))
+	if len(f.sent) != 2 || f.sent[0].to != "w@x.test" || !strings.Contains(f.sent[0].subject, "Order W1 is paid · Mama Duka") ||
+		!strings.Contains(f.sent[0].body, "Hello Wanjiru") || !strings.Contains(f.sent[0].body, "KES 700.00") ||
+		!strings.Contains(f.sent[1].body, "on its way") {
+		t.Fatalf("emails: %+v", f.sent)
+	}
+}

@@ -1040,47 +1040,8 @@ async def shop_checkout(
     so stock, books and reports follow, and Inventory marks the order paid."""
     if principal.via != "shop":
         raise HTTPException(403, "this is the online shop's checkout")
-    order_id = str(body.get("order_id") or "")
-    lines_in = [
-        {
-            "description": (f"{li.get('name', 'Item')} {li.get('variant_name') or ''}").strip()[:200],
-            "quantity": int(li["quantity"]),
-            "unit_price_cents": int(li["unit_price_cents"]),
-            "product_id": li.get("product_id"),
-        }
-        for li in body.get("lines") or []
-    ]
-    total = int(body.get("total_cents") or 0)
-    if len(order_id) != 36 or not lines_in or total <= 0 or sum(li["quantity"] * li["unit_price_cents"] for li in lines_in) != total:
-        raise HTTPException(422, "not a payable order")
-    org = uuid.UUID(principal.org_id)
-    existing = (
-        await session.execute(
-            select(Invoice).where(Invoice.org_id == org, Invoice.source == "shop", Invoice.source_ref == order_id).with_for_update()
-        )
-    ).scalars().first()
-    if existing is not None and existing.status != "pending":
-        raise HTTPException(409, "this order is already paid" if existing.status == "paid" else "this order can't be paid now")
-    now = datetime.now(UTC)
-    invoice = existing
-    if invoice is None:
-        invoice = Invoice(
-            org_id=org,
-            channel="shop",
-            prices_include_tax=True,  # shelf prices, as the shop shows them
-            number=f"WEB-{str(body.get('number') or '')[:12] or uuid.uuid4().hex[:8].upper()}",
-            status="pending",
-            currency=str(body.get("currency") or "USD")[:3].upper(),
-            source="shop",
-            source_ref=order_id,
-            issued_at=now,
-            created_at=now,
-            updated_at=now,
-        )
-        session.add(invoice)
-        await session.flush()
-        vat_cfg = await get_etims_config(principal.org_id)
-        await _apply_pos_sale_lines(session, principal, invoice, lines_in, {"amount_cents": total}, vat_cfg)
+    lines_in, total = _shop_lines(body)
+    invoice = await _shop_invoice(session, principal, body, lines_in, total)
     # A new Paystack reference each time: an abandoned page can be retried.
     redirect_url = await start_paystack_checkout(
         principal.org_id,
@@ -1093,6 +1054,88 @@ async def shop_checkout(
     )
     await session.commit()
     return {"redirect_url": redirect_url, "invoice_number": invoice.number}
+
+
+async def _shop_invoice(session: AsyncSession, principal: Principal, body: dict, lines_in: list[dict], total: int) -> Invoice:
+    """The order's invoice: the pending one an online payment started, or a
+    new pending one from the order's lines. Refuses an order already paid."""
+    org = uuid.UUID(principal.org_id)
+    order_id = str(body.get("order_id") or "")
+    existing = (
+        await session.execute(
+            select(Invoice).where(Invoice.org_id == org, Invoice.source == "shop", Invoice.source_ref == order_id).with_for_update()
+        )
+    ).scalars().first()
+    if existing is not None and existing.status != "pending":
+        raise HTTPException(409, "this order is already paid" if existing.status == "paid" else "this order can't be paid now")
+    if existing is not None:
+        return existing
+    now = datetime.now(UTC)
+    invoice = Invoice(
+        org_id=org,
+        channel="shop",
+        prices_include_tax=True,  # shelf prices, as the shop shows them
+        number=f"WEB-{str(body.get('number') or '')[:12] or uuid.uuid4().hex[:8].upper()}",
+        status="pending",
+        currency=str(body.get("currency") or "USD")[:3].upper(),
+        source="shop",
+        source_ref=order_id,
+        issued_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(invoice)
+    await session.flush()
+    vat_cfg = await get_etims_config(principal.org_id)
+    await _apply_pos_sale_lines(session, principal, invoice, lines_in, {"amount_cents": total}, vat_cfg)
+    return invoice
+
+
+def _shop_lines(body: dict) -> tuple[list[dict], int]:
+    lines_in = [
+        {
+            "description": (f"{li.get('name', 'Item')} {li.get('variant_name') or ''}").strip()[:200],
+            "quantity": int(li["quantity"]),
+            "unit_price_cents": int(li["unit_price_cents"]),
+            "product_id": li.get("product_id"),
+        }
+        for li in body.get("lines") or []
+    ]
+    total = int(body.get("total_cents") or 0)
+    if len(str(body.get("order_id") or "")) != 36 or not lines_in or total <= 0 or sum(li["quantity"] * li["unit_price_cents"] for li in lines_in) != total:
+        raise HTTPException(422, "not a payable order")
+    return lines_in, total
+
+
+@shop_router.post("/collect", status_code=201)
+async def shop_collect(
+    body: dict,
+    principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("pos.sell")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Paid on collection (Inventory > Online orders): staff take cash,
+    M-Pesa or card for an online order and it's booked like a till sale,
+    so stock and books follow and the order shows as paid."""
+    method = str(body.get("method") or "")
+    if method not in ("cash", "mpesa", "card"):
+        raise HTTPException(422, "method: cash, mpesa or card")
+    lines_in, total = _shop_lines(body)
+    invoice = await _shop_invoice(session, principal, body, lines_in, total)
+    now = datetime.now(UTC)
+    invoice.cashier_user_id, invoice.cashier_email = principal.user_id, principal.email
+    session.add(
+        Payment(org_id=invoice.org_id, invoice_id=invoice.id, amount_cents=total, method=method, received_at=now,
+                client_ref=f"collect:{invoice.id}")
+    )
+    invoice.status = "paid"
+    invoice.updated_at = now
+    await session.flush()
+    await session.refresh(invoice, attribute_names=["lines", "payments"])
+    await publish_pos_sale_recorded(principal.org_id, invoice, invoice.grand_total_cents, session=session)
+    await publish_invoice_paid(principal.org_id, invoice, invoice.grand_total_cents, invoice_lines_payload(invoice), session=session)
+    await session.commit()
+    return {"invoice_number": invoice.number}
 
 
 def _verify_gap(age_seconds: float) -> float:

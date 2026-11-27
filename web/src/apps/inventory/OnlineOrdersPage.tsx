@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../../lib/api";
-import { formatMoney } from "../../lib/orgSettings";
+import { formatMoney, useOrgSettings } from "../../lib/orgSettings";
 import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 
@@ -16,7 +16,7 @@ type OnlineOrder = {
   email: string;
   address: string;
   note: string;
-  lines: { name: string; variant_name: string; quantity: number; total_cents: number }[];
+  lines: { product_id: string | null; name: string; variant_name: string; quantity: number; unit_price_cents: number; total_cents: number }[];
 };
 
 const STATUS: Record<OnlineOrder["status"], string> = {
@@ -34,6 +34,31 @@ export function OnlineOrdersPage() {
   const [orders, setOrders] = useState<OnlineOrder[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [method, setMethod] = useState<Record<string, string>>({});
+  const { currency } = useOrgSettings();
+
+  /** Paid at collection: booked like a till sale (Invoicing), so the
+   * stock and books follow and the order turns paid. */
+  async function collect(o: OnlineOrder) {
+    setBusy(o.id);
+    setError(null);
+    try {
+      await api.post("/api/invoicing/shop/collect", {
+        order_id: o.id,
+        number: o.number,
+        total_cents: o.total_cents,
+        currency,
+        method: method[o.id] ?? "cash",
+        lines: o.lines,
+      });
+      // The order turns paid when Inventory hears of the sale.
+      window.setTimeout(load, 1500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That didn't work");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   function load() {
     api
@@ -104,9 +129,23 @@ export function OnlineOrdersPage() {
                 </Button>
               ) : null}
               {o.status === "placed" ? (
-                <Button size="sm" variant="secondary" disabled={busy === o.id} onClick={() => move(o, "cancelled")}>
-                  Cancel
-                </Button>
+                <>
+                  <select
+                    aria-label="How they paid"
+                    value={method[o.id] ?? "cash"}
+                    onChange={(e) => setMethod({ ...method, [o.id]: e.target.value })}
+                  >
+                    <option value="cash">Cash</option>
+                    <option value="mpesa">M-Pesa</option>
+                    <option value="card">Card</option>
+                  </select>
+                  <Button size="sm" disabled={busy === o.id} onClick={() => collect(o)}>
+                    Paid at collection
+                  </Button>
+                  <Button size="sm" variant="secondary" disabled={busy === o.id} onClick={() => move(o, "cancelled")}>
+                    Cancel
+                  </Button>
+                </>
               ) : null}
             </div>
           </div>
