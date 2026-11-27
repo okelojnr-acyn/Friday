@@ -1,3 +1,4 @@
+import { useDemoRoles } from "../lib/demo";
 import { useEffect } from "react";
 import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "../lib/auth";
@@ -30,6 +31,7 @@ function Layout() {
   if (!session) return null;
   return (
     <div>
+      <DemoBanner />
       <TopBar email={session.email} role={session.role} onLogout={logout} />
       <PageErrorBoundary>
         <Outlet />
@@ -38,4 +40,14 @@ function Layout() {
       <NewVersionBanner />
     </div>
   );
+}
+
+/** On the demo Friday: say so, once, at the top. */
+function DemoBanner() {
+  const demo = useDemoRoles();
+  return demo ? (
+    <div role="note" className="demo-banner">
+      Demo: a sample shop. Try anything; everything goes back to the start every night.
+    </div>
+  ) : null;
 }

@@ -1,0 +1,23 @@
+# The demo Friday (deploy/demo/README.md): the customer-server stack, run
+# beside Friday Host on its box. Friday Host's Caddy terminates TLS and
+# proxies demo.fridayhost.dev here, so this Caddy publishes no ports and
+# serves plain HTTP on the shared "friday-demo-edge" network.
+services:
+  kernel:
+    environment:
+      # "Try as Owner / Cashier" (kernel/internal/auth/demo.go).
+      FRIDAY_DEMO_USERS: owner=owner@demo.fridayhost.dev,cashier=cashier@demo.fridayhost.dev
+      MAX_ORGS: "1"
+    mem_limit: 256m
+  caddy:
+    environment:
+      FRIDAY_DOMAIN: http://${FRIDAY_DOMAIN:?}
+    ports: !reset []
+    networks: [default, edge]
+    mem_limit: 64m
+  postgres:
+    mem_limit: 256m
+
+networks:
+  edge:
+    name: friday-demo-edge
