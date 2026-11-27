@@ -1,4 +1,5 @@
 import { StockByLocationPanel } from "../../apps/inventory/StockByLocationPanel";
+import { CustomerStatementPanel } from "../../apps/invoicing/CustomerStatementPanel";
 import { useState, type FormEvent } from "react";
 import type { RecordRow, ResourceSpec } from "../../lib/types";
 import { ApiError } from "../../lib/api";
@@ -152,6 +153,7 @@ export function FormView({ spec, app, schema, record, onClose, onSaved }: FormVi
         />
       ) : null}
       {isEdit && app === "inventory" && spec.name === "product" ? <StockByLocationPanel productId={record!.id} /> : null}
+      {isEdit && app === "invoicing" && spec.name === "customer" ? <CustomerStatementPanel customerId={record!.id} /> : null}
       {isEdit && app === "inventory" && spec.name === "product" ? (
         <CreatePurchaseOrderPanel
           productId={record!.id}
