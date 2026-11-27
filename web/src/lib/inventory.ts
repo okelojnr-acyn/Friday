@@ -15,6 +15,8 @@ export interface Product {
   cost_cents: number;
   on_hand_qty: number;
   track_inventory: boolean;
+  /** Shown in the online shop (Business settings > Online shop). */
+  sell_online?: boolean;
   reorder_point?: number;
   /** Stock is kept in the base unit; one purchase/sales unit holds
    * purchase_factor/sales_factor base units. Price is per sales unit,

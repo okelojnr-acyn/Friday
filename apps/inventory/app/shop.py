@@ -5,31 +5,39 @@ it. Only what a shopper may see leaves here: name, variant, category,
 price, a photo and whether it's in stock. Never cost, quantities,
 suppliers or people.
 
-shortcut: every product with a price is listed; a per-product "sell
-online" switch comes with the staff side of online orders (slice 4).
+Slice 4: products can be kept off the shop (sell_online), placing an
+order holds its stock for a while, and staff move orders along.
 
 Slice 2: quote a basket and place an order. The page sends only product
 ids and quantities; prices, totals and what's in stock are worked out
 here every time.
 
-shortcut: placing an order doesn't hold stock; two shoppers can order the
-last item until payment (slice 3) or staff (slice 4) take it off."""
+An unpaid order holds its stock for HOLD (counted from orders, nothing
+to clean up); paying takes the stock off for good (the sale event).
+shortcut: pay-on-collection and refunds for a cancelled paid order aren't
+here yet; staff use the till and the sale's return for those."""
 
 import hashlib
 import re
 import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from friday_common import Principal, get_current_principal, get_org_session
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from friday_common.access import Scope, require
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Product, ProductImage, ShopOrder, ShopOrderLine
 
 router = APIRouter(prefix="/shop", tags=["shop"])
+staff_router = APIRouter(prefix="/shop_orders", tags=["shop-orders"])
+
+# How long an unpaid order holds its stock.
+HOLD = timedelta(hours=2)
 
 
 def shop_only(principal: Principal = Depends(get_current_principal)) -> Principal:
@@ -42,7 +50,7 @@ def shop_only(principal: Principal = Depends(get_current_principal)) -> Principa
 async def catalog(principal: Principal = Depends(shop_only), session: AsyncSession = Depends(get_org_session)):
     rows = await session.execute(
         select(Product)
-        .where(Product.org_id == uuid.UUID(principal.org_id), Product.price_cents > 0)
+        .where(Product.org_id == uuid.UUID(principal.org_id), Product.price_cents > 0, Product.sell_online)
         .order_by(Product.category, Product.name, Product.variant_name)
     )
     return [
@@ -69,7 +77,7 @@ async def image(
     session: AsyncSession = Depends(get_org_session),
 ):
     product = await session.get(Product, product_id)
-    if product is None or str(product.org_id) != principal.org_id or product.price_cents <= 0:
+    if product is None or str(product.org_id) != principal.org_id or product.price_cents <= 0 or not product.sell_online:
         raise HTTPException(404, "no photo")
     img = await session.get(ProductImage, product_id)
     if img is None:
@@ -96,16 +104,29 @@ async def _price(session: AsyncSession, principal: Principal, basket: Basket) ->
         select(Product).where(Product.org_id == uuid.UUID(principal.org_id), Product.id.in_(wanted))
     )
     found = {p.id: p for p in rows.scalars()}
+    # Held by other shoppers' unpaid orders placed within HOLD.
+    held_rows = await session.execute(
+        select(ShopOrderLine.product_id, func.sum(ShopOrderLine.quantity))
+        .join(ShopOrder, ShopOrder.id == ShopOrderLine.order_id)
+        .where(
+            ShopOrder.org_id == uuid.UUID(principal.org_id),
+            ShopOrder.status == "placed",
+            ShopOrder.created_at > datetime.now(UTC) - HOLD,
+            ShopOrderLine.product_id.in_(wanted),
+        )
+        .group_by(ShopOrderLine.product_id)
+    )
+    held = {pid: Decimal(n) for pid, n in held_rows}
     lines, problems, total = [], [], 0
     for pid, qty in wanted.items():
         p = found.get(pid)
-        if p is None or p.price_cents <= 0:
+        if p is None or p.price_cents <= 0 or not p.sell_online:
             problems.append({"product_id": str(pid), "reason": "not for sale"})
             continue
         if qty > 999:
             problems.append({"product_id": str(pid), "reason": "at most 999"})
             continue
-        if p.track_inventory and p.on_hand_qty < qty:
+        if p.track_inventory and p.on_hand_qty - held.get(pid, Decimal(0)) < qty:
             problems.append({"product_id": str(pid), "reason": "not enough in stock"})
             continue
         line_total = p.price_cents * qty
@@ -239,3 +260,51 @@ async def order_for_checkout(
             for li in order.lines
         ],
     }
+
+
+# Staff side: the online orders queue (Friday > Inventory > Online orders).
+NEXT = {"paid": {"ready", "completed"}, "ready": {"completed"}, "placed": {"cancelled"}}
+
+
+def _staff_view(o: ShopOrder) -> dict:
+    return {**_view(o), "customer_name": o.customer_name, "phone": o.phone, "email": o.email, "address": o.address, "note": o.note}
+
+
+@staff_router.get("")
+async def list_shop_orders(
+    status: str | None = None,
+    principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("stock.read")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    query = select(ShopOrder).where(ShopOrder.org_id == uuid.UUID(principal.org_id))
+    if status:
+        query = query.where(ShopOrder.status == status)
+    rows = await session.execute(query.order_by(ShopOrder.created_at.desc()).limit(200))
+    return [_staff_view(o) for o in rows.scalars()]
+
+
+class StatusIn(BaseModel):
+    status: str
+
+
+@staff_router.post("/{order_id}/status")
+async def move_shop_order(
+    order_id: uuid.UUID,
+    body: StatusIn,
+    principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("stock.write")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Paid -> ready -> collected/delivered (completed); an unpaid order can
+    be cancelled (its held stock goes back at once)."""
+    order = await session.get(ShopOrder, order_id, with_for_update=True)
+    if order is None or str(order.org_id) != principal.org_id:
+        raise HTTPException(404, "order not found")
+    if body.status not in NEXT.get(order.status, set()):
+        raise HTTPException(409, f"a {order.status} order can't become {body.status}")
+    order.status = body.status
+    order.updated_at = datetime.now(UTC)
+    view = _staff_view(order)
+    await session.commit()
+    return view

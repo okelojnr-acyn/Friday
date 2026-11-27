@@ -82,6 +82,8 @@ class Product(Base):
     # Some products (services, one-off items) never carry stock -- their
     # on_hand_qty stays meaningless and POS/sales shouldn't decrement it.
     track_inventory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Shown in the online shop (0020).
+    sell_online: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # Where new stock lands by default -- on_hand_qty itself stays one
     # global counter for v1, not split per warehouse (see
     # 0005_warehouses_and_uom.sql's comment for the documented path to
