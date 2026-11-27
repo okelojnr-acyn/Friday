@@ -5,12 +5,19 @@ import { CATEGORIES } from "../../lib/minions";
 
 /** Whether this business lets cashiers pay out of the till (Business
  * settings > Spending; off by default), and the most for one payout. */
-export function useTillPayouts(): { allowed: boolean; most: number } {
-  const [rule, setRule] = useState({ allowed: false, most: 0 });
+export function useTillPayouts(): { allowed: boolean; most: number; discountBp?: number } {
+  const [rule, setRule] = useState<{ allowed: boolean; most: number; discountBp?: number }>({ allowed: false, most: 0 });
   useEffect(() => {
     api
-      .get<{ till_payouts: boolean; petty_slip_max: number }>("/orgs/spending-policy")
-      .then((p) => setRule({ allowed: p.till_payouts, most: p.petty_slip_max }))
+      .get<{ till_payouts: boolean; petty_slip_max: number; till_discount_pct?: number }>("/orgs/spending-policy")
+      .then((p) =>
+        setRule({
+          allowed: p.till_payouts,
+          most: p.petty_slip_max,
+          // Price cuts and big discounts ask a manager from this percent (overrides.ts).
+          discountBp: typeof p.till_discount_pct === "number" ? p.till_discount_pct * 100 : undefined,
+        }),
+      )
       .catch(() => {}); // an older kernel: off
   }, []);
   return rule;

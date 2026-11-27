@@ -76,6 +76,9 @@ func TestSpendingPolicy(t *testing.T) {
 	if code := put("owner", `{"preset":"custom","petty_float":100,"petty_slip_max":500}`); code != http.StatusBadRequest {
 		t.Fatalf("a slip over the float: %d", code)
 	}
+	if code := put("owner", `{"preset":"custom","till_discount_pct":101}`); code != http.StatusBadRequest {
+		t.Fatalf("a till discount limit over 100%%: %d", code)
+	}
 	// Apps read it too.
 	req := httptest.NewRequest("GET", "/internal/people/"+orgID+"/spending-policy", nil)
 	req.SetPathValue("org_id", orgID)
