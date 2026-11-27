@@ -32,6 +32,7 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       await loginToDemo(as);
+      markSignedInNow(); // on the till, this was the clock-in
       navigate("/");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't open the demo; try again");
