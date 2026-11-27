@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from friday_common import Principal, get_current_principal, get_org_session
+from friday_common import Principal, get_current_principal, get_org_session, publish_event
 from pydantic import BaseModel, Field
 from friday_common.access import Scope, require
 from sqlalchemy import func, select
@@ -34,6 +34,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .models import Product, ProductImage, ShopOrder, ShopOrderLine
 
 router = APIRouter(prefix="/shop", tags=["shop"])
+
+
+async def announce(session: AsyncSession, o: ShopOrder) -> None:
+    """Tells the shopper (the kernel emails them, Local "shopmail") when an
+    order is placed, paid, ready or cancelled. In the order's transaction."""
+    if o.status == "completed" or not o.email:
+        return
+    await publish_event(
+        "inventory.shop_order.updated",
+        str(o.org_id),
+        {"number": o.number, "status": o.status, "email": o.email, "customer_name": o.customer_name,
+         "fulfilment": o.fulfilment, "total_cents": o.total_cents},
+        session=session,
+    )
 staff_router = APIRouter(prefix="/shop_orders", tags=["shop-orders"])
 
 # How long an unpaid order holds its stock.
@@ -226,6 +240,7 @@ async def place_order(body: OrderIn, principal: Principal = Depends(shop_only), 
     session.add(order)
     await session.flush()  # sets the id
     view = _view(order)
+    await announce(session, order)
     await session.commit()
     # The token is shown once; the shopper keeps it to follow the order.
     return {**view, "token": token}
@@ -267,7 +282,11 @@ NEXT = {"paid": {"ready", "completed"}, "ready": {"completed"}, "placed": {"canc
 
 
 def _staff_view(o: ShopOrder) -> dict:
-    return {**_view(o), "customer_name": o.customer_name, "phone": o.phone, "email": o.email, "address": o.address, "note": o.note}
+    view = {**_view(o), "customer_name": o.customer_name, "phone": o.phone, "email": o.email, "address": o.address, "note": o.note}
+    # Product ids: taking payment at collection takes the right stock.
+    for line, li in zip(view["lines"], o.lines):
+        line["product_id"] = str(li.product_id) if li.product_id else None
+    return view
 
 
 @staff_router.get("")
@@ -306,5 +325,6 @@ async def move_shop_order(
     order.status = body.status
     order.updated_at = datetime.now(UTC)
     view = _staff_view(order)
+    await announce(session, order)
     await session.commit()
     return view

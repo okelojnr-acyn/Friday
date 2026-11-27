@@ -669,10 +669,16 @@ async def pos_sale_recorded(body: dict, session: AsyncSession = Depends(get_sess
     reference = str(payload.get("invoice_number", ""))
     # An online shop order paid through Paystack (Invoicing's /shop/checkout).
     if payload.get("shop_order_id"):
-        await session.execute(
-            text("UPDATE shop_orders SET status = 'paid', updated_at = :now WHERE org_id = :org AND id::text = :id AND status = 'placed'"),
+        paid = await session.execute(
+            text("UPDATE shop_orders SET status = 'paid', updated_at = :now WHERE org_id = :org AND id::text = :id AND status = 'placed' RETURNING id"),
             {"now": now, "org": org_id, "id": str(payload["shop_order_id"])},
         )
+        paid_id = paid.scalar()
+        if paid_id is not None:
+            from .models import ShopOrder
+            from .shop import announce
+
+            await announce(session, await session.get(ShopOrder, paid_id))
     # Sold at a till in a location: the stock leaves that location's
     # warehouse (the default one there first); otherwise the product's own.
     sold_from = None

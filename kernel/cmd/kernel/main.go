@@ -330,6 +330,8 @@ func main() {
 	// Sends queued events to subscribers, retrying until each accepts.
 	notices := &inbox.Inbox{Pool: pool}
 	go (&gateway.Deliverer{Pool: pool, Apps: apps, Token: eventsToken, Local: map[string]func(context.Context, string, string, string, []byte) error{
+		// The online shop emails its shoppers (internal/shop).
+		"shopmail": (&shop.Mail{Pool: pool, Mailer: authHandlers.Mailer}).Deliver,
 		// The inbox first (once per event), then Guss; a Guss failure
 		// retries both, and the inbox ignores the repeat.
 		"notify": func(ctx context.Context, eventID, orgID, typ string, payload []byte) error {
