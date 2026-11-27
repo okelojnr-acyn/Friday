@@ -1,4 +1,5 @@
 import { useDemoRoles } from "../lib/demo";
+import { SIGNUP_URL } from "../ui/GussWidget";
 import { useEffect } from "react";
 import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "../lib/auth";
@@ -47,7 +48,10 @@ function DemoBanner() {
   const demo = useDemoRoles();
   return demo ? (
     <div role="note" className="demo-banner">
-      Demo: a sample shop. Try anything; everything goes back to the start every night.
+      Demo: a sample shop. Try anything; everything goes back to the start every night.{" "}
+      <a href={SIGNUP_URL} target="_blank" rel="noopener" style={{ color: "inherit", fontWeight: 600 }}>
+        Create your account
+      </a>
     </div>
   ) : null;
 }
