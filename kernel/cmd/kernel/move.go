@@ -369,6 +369,26 @@ func moveIn(ctx context.Context, pool *pgxpool.Pool, bundle []byte, moveKey, own
 	delete(pending, [2]string{"core", "orgs"})
 	delete(pending, [2]string{"core", "users"})
 
+	// Rows the database made by itself for the new business (a default
+	// location from a trigger) give way to the moved ones.
+	auto := make([][2]string, 0, len(pending))
+	for st := range pending {
+		auto = append(auto, st)
+	}
+	for len(auto) > 0 {
+		var blocked [][2]string
+		var lastErr error
+		for _, st := range auto {
+			if _, err := deleteRows(ctx, tx, man.OrgID, st[0], st[1]); err != nil {
+				blocked, lastErr = append(blocked, st), err
+			}
+		}
+		if len(blocked) == len(auto) {
+			return "", 0, fmt.Errorf("clearing %s.%s: %w", blocked[0][0], blocked[0][1], lastErr)
+		}
+		auto = blocked
+	}
+
 	// Everything else, in passes: a table a foreign key holds back waits
 	// for the next pass; no progress means the bundle doesn't fit.
 	for len(pending) > 0 {
