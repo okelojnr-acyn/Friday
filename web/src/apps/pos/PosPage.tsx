@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import init, { PosCart, PosOfflineQueue } from "./engine/friday_pos_engine";
 import { api, ApiError } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
-import { fetchProductCatalog, type Product } from "../../lib/inventory";
+import { fetchProductCatalog, shortWarning, type Product } from "../../lib/inventory";
 import { formatMoney, useOrgSettings } from "../../lib/orgSettings";
 import type { PosRegister, PosShift } from "../../lib/posApi";
 import { listIntegrations } from "../../lib/integrations";
@@ -267,11 +267,14 @@ export function PosPage({
     setTimeout(() => setNotice(null), 2500);
   }
 
-  function addProduct(product: Product) {
+  /** Adds one; returns the low-stock warning, if any, for the caller to show. */
+  function addProduct(product: Product): string | null {
     const cart = cartRef.current;
-    if (!cart) return;
+    if (!cart) return null;
     // Tapping a product already in the order adds one more of it.
     const i = lines.findIndex((l) => l.product_id === product.id && l.discount_bp === 0);
+    const inOrder = lines.filter((l) => l.product_id === product.id).reduce((n, l) => n + l.quantity, 0) + 1;
+    const short = shortWarning(product, inOrder);
     if (i >= 0) {
       rebuildCart(lines.map((l, j) => (j === i ? { ...l, quantity: l.quantity + 1 } : l)));
       setSelected(i);
@@ -284,6 +287,8 @@ export function PosPage({
     }
     setMode("qty");
     setBuffer("");
+    if (short) flash(short);
+    return short;
   }
 
   function addCustom() {
@@ -343,8 +348,7 @@ export function PosPage({
   useBarcodeScanner((code) => {
     const match = products.find((p) => p.barcode && p.barcode === code);
     if (match) {
-      addProduct(match);
-      flash(`Scanned: ${match.name}`);
+      if (!addProduct(match)) flash(`Scanned: ${match.name}`);
     } else {
       flash(`No product with barcode ${code}`);
     }

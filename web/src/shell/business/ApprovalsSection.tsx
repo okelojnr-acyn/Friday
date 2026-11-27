@@ -88,8 +88,7 @@ export function ApprovalsSection({ canEdit }: { canEdit: boolean }) {
           onChange={(e) => setManager(e.target.value)}
         />
       </FieldWrap>
-      <SaveRow canEdit={canEdit} saving={saving} onSave={save} />
-      {saved ? <span className="field-label">Saved.</span> : null}
+      <SaveRow canEdit={canEdit} saving={saving} saved={saved} onSave={save} />
     </div>
   );
 }

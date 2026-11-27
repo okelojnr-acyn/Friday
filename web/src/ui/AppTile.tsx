@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { AppMark, hasAppMark } from "./AppMark";
 import { Icon, type IconName } from "./Icon";
 
 interface AppTileProps {
@@ -38,7 +39,7 @@ export function AppTile({ to, app, label, external }: AppTileProps) {
   const content = (
     <>
       <span className="app-tile-icon" style={{ ["--tile" as string]: color }}>
-        <Icon name={icon} size={30} />
+        {hasAppMark(app) ? <AppMark app={app} size={44} /> : <Icon name={icon} size={30} />}
       </span>
       <span className="app-tile-label">{label}</span>
     </>

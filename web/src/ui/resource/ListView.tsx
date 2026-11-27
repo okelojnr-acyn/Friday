@@ -4,7 +4,7 @@ import { Avatar } from "../Avatar";
 import { Badge } from "../Badge";
 import { PriorityFlag } from "../PriorityFlag";
 import type { ReactNode } from "react";
-import { formatCellValue, initials, isOverdue, isPersonField, isPriorityField, sumCents } from "./fieldFormat";
+import { formatCellValue, fullDate, humanize, initials, isOverdue, isPersonField, isPriorityField, sumCents } from "./fieldFormat";
 import { statusTone } from "../Badge";
 import { resolveReferenceLabel } from "../../lib/referenceCache";
 import { formatMoney } from "../../lib/orgSettings";
@@ -63,7 +63,7 @@ function dayLabel(v: unknown): string {
   }).format(d);
 }
 
-function ReferenceCell({ field, value }: { field: FieldSpec; value: unknown }) {
+export function ReferenceCell({ field, value }: { field: FieldSpec; value: unknown }) {
   const [label, setLabel] = useState<string | null>(null);
   const [app, resource] = (field.reference ?? "").split(".");
 
@@ -109,10 +109,10 @@ function Cell({ field, value, record }: { field: FieldSpec; value: unknown; reco
     return <ReferenceCell field={field} value={value} />;
   }
   if (field.type === "select" && (field.name === "status" || field.name === "stage") && value) {
-    return <Badge tone={statusTone(String(value))}>{String(value).replace(/_/g, " ")}</Badge>;
+    return <Badge tone={statusTone(String(value))}>{humanize(String(value))}</Badge>;
   }
   if (field.type === "datetime" && typeof value === "string") {
-    return <span title={new Date(value).toLocaleString()}>{formatCellValue(field, value, record)}</span>;
+    return <span title={fullDate(value)}>{formatCellValue(field, value, record)}</span>;
   }
   return <>{formatCellValue(field, value, record)}</>;
 }

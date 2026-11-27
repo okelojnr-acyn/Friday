@@ -7,6 +7,7 @@ import { listIntegrations } from "../lib/integrations";
 import { KERNEL_URL } from "../lib/runtimeConfig";
 import type { AppCatalogEntry } from "../lib/types";
 import { APP_ICONS } from "../ui/AppTile";
+import { AppMark } from "../ui/AppMark";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Icon, type IconName } from "../ui/Icon";
@@ -41,7 +42,7 @@ function ItemIcon({ item }: { item: Item }) {
   const icon = a?.icon ?? (item.kind === "integration" ? item.provider.icon : "app-window");
   return (
     <span className="hub-icon" style={{ color: a?.color ?? "var(--accent)" }}>
-      <Icon name={icon} size={22} />
+      {a && item.kind === "app" ? <AppMark app={item.key} size={24} /> : <Icon name={icon} size={22} />}
     </span>
   );
 }

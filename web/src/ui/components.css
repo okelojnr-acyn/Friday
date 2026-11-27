@@ -68,6 +68,62 @@
 .field-required {
   color: var(--danger);
 }
+/* How many are waiting, beside a rail entry (shell/AppFrame WaitingCount). */
+.hub-nav-count {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent, #e07a2f);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+/* The "?" beside a field's label (ui/Field.tsx Hint). */
+.field-hinted {
+  position: relative;
+}
+.field-hinted > .hint-btn {
+  position: absolute;
+  top: -2px;
+  right: 0;
+}
+.hint-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+.hint-btn:hover,
+.hint-btn[aria-expanded="true"] {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+.hint-btn:focus-visible {
+  outline: 2px solid var(--accent, #e07a2f);
+  outline-offset: 2px;
+}
+.field-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.field-hint:not(:empty) {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+}
 
 .input,
 .select,
@@ -400,6 +456,10 @@
     width: 64px;
     height: 64px;
     border-radius: 18px;
+  }
+  .app-tile-icon > svg {
+    width: 34px;
+    height: 34px;
   }
   .app-tile-label {
     font-size: 12px;

@@ -1,3 +1,4 @@
+import { fullDate } from "../../ui/resource/fieldFormat";
 import { useState } from "react";
 import { api, ApiError } from "../../lib/api";
 import { formatMoney } from "../../lib/orgSettings";
@@ -37,7 +38,7 @@ export function PayPurchaseOrderPanel({ record, onChanged }: PayPurchaseOrderPan
     return (
       <Card style={{ marginTop: 12 }}>
         <div className="field-label">
-          Paid {formatMoney(due)} on {new Date(String(record.paid_at)).toLocaleDateString()} by {label}
+          Paid {formatMoney(due)} on {fullDate(String(record.paid_at), false)} by {label}
           {record.paid_reference ? ` (${String(record.paid_reference)})` : ""}.
         </div>
       </Card>

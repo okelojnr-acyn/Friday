@@ -1,3 +1,4 @@
+import { fullDate } from "../../ui/resource/fieldFormat";
 import { useEffect, useState } from "react";
 import { ApiError } from "../../lib/api";
 import { formatMoney, useOrgSettings } from "../../lib/orgSettings";
@@ -253,7 +254,7 @@ export function CloseRegister({
     const diff = counted - expected;
     const methods = Object.entries(closed.summary?.by_method ?? {});
     return (
-      <Stage title={`${register?.name ?? "Register"} closed`} sub={new Date(closed.closed_at ?? Date.now()).toLocaleString()}>
+      <Stage title={`${register?.name ?? "Register"} closed`} sub={fullDate(closed.closed_at ?? Date.now())}>
         <div className="till-panel glass">
           <div className="till-row">
             <span>Sales</span>

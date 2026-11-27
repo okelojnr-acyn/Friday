@@ -63,14 +63,20 @@ export function isPriorityField(field: FieldSpec): boolean {
  * every app's resources the same way isPriorityField/isDueDateField
  * already are: a resource earns the "Overdue" treatment just by having a
  * `due_at`-shaped field and a `status` field, no extra config. */
+const ENDED = new Set(["void", "cancelled", "canceled", "lost", "rejected", "draft"]);
+
 export function isOverdue(field: FieldSpec, record: { [key: string]: unknown }): boolean {
   if (!isDueDateField(field)) return false;
   const raw = record[field.name];
   if (typeof raw !== "string" || !raw) return false;
   const due = new Date(raw).getTime();
   if (Number.isNaN(due) || due >= Date.now()) return false;
+  // The server knows best where it says (invoices: sent with a balance).
+  if (typeof record.is_overdue === "boolean") return record.is_overdue;
   const status = record.status;
-  return !(typeof status === "string" && statusTone(status) === "success");
+  if (typeof status !== "string") return true;
+  // Finished, or never owed: a void invoice is not overdue.
+  return statusTone(status) !== "success" && !ENDED.has(status);
 }
 
 export function initials(value: unknown): string {
@@ -97,6 +103,25 @@ export function sumCents(records: { [key: string]: unknown }[], field: FieldSpec
 
 /** Dates: "25 Nov 2026". Date-times: "14:12" today, else "25 Nov" (the year
  * when it isn't this one). Full locale strings pushed lists off the screen. */
+/** A date (and time) in full for a detail line: "27 Nov 2026, 09:53" in
+ * the viewer's locale; never all-numeric (11/27 vs 27/11) or with seconds. */
+export function fullDate(value: string | number | Date, withTime = true): string {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    ...(withTime ? { hour: "2-digit" as const, minute: "2-digit" as const } : {}),
+  }).format(d);
+}
+
+/** A stored value as words: "in_progress" -> "In progress". */
+export function humanize(value: string): string {
+  const s = value.replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 export function shortDate(iso: string, withTime: boolean): string {
   // A bare YYYY-MM-DD is a calendar day: read it as local, not UTC midnight.
   const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T00:00` : iso);
