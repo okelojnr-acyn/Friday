@@ -95,17 +95,21 @@ export function sumCents(records: { [key: string]: unknown }[], field: FieldSpec
   }, 0);
 }
 
-/** "27 Nov 2026" / "27 Nov, 14:12" (the year only when it isn't this one):
- * full locale strings with seconds pushed lists wider than the screen. */
+/** Dates: "25 Nov 2026". Date-times: "14:12" today, else "25 Nov" (the year
+ * when it isn't this one). Full locale strings pushed lists off the screen. */
 export function shortDate(iso: string, withTime: boolean): string {
   // A bare YYYY-MM-DD is a calendar day: read it as local, not UTC midnight.
   const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T00:00` : iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const thisYear = d.getFullYear() === new Date().getFullYear();
+  const now = new Date();
+  // A list shows today's times and older days' dates (as mail apps do); the
+  // record itself keeps the full value.
+  if (withTime && d.toDateString() === now.toDateString()) {
+    return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(d);
+  }
   return new Intl.DateTimeFormat(undefined, {
     day: "numeric",
     month: "short",
-    ...(withTime ? (thisYear ? {} : { year: "numeric" as const }) : { year: "numeric" as const }),
-    ...(withTime ? { hour: "2-digit" as const, minute: "2-digit" as const } : {}),
+    ...(!withTime || d.getFullYear() !== now.getFullYear() ? { year: "numeric" as const } : {}),
   }).format(d);
 }

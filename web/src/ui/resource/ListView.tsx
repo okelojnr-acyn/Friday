@@ -111,6 +111,9 @@ function Cell({ field, value, record }: { field: FieldSpec; value: unknown; reco
   if (field.type === "select" && (field.name === "status" || field.name === "stage") && value) {
     return <Badge tone={statusTone(String(value))}>{String(value).replace(/_/g, " ")}</Badge>;
   }
+  if (field.type === "datetime" && typeof value === "string") {
+    return <span title={new Date(value).toLocaleString()}>{formatCellValue(field, value, record)}</span>;
+  }
   return <>{formatCellValue(field, value, record)}</>;
 }
 
