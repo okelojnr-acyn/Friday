@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useDemoRoles } from "../lib/demo";
 import { ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { gussChat, gussReport, gussStatus, listGussVoids } from "../lib/guss";
@@ -119,7 +120,68 @@ function widgetText() {
  * takes it back, and the report buttons summarise sales. Hidden until an
  * admin connects Guss on the Integrations page.
  */
+/** Signing up is where Guss (and anything else the demo can't run) begins. */
+export const SIGNUP_URL = "https://fridayhost.dev/signup";
+
 export function GussWidget() {
+  // The demo shows what Guss does instead of running it: a public bot
+  // would cost on every message and invite tricks.
+  const demo = useDemoRoles();
+  return demo ? <DemoGuss /> : <LiveGuss />;
+}
+
+function DemoGuss() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      {open && (
+        <section className="guss-panel" role="dialog" aria-label="Guss, your shop assistant">
+          <header className="guss-head">
+            <span className="guss-avatar" aria-hidden>
+              <Icon name="sparkle" size={16} />
+            </span>
+            <span className="guss-title">
+              Guss
+              <span className="guss-sub">records sales from WhatsApp and Telegram</span>
+            </span>
+            <button type="button" className="guss-icon-btn" onClick={() => setOpen(false)} aria-label="Close">
+              <Icon name="close" size={16} />
+            </button>
+          </header>
+          <div className="guss-lines">
+            {/* The first of this shop's sales, as the cashier would have sent it. */}
+            <div className="guss-line guss-line-you">sold 2 unga, a sugar and 4 milk, mpesa</div>
+            <div className="guss-line guss-line-guss">
+              Recorded: 2 × Unga wa Ugali 2kg, 1 × Sugar 1kg, 4 × Milk 500ml. KES 865, M-Pesa. Stock and the books are updated; it's in
+              Invoicing under Till receipts.
+            </div>
+          </div>
+          <div style={{ padding: 12, display: "grid", gap: 8 }}>
+            <p className="field-label" style={{ margin: 0 }}>
+              Your staff send sales, stock and expenses in plain words; Guss puts them in Friday. Connect it to your own WhatsApp or
+              Telegram after you sign up.
+            </p>
+            <a className="btn btn-primary btn-pill" href={SIGNUP_URL} target="_blank" rel="noopener">
+              Create your account
+            </a>
+          </div>
+        </section>
+      )}
+      <button
+        type="button"
+        className={`guss-fab${open ? " guss-fab-open" : ""}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-label={open ? "Close Guss" : "Open Guss, shop assistant"}
+      >
+        <Icon name={open ? "close" : "sparkle"} size={20} />
+        {!open && <span className="guss-fab-label">Guss</span>}
+      </button>
+    </>
+  );
+}
+
+function LiveGuss() {
   const { session } = useAuth();
   const [t] = useState(widgetText);
   const [connected, setConnected] = useState(false);
