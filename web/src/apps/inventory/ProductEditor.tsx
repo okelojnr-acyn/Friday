@@ -332,9 +332,11 @@ export function ProductEditor({
               <Input inputMode="decimal" value={startStock} onChange={(e) => setStartStock(e.target.value)} placeholder="0" />
             </FieldWrap>
           ) : (
-            <FieldWrap label="In stock">
-              <Input value={`${fmtQty(product!.on_hand_qty)} ${unitLabel(unitById.get(product!.base_uom_id ?? ""))}`} disabled />
-            </FieldWrap>
+            <StockCount
+              product={product!}
+              unit={unitLabel(unitById.get(product!.base_uom_id ?? ""))}
+              onSaved={(p) => onSaved([p as unknown as RecordRow])}
+            />
           )}
           <label className="wide" style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 15 }}>
             <Checkbox checked={track} onChange={(e) => setTrack(e.target.checked)} /> Track stock for this product
@@ -436,6 +438,111 @@ function UnitRow({
             {unitLabel(base)}
           </span>
         )
+      ) : null}
+    </div>
+  );
+}
+
+type StockAction = "count" | "received" | "write_off";
+
+/** "In stock" with a way to change it (plan 20.2 #4): count what's on the
+ * shelf, add stock that came in, or take out what's damaged or lost.
+ * Every change is a recorded stock move (and reaches the books at cost);
+ * the number itself is never typed over. */
+function StockCount({ product, unit, onSaved }: { product: Product; unit: string; onSaved: (p: Product) => void }) {
+  const [onHand, setOnHand] = useState(Number(product.on_hand_qty));
+  const [action, setAction] = useState<StockAction | null>(null);
+  const [qty, setQty] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function save() {
+    const n = Number.parseFloat(qty);
+    if (!Number.isFinite(n) || n < 0) return setNote({ ok: false, text: "Type a number, like 12." });
+    const delta = action === "count" ? n - onHand : action === "received" ? n : -n;
+    if (delta === 0) {
+      setAction(null);
+      return setNote({ ok: true, text: "Matches the record. Nothing to change." });
+    }
+    setBusy(true);
+    setNote(null);
+    try {
+      const reason = action === "count" ? "manual_adjustment" : action!;
+      const p = await api.post<Product>(`/api/inventory/products/${product.id}/adjust-stock`, {
+        delta,
+        reason,
+        reference: action === "count" ? "stock count" : "",
+      });
+      setOnHand(Number(p.on_hand_qty));
+      setAction(null);
+      setQty("");
+      setNote({ ok: true, text: `Saved. ${delta > 0 ? "+" : ""}${fmtQty(delta)} ${unit}, now ${fmtQty(p.on_hand_qty)}.` });
+      onSaved(p);
+    } catch (err) {
+      setNote({ ok: false, text: err instanceof ApiError ? err.message : "Couldn't save. Try again." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const labels: Record<StockAction, string> = {
+    count: "Counted on the shelf",
+    received: "Came in",
+    write_off: "Damaged or lost",
+  };
+  return (
+    <div className="wide" style={{ display: "grid", gap: 8 }}>
+      {/* Not a <label>: its buttons would take the label's clicks. */}
+      <div className="field">
+        <span className="field-label">In stock</span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <strong style={{ fontSize: 17, color: onHand < 0 ? "var(--danger)" : undefined }}>
+            {fmtQty(onHand)} {unit}
+          </strong>
+          {onHand < 0 ? <span className="field-label">Below zero: count the shelf to fix it.</span> : null}
+          {(["count", "received", "write_off"] as StockAction[]).map((a) => (
+            <Button
+              key={a}
+              type="button"
+              size="sm"
+              variant={action === a ? "primary" : "secondary"}
+              onClick={() => {
+                setAction(action === a ? null : a);
+                setQty("");
+                setNote(null);
+              }}
+            >
+              {a === "count" ? "Count" : a === "received" ? "Add" : "Remove"}
+            </Button>
+          ))}
+        </div>
+      </div>
+      {action ? (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <FieldWrap label={`${labels[action]} (${unit || "units"})`}>
+            <Input
+              autoFocus
+              inputMode="decimal"
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void save();
+                }
+              }}
+              placeholder={action === "count" ? String(fmtQty(onHand)) : "0"}
+            />
+          </FieldWrap>
+          <Button type="button" variant="primary" onClick={() => void save()} disabled={busy}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      ) : null}
+      {note ? (
+        <p role="status" className="field-label" style={{ margin: 0, color: note.ok ? "var(--success, #1f8a4c)" : "var(--danger)" }}>
+          {note.text}
+        </p>
       ) : null}
     </div>
   );
