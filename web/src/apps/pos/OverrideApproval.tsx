@@ -5,9 +5,9 @@ import { approveAtTill, listPosCashiers, posDeviceToken, type PosCashier } from 
 const APPROVERS = new Set(["owner", "admin", "branch_manager", "team_leader"]);
 
 /** A team leader or manager says yes to a price cut or big discount with
- * their PIN on this till (checked by the kernel). Their name goes on the
- * sale. */
-export function OverrideApproval({ reasons, onClose, onApproved }: { reasons: string[]; onClose: () => void; onApproved: (by: string) => void }) {
+ * their PIN on this till (checked by the kernel). The signed approval
+ * goes with the sale; Invoicing reads the approver from it. */
+export function OverrideApproval({ reasons, onClose, onApproved }: { reasons: string[]; onClose: () => void; onApproved: (approval: string) => void }) {
   const [people, setPeople] = useState<PosCashier[] | null>(null);
   const [who, setWho] = useState("");
   const [pin, setPin] = useState("");
@@ -28,9 +28,8 @@ export function OverrideApproval({ reasons, onClose, onApproved }: { reasons: st
     setBusy(true);
     setError(null);
     try {
-      await approveAtTill(who, pin);
-      const p = people?.find((x) => x.user_id === who);
-      onApproved(p?.email || p?.name || who);
+      const { approval } = await approveAtTill(who, pin);
+      onApproved(approval);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not approve");
       setPin("");

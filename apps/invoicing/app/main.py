@@ -61,7 +61,7 @@ from .schemas import (
     QuoteCreate,
     QuoteStatusUpdate,
 )
-from friday_common.access import APPROVAL_HEADER, Scope, check_approval, require, scope_for
+from friday_common.access import APPROVAL_HEADER, Scope, check_approval, require, sale_approver, scope_for
 from friday_common.etims import normalize_pin
 from friday_common.clock import business_tz, day_bounds, local_date, local_midnight
 from friday_common.etims.kernel import get_etims_config
@@ -734,7 +734,9 @@ async def _apply_pos_sale_lines(
     # priced the sale.
     invoice.buyer_pin = normalize_pin(body.get("buyer_pin"))[:20]
     invoice.buyer_name = str(body.get("buyer_name") or "").strip()[:120]
-    invoice.override_approved_by = str(body.get("override_approved_by") or "").strip()[:200]
+    # Checked here from the manager's signed approval, never taken from the
+    # till's word (a name typed into a request proves nothing).
+    invoice.override_approved_by = sale_approver(body.get("override_approval"), principal)
     if isinstance(body.get("prices_include_tax"), bool):
         invoice.prices_include_tax = body["prices_include_tax"]
     return charged_cents

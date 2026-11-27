@@ -19,6 +19,10 @@ describe("overridesNeedingApproval", () => {
     expect(overridesNeedingApproval([line({ discount_bp: 1000 })], shelf, "member")).toEqual(["Rice: 10% off"]);
     expect(overridesNeedingApproval([line({ discount_bp: 5000 })], shelf, "branch_manager")).toEqual([]);
   });
+  it("follows the business's own limit", () => {
+    expect(overridesNeedingApproval([line({ discount_bp: 500 })], shelf, "member", 500)).toEqual(["Rice: 5% off"]);
+    expect(overridesNeedingApproval([line({ discount_bp: 0 })], shelf, "member", 0)).toEqual([]);
+  });
   it("a raised price or an item not on the shelf needs no one", () => {
     expect(overridesNeedingApproval([line({ unit_price_cents: 50_000 })], shelf, "member")).toEqual([]);
     expect(overridesNeedingApproval([{ ...line({ unit_price_cents: 1 }), product_id: null }], shelf, "member")).toEqual([]);
