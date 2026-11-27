@@ -119,6 +119,7 @@ jobs:
       - working-directory: web
         run: npm run build
       - name: Stylesheets close every block
+        working-directory: web
         run: node scripts/check-css.mjs
       - working-directory: web
         run: npx vitest run
