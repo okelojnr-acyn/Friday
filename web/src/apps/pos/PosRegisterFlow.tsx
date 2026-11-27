@@ -294,6 +294,22 @@ export function CloseRegister({
             <span>{diff === 0 ? "Balanced" : diff > 0 ? "Over" : "Short"}</span>
             <span className={diff > 0 ? "over" : diff < 0 ? "short" : ""}>{formatMoney(Math.abs(diff))}</span>
           </div>
+          {closed.summary?.handovers?.length ? (
+            <>
+              {/* Who the over/short belongs to: each handover's stretch, then the closer's. */}
+              {[
+                ...closed.summary.handovers.map((h) => [h.by, h.short_cents] as const),
+                [closed.closed_by_email ?? "Closing", diff - closed.summary.handovers.reduce((s, h) => s + h.short_cents, 0)] as const,
+              ].map(([who, short], i) => (
+                <div className="till-row" key={i}>
+                  <span>{who}</span>
+                  <span className={short > 0 ? "over" : short < 0 ? "short" : ""}>
+                    {short === 0 ? "Right" : `${short > 0 ? "Over" : "Short"} ${formatMoney(Math.abs(short))}`}
+                  </span>
+                </div>
+              ))}
+            </>
+          ) : null}
           <div className="till-panel-actions">
             <button type="button" className="till-btn" onClick={() => window.print()}>
               Print
