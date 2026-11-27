@@ -1224,7 +1224,8 @@ async def _returnable(session: AsyncSession, principal: Principal, original: Inv
 async def _get_pos_sale(session: AsyncSession, principal: Principal, number: str) -> Invoice:
     rows = await session.execute(
         select(Invoice).where(
-            Invoice.org_id == uuid.UUID(principal.org_id), Invoice.number == number, Invoice.source == "pos"
+            # An online shop sale (WEB-...) is returned and refunded the same way.
+            Invoice.org_id == uuid.UUID(principal.org_id), Invoice.number == number, Invoice.source.in_(("pos", "shop"))
         )
     )
     inv = rows.scalars().first()

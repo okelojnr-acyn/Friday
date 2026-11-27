@@ -461,6 +461,12 @@ async def test_an_online_shop_order_is_paid_like_a_till_sale(client, principal, 
     assert sale and sale[0]["shop_order_id"] == order_id and sale[0]["lines"][0]["quantity"] == 2
     assert (await client.post("/shop/checkout", json=body)).status_code == 409, "already paid"
 
+    # Cancelled and refunded from Online orders: Paystack gives it back.
+    as_principal(principal)
+    r = await client.post("/pos/sales/WEB-W1A2B3C4D/return", json={"client_return_id": "shop-y"})
+    assert r.status_code == 201, r.text
+    assert paystack["refunds"] and paystack["refunds"][-1][1] == 70000
+
 
 async def test_an_online_order_paid_on_collection(client, principal, as_principal, paystack, monkeypatch):
     from friday_common import Principal
@@ -493,3 +499,8 @@ async def test_an_online_order_paid_on_collection(client, principal, as_principa
     sale = [p for t, p in events if t == "invoicing.pos_sale.recorded"]
     assert len(sale) == 1 and sale[0]["shop_order_id"] == order["order_id"]
     assert (await client.post("/shop/collect", json={**order, "method": "cash"})).status_code == 409
+
+    # Cancelled after all: returned like a till sale, the cash comes back.
+    r = await client.post("/pos/sales/WEB-W9/return", json={"client_return_id": "shop-x"})
+    assert r.status_code == 201, r.text
+    assert sum(p["amount_cents"] for p in r.json()["payments"]) == -48000

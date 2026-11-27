@@ -60,6 +60,24 @@ export function OnlineOrdersPage() {
     }
   }
 
+  /** Cancel and refund a paid order: the sale is returned like a till
+   * return (Paystack refunds itself, cash comes out of the drawer, the
+   * stock goes back), then the order is cancelled. */
+  async function refund(o: OnlineOrder) {
+    if (!window.confirm(`Refund ${formatMoney(o.total_cents)} and cancel ${o.number}?`)) return;
+    setBusy(o.id);
+    setError(null);
+    try {
+      await api.post(`/api/invoicing/pos/sales/WEB-${o.number}/return`, { client_return_id: `shop-${o.id}` });
+      await api.post(`/api/inventory/shop_orders/${o.id}/status`, { status: "cancelled" });
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That didn't work");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function load() {
     api
       .get<OnlineOrder[]>("/api/inventory/shop_orders")
@@ -126,6 +144,11 @@ export function OnlineOrdersPage() {
               {o.status === "paid" || o.status === "ready" ? (
                 <Button size="sm" variant={o.status === "ready" ? "primary" : "secondary"} disabled={busy === o.id} onClick={() => move(o, "completed")}>
                   {o.fulfilment === "delivery" ? "Delivered" : "Collected"}
+                </Button>
+              ) : null}
+              {o.status === "paid" || o.status === "ready" ? (
+                <Button size="sm" variant="secondary" disabled={busy === o.id} onClick={() => refund(o)}>
+                  Cancel and refund
                 </Button>
               ) : null}
               {o.status === "placed" ? (
