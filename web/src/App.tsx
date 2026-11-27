@@ -75,6 +75,7 @@ export default function App() {
             <Route path="/crm" element={<PipelinePage />} />
             <Route path="/invoicing" element={<ReceivablesPage />} />
             <Route path="/invoicing/invoice/new" element={<InvoiceEditorPage />} />
+            <Route path="/invoicing/quote/new" element={<InvoiceEditorPage kind="quote" />} />
             <Route path="/web3/treasury" element={<TreasuryPage />} />
             <Route path="/accounting" element={<AccountingOverviewPage />} />
             <Route path="/accounting/reports" element={<ReportsPage />} />
