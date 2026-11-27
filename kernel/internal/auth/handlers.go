@@ -31,6 +31,9 @@ type Handlers struct {
 	Otp      *OtpStore
 	// WebURL is Friday's web address, for invite links.
 	WebURL string
+	// Demo: role -> email of the demo business's people (demo.go); empty
+	// on every real Friday.
+	Demo map[string]string
 }
 
 type registerRequest struct {

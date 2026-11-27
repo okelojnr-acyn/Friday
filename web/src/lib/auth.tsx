@@ -86,6 +86,8 @@ interface AuthContextValue {
   /** Usernameless passkey login -- the browser's own passkey picker
    * decides which account, no email prompt at all. */
   loginWithPasskey: () => Promise<void>;
+  /** The demo Friday only: in as one of the demo business's people. */
+  loginToDemo: (as: string) => Promise<void>;
   /** Adds a passkey to the *current* session's account (call right
    * after signup, or later from a settings screen). `platformOnly`
    * constrains the registration to a real fingerprint/Face ID (not a
@@ -177,6 +179,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applyAuthResponse],
   );
 
+  const loginToDemo = useCallback(
+    async (as: string) => applyAuthResponse(await kernelPost<AuthResponse>("/auth/demo", { as })),
+    [applyAuthResponse],
+  );
+
   const loginWithPasskey = useCallback(async () => {
     const { session_id, publicKey } = await kernelPost<{
       session_id: string;
@@ -258,6 +265,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       requestPosCode,
       verifyPosCode,
       loginWithPasskey,
+      loginToDemo,
       addPasskey,
       loginWithPin,
       logout,
@@ -273,6 +281,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       requestPosCode,
       verifyPosCode,
       loginWithPasskey,
+      loginToDemo,
       addPasskey,
       loginWithPin,
       logout,

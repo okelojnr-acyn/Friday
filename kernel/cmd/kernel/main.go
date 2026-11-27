@@ -141,6 +141,8 @@ func main() {
 		Mailer:   mail.New(),
 		Otp:      &auth.OtpStore{Pool: pool},
 		WebURL:   corsOrigin,
+		// The demo Friday only (deploy/demo): "owner=...,cashier=...".
+		Demo: auth.ParseDemoUsers(os.Getenv("FRIDAY_DEMO_USERS")),
 	}
 	requireAuth := auth.RequireAuth(issuer)
 
@@ -157,6 +159,8 @@ func main() {
 	mux.HandleFunc("POST /supplier/code", authHandlers.SupplierCode)
 	mux.HandleFunc("POST /supplier/verify", authHandlers.SupplierVerify)
 	mux.HandleFunc("POST /auth/register", authHandlers.Register)
+	mux.HandleFunc("GET /auth/demo", authHandlers.DemoRoles)
+	mux.HandleFunc("POST /auth/demo", authHandlers.DemoSignIn)
 	mux.HandleFunc("POST /auth/otp/request", authHandlers.OtpRequest)
 	mux.HandleFunc("POST /auth/otp/verify", authHandlers.OtpVerify)
 	mux.HandleFunc("POST /auth/invites/accept", authHandlers.AcceptInvite)
@@ -379,7 +383,7 @@ func main() {
 		log.Printf("routing /api/%s/* -> %s", app.Name, app.BaseURL)
 	}
 
-	handler := withCORS(corsOrigin, mux)
+	handler := withCORS(corsOrigin, auth.DemoGuard(authHandlers.Demo, mux))
 
 	log.Printf("kernel listening on %s", addr)
 	// Header timeout stops slow-header connections piling up; no whole-request

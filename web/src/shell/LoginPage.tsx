@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { markSignedInNow } from "../lib/session";
+import { useDemoRoles } from "../lib/demo";
 import { useAuth } from "../lib/auth";
 import { ApiError } from "../lib/api";
 import { Button } from "../ui/Button";
@@ -14,7 +15,8 @@ import { Icon } from "../ui/Icon";
  * which account, no email prompt), an emailed one-time code is the only
  * fallback. No password field anywhere. */
 export function LoginPage() {
-  const { loginWithPasskey, requestLoginCode, verifyCode, addPasskey } = useAuth();
+  const { loginWithPasskey, requestLoginCode, verifyCode, addPasskey, loginToDemo } = useAuth();
+  const demo = useDemoRoles();
   const navigate = useNavigate();
 
   const [mode, setMode] = useState<"passkey" | "code-email" | "code-entry" | "add-passkey">(
@@ -24,6 +26,19 @@ export function LoginPage() {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  async function onDemo(as: string) {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await loginToDemo(as);
+      navigate("/");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't open the demo; try again");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   async function onPasskeyLogin() {
     setError(null);
@@ -87,8 +102,20 @@ export function LoginPage() {
   return (
     <div style={{ display: "flex", justifyContent: "center", paddingTop: "12vh" }}>
       <Card style={{ width: 360 }}>
-        <h1 style={{ fontSize: 20, marginTop: 0 }}>Log in to Friday</h1>
+        <h1 style={{ fontSize: 20, marginTop: 0 }}>{demo ? "Try Friday" : "Log in to Friday"}</h1>
         {error ? <div className="error-banner">{error}</div> : null}
+        {demo ? (
+          <div className="form-grid" style={{ marginBottom: 12 }}>
+            <p className="field-label" style={{ margin: 0 }}>
+              A sample shop with its sales, stock, books and staff. Try anything: it all goes back to the start every night.
+            </p>
+            {demo.map((as) => (
+              <Button key={as} type="button" variant={as === "owner" ? "primary" : "secondary"} disabled={submitting} onClick={() => void onDemo(as)}>
+                Try as {as.charAt(0).toUpperCase() + as.slice(1)}
+              </Button>
+            ))}
+          </div>
+        ) : null}
 
         {mode === "passkey" ? (
           <div className="form-grid">
