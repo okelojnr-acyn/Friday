@@ -206,8 +206,10 @@ func (h *Handlers) allow(keyID string) bool {
 // public checks a request's key and site and sets its CORS headers. It
 // answers the request itself (and returns false) when it may not go on.
 func (h *Handlers) public(w http.ResponseWriter, r *http.Request) (keyInfo, bool) {
-	// The kernel's own CORS (Friday's web only) doesn't apply here.
-	w.Header().Del("Access-Control-Allow-Origin")
+	// The kernel's own CORS (Friday's web only) doesn't apply here. Errors
+	// carry no shop data, so any site may read why it was refused; data
+	// goes only to the key's sites (set below).
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	key := r.URL.Query().Get("key")
 	if key == "" {
 		key = r.Header.Get("Friday-Key")
@@ -227,9 +229,7 @@ func (h *Handlers) public(w http.ResponseWriter, r *http.Request) (keyInfo, bool
 	}
 	origin := r.Header.Get("Origin")
 	switch {
-	case origin == "":
-	case len(k.origins) == 0:
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+	case origin == "", len(k.origins) == 0:
 	case containsFold(k.origins, origin):
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 	default:
