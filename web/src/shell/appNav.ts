@@ -69,6 +69,7 @@ export const APP_NAV: Record<string, AppNav> = {
     sections: [
       ["Stock", [
         { label: "Products", to: "/inventory/product", icon: "box" },
+        { label: "Stock count", to: "/inventory/stock-take", icon: "calculator", hint: "Count the shelf, review what's different and what it's worth, then post it." },
         { label: "Stock moves", to: "/inventory/stock_move", icon: "history", hint: "Every unit in or out, and why: sales, receipts, transfers, counts." },
         { label: "Warehouses", to: "/inventory/warehouse", icon: "storefront" },
         { label: "Online orders", to: "/inventory/online-orders", icon: "receipt", hint: "Orders from your online shop: get them ready, hand them over.", waiting: { path: "/api/inventory/shop_orders", statuses: ["paid", "ready"] } },
@@ -89,7 +90,7 @@ export const APP_NAV: Record<string, AppNav> = {
         { label: "Reports", to: "/accounting/reports", icon: "trend-up", hint: "Profit & loss, balance sheet and trial balance, from the same books." },
       ]],
       ["Books", [
-        { label: "Journal entries", to: "/accounting/journal_entry", icon: "ledger", hint: "Sales, payments and payouts post here by themselves; add manual entries for the rest." },
+        { label: "Journal entries", to: "/accounting/journal_entry", icon: "ledger", hint: "Sales, payments and payouts post here by themselves; add manual entries for the rest.", waiting: { path: "/api/accounting/journal_entries", statuses: ["pending"] } },
         { label: "Chart of accounts", to: "/accounting/account", icon: "database" },
       ]],
       ["Banking", [
