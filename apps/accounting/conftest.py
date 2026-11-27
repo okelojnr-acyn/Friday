@@ -42,6 +42,18 @@ def as_principal():
 
 
 @pytest.fixture(autouse=True)
+def _standard_spending(monkeypatch):
+    """Posting reads the business's spending policy from the kernel; tests
+    have no kernel, so they get Standard (test_journal_approval sets its own)."""
+    from friday_common.access import STANDARD_SPENDING
+
+    async def standard(_org):
+        return dict(STANDARD_SPENDING)
+
+    monkeypatch.setattr("app.main.spending_policy", standard)
+
+
+@pytest.fixture(autouse=True)
 def _default_principal(principal, as_principal):
     as_principal(principal)
     yield
