@@ -3,6 +3,7 @@ books and reports follow exactly as for a real shop). Run by seed.sh in
 an app container, where the kernel is http://kernel:8080."""
 
 import json
+import urllib.error
 import urllib.request
 
 K = "http://kernel:8080"
@@ -13,9 +14,12 @@ def call(method, path, body=None, token=None):
     req.add_header("Content-Type", "application/json")
     if token:
         req.add_header("Authorization", "Bearer " + token)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        raw = r.read()
-        return json.loads(raw) if raw else None
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            raw = r.read()
+            return json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"{method} {path}: {e.code} {e.read().decode()[:500]}") from None
 
 
 owner = call("POST", "/auth/demo", {"as": "owner"})["token"]
@@ -102,7 +106,7 @@ for customer, lines in [
 # Deals in the pipeline.
 for contact, company, stage, value in [
     ("Peter Otieno", "Lakeside Restaurant", "qualified", 12000000),
-    ("Grace Achieng", "St. Mary's Clinic", "proposal", 4500000),
+    ("Grace Achieng", "St. Mary's Clinic", "proposition", 4500000),
     ("Samuel Kiprop", "Kiprop Hardware", "new", 2000000),
 ]:
     api("POST", "/api/crm/opportunities", {"contact_name": contact, "company": company, "stage": stage, "value_cents": value, "currency": "KES"})
