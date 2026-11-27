@@ -1,4 +1,5 @@
 import { NotificationBell } from "./NotificationBell";
+import { useDemoRoles } from "../lib/demo";
 import { Link } from "react-router-dom";
 import { Icon } from "./Icon";
 import { Button } from "./Button";
@@ -12,6 +13,8 @@ interface TopBarProps {
 }
 
 export function TopBar({ email, role, onLogout }: TopBarProps) {
+  // The demo has no Friday Host account behind it.
+  const demo = useDemoRoles();
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -20,10 +23,12 @@ export function TopBar({ email, role, onLogout }: TopBarProps) {
         </Link>
       </div>
       <div className="topbar-right">
-        <a href="https://fridayhost.dev/app" title="Friday Host dashboard" aria-label="Friday Host dashboard" className="btn btn-secondary btn-sm btn-pill">
+        {demo ? null : (
+          <a href="https://fridayhost.dev/app" title="Friday Host dashboard" aria-label="Friday Host dashboard" className="btn btn-secondary btn-sm btn-pill">
             <Icon name="arrow-up-right" size={16} />
             <span className="topbar-label">Friday Host</span>
-        </a>
+          </a>
+        )}
         <Link to="/apps" title="Apps & integrations" aria-label="Apps and integrations" className="btn btn-secondary btn-sm btn-pill">
             <Icon name="apps" size={16} />
             <span className="topbar-label">Apps & integrations</span>

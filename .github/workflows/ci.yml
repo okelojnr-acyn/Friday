@@ -118,6 +118,8 @@ jobs:
         run: npx tsc --noEmit
       - working-directory: web
         run: npm run build
+      - name: Stylesheets close every block
+        run: node scripts/check-css.mjs
       - working-directory: web
         run: npx vitest run
 
