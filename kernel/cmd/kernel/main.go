@@ -64,6 +64,16 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && (os.Args[1] == "move-out" || os.Args[1] == "move-in") {
+		run := runMoveOut
+		if os.Args[1] == "move-in" {
+			run = runMoveIn
+		}
+		if err := run(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "delete-org" {
 		if err := runDeleteOrg(os.Args[2:]); err != nil {
 			log.Fatal(err)
@@ -81,7 +91,7 @@ func main() {
 	// server on arguments it doesn't know hung CI for 20 minutes
 	// (2026-11-15); say what's wrong instead.
 	if len(os.Args) > 1 {
-		log.Fatalf("unknown command %q; commands: bootstrap, preset, suspend, delete-org, export, dbcheck (no arguments starts the server)", strings.Join(os.Args[1:], " "))
+		log.Fatalf("unknown command %q; commands: bootstrap, preset, suspend, delete-org, move-out, move-in, export, dbcheck (no arguments starts the server)", strings.Join(os.Args[1:], " "))
 	}
 	ctx := context.Background()
 
