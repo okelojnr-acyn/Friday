@@ -18,6 +18,11 @@ services:
   postgres:
     mem_limit: 256m
 
+# No way out to the internet: nothing in the demo can call anywhere, even
+# by mistake. Friday Host's Caddy reaches it over "edge" (also internal).
 networks:
+  default:
+    internal: true
   edge:
     name: friday-demo-edge
+    internal: true

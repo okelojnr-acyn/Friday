@@ -1,0 +1,6 @@
+# The demo Friday (deploy/demo). Install once on the box:
+#   sudo cp /opt/friday-demo/friday-demo.cron /etc/cron.d/friday-demo
+# Back to the sample shop at 00:00 Nairobi (21:00 UTC).
+0 21 * * * root /opt/friday-demo/reset.sh >> /var/log/friday-demo.log 2>&1
+# Follow the shared Friday's release.
+*/10 * * * * root /opt/friday-demo/update.sh >> /var/log/friday-demo.log 2>&1
