@@ -193,7 +193,7 @@ STANDARD_SPENDING = {
     "preset": "standard", "ask_first_member": 200_000, "ask_first_team_leader": 1_000_000,
     "ask_first_branch_manager": 5_000_000, "trips_ask_first": True, "no_receipt_under": 100_000,
     "no_receipt_per_year": 3, "tolerance_pct": 10, "till_payouts": False,
-    "petty_float": 1_000_000, "petty_slip_max": 200_000,
+    "petty_float": 1_000_000, "petty_slip_max": 200_000, "till_discount_pct": 10,
 }
 
 
@@ -311,3 +311,37 @@ def check_approval(token: str | None, principal: Principal, *, amount_cents: int
             status.HTTP_403_FORBIDDEN, f"above {ROLE_NAMES.get(role, role)}'s limit ({limit // 100:,}); ask {who_can('pos.sell', role)}"
         )
     return str(c.get("sub"))
+
+
+# A till sale can sync long after its approval was given (an offline
+# till), so a sale's approval is judged by when it was issued, not by its
+# two-minute expiry.
+SALE_APPROVAL_MAX_AGE_S = 24 * 3600
+
+
+def sale_approver(token: str | None, principal: Principal, *, now: float | None = None) -> str:
+    """Who approved a till sale's price cut or big discount, from the
+    kernel's signed approval (POST /auth/pos/approve) sent with the sale:
+    their email when the approval is genuine, from this business, from a
+    leader or manager other than the cashier, and at most a day old.
+    "" when there's none, "unverified" when one was sent but won't do. A
+    sale is never refused for it: the money has already changed hands."""
+    import time
+
+    if not token:
+        return ""
+    settings = get_settings()
+    try:
+        c = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm], options={"verify_exp": False})
+    except jwt.PyJWTError:
+        return "unverified"
+    age = (now if now is not None else time.time()) - float(c.get("iat") or 0)
+    if (
+        c.get("via") != "pos-approval"
+        or c.get("org_id") != principal.org_id
+        or c.get("role") not in APPROVERS
+        or c.get("sub") == principal.user_id
+        or not 0 <= age <= SALE_APPROVAL_MAX_AGE_S
+    ):
+        return "unverified"
+    return str(c.get("email") or c.get("sub"))

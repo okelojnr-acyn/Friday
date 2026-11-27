@@ -124,7 +124,7 @@ export function PosPage({
   const [handingOver, setHandingOver] = useState(false);
   // A manager's OK for this order's price cuts and big discounts, kept for
   // exactly the changes it saw (any later change asks again).
-  const [approval, setApproval] = useState<{ key: string; by: string } | null>(null);
+  const [approval, setApproval] = useState<{ key: string; token: string } | null>(null);
   const [approving, setApproving] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [customName, setCustomName] = useState("");
@@ -403,7 +403,7 @@ export function PosPage({
     const t = tillTotals(sale.lines, (id) => (id ? byId.get(id)?.tax_code ?? "" : ""), settings);
     const out: Sale = {
       ...sale,
-      ...(approval && approval.key === overridesKey && overrides.length ? { override_approved_by: approval.by } : {}),
+      ...(approval && approval.key === overridesKey && overrides.length ? { override_approval: approval.token } : {}),
       amount_cents: t.total,
       prices_include_tax: inclusive,
       lines: sale.lines.map((l, i) => {
@@ -707,7 +707,7 @@ export function PosPage({
   const [choosing, setChoosing] = useState<ShelfProduct | null>(null);
   // Owners and admins can add a product (photo, variants) from the till.
   const canManageProducts = session?.role === "owner" || session?.role === "admin";
-  const overrides = overridesNeedingApproval(lines, (id) => byId.get(id)?.price_cents, session?.role);
+  const overrides = overridesNeedingApproval(lines, (id) => byId.get(id)?.price_cents, session?.role, payouts.discountBp);
   const overridesKey = overrides.join("|");
   const [newProduct, setNewProduct] = useState(false);
 
@@ -1083,8 +1083,8 @@ export function PosPage({
         <OverrideApproval
           reasons={overrides}
           onClose={() => setApproving(false)}
-          onApproved={(by) => {
-            setApproval({ key: overridesKey, by });
+          onApproved={(token) => {
+            setApproval({ key: overridesKey, token });
             setApproving(false);
             setPaying(true);
           }}

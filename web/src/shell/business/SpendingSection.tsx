@@ -17,6 +17,8 @@ interface Policy {
   till_payouts: boolean;
   petty_float: number;
   petty_slip_max: number;
+  /** Absent on an older kernel. */
+  till_discount_pct?: number;
 }
 type Presets = Record<"simple" | "standard" | "strict", Policy>;
 
@@ -136,6 +138,19 @@ export function SpendingSection({ canEdit }: { canEdit: boolean }) {
             <FieldWrap label="Flag a claim over what was approved by more than (%)">
               <Input inputMode="numeric" disabled={!canEdit} value={String(policy.tolerance_pct)} onChange={(e) => set({ tolerance_pct: Number.parseInt(e.target.value) || 0 })} />
             </FieldWrap>
+            {policy.till_discount_pct !== undefined ? (
+              <FieldWrap
+                label="Till discounts that need a manager's PIN, from (%)"
+                hint="A cashier giving this much off, or lowering a price below the shelf, needs a team leader's or manager's PIN at Payment. Their name is kept on the sale. 0 means every discount asks."
+              >
+                <Input
+                  inputMode="numeric"
+                  disabled={!canEdit}
+                  value={String(policy.till_discount_pct)}
+                  onChange={(e) => set({ till_discount_pct: Math.min(100, Math.max(0, Number.parseInt(e.target.value) || 0)) })}
+                />
+              </FieldWrap>
+            ) : null}
           </div>
           <label className="checkbox-row">
             <input type="checkbox" disabled={!canEdit} checked={policy.trips_ask_first} onChange={(e) => set({ trips_ask_first: e.target.checked })} />
