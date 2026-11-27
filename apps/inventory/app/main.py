@@ -25,6 +25,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .etims import router as etims_router
+from .shop import router as shop_router
 from .supplier import router as supplier_router
 from .supplier import staff_router as po_invoice_router
 from .purchases import price_purchase_vat, publish_purchase_received
@@ -1072,6 +1073,7 @@ app.include_router(suppliers_router)
 app.include_router(purchase_orders_router)
 app.include_router(po_invoice_router)
 app.include_router(supplier_router)
+app.include_router(shop_router)
 app.include_router(warehouses_router)
 app.include_router(uoms_router)
 app.include_router(webhooks_router)

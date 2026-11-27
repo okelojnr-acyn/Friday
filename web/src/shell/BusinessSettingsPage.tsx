@@ -10,6 +10,7 @@ import { SpendingSection } from "./business/SpendingSection";
 import { EtimsSection } from "./business/EtimsSection";
 import { PaymentsSection } from "./business/PaymentsSection";
 import { SaveRow } from "./business/SaveRow";
+import { ShopSection } from "./business/ShopSection";
 import { TaxSection } from "./business/TaxSection";
 import { TillsSection } from "./business/TillsSection";
 
@@ -44,6 +45,7 @@ const TABS = [
   ["payments", "Payments"],
   ["approvals", "Approvals"],
   ["spending", "Spending"],
+  ["shop", "Online shop"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
@@ -83,6 +85,7 @@ export function BusinessSettingsPage() {
       {tab === "payments" ? <PaymentsSection canEdit={canEdit} /> : null}
       {tab === "approvals" ? <ApprovalsSection canEdit={canEdit} /> : null}
       {tab === "spending" ? <SpendingSection canEdit={canEdit} /> : null}
+      {tab === "shop" ? <ShopSection canEdit={canEdit} /> : null}
     </div>
   );
 }

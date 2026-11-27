@@ -18,14 +18,15 @@ import (
 	"github.com/acyn-innovation/friday/kernel/internal/db"
 	"github.com/acyn-innovation/friday/kernel/internal/gateway"
 	"github.com/acyn-innovation/friday/kernel/internal/guss"
-	"github.com/acyn-innovation/friday/kernel/internal/inbox"
-	"github.com/acyn-innovation/friday/kernel/internal/push"
 	"github.com/acyn-innovation/friday/kernel/internal/importsource"
+	"github.com/acyn-innovation/friday/kernel/internal/inbox"
 	"github.com/acyn-innovation/friday/kernel/internal/integrations"
 	"github.com/acyn-innovation/friday/kernel/internal/mail"
 	"github.com/acyn-innovation/friday/kernel/internal/org"
 	"github.com/acyn-innovation/friday/kernel/internal/orgexport"
+	"github.com/acyn-innovation/friday/kernel/internal/push"
 	"github.com/acyn-innovation/friday/kernel/internal/registry"
+	"github.com/acyn-innovation/friday/kernel/internal/shop"
 )
 
 func envOr(key, fallback string) string {
@@ -184,6 +185,18 @@ func main() {
 	mux.HandleFunc("POST /invites/{token}/accept", authHandlers.AcceptInviteLink)
 
 	orgSettings := &org.Settings{Pool: pool}
+	// Online shop (internal/shop): keys for owners, a public catalogue.
+	shopHandlers := &shop.Handlers{Pool: pool, Issuer: issuer}
+	for _, app := range apps {
+		if app.Name == "inventory" {
+			shopHandlers.InventoryURL = app.BaseURL
+		}
+	}
+	mux.Handle("GET /orgs/shop-keys", requireAuth(http.HandlerFunc(shopHandlers.List)))
+	mux.Handle("POST /orgs/shop-keys", requireAuth(http.HandlerFunc(shopHandlers.Create)))
+	mux.Handle("DELETE /orgs/shop-keys/{id}", requireAuth(http.HandlerFunc(shopHandlers.Revoke)))
+	mux.HandleFunc("GET /public/catalog", shopHandlers.Catalog)
+	mux.HandleFunc("GET /public/catalog/products/{id}/image", shopHandlers.Image)
 	mux.Handle("GET /orgs/settings", requireAuth(http.HandlerFunc(orgSettings.Get)))
 	mux.Handle("PUT /orgs/settings", requireAuth(http.HandlerFunc(orgSettings.Put)))
 	orgEtims := &org.Etims{Pool: pool, InternalToken: eventsToken, Automation: os.Getenv("ETIMS_AUTOMATION") == "1"}
