@@ -285,6 +285,23 @@ class PosShift(Base):
     opened_by_email: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class PosHandover(Base):
+    """The drawer counted when the cashier changes mid-shift (plan 20.3):
+    what was there and what should have been, at that moment."""
+
+    __tablename__ = "pos_handovers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    shift_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pos_shifts.id", ondelete="CASCADE"), nullable=False)
+    counted_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    expected_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    by_user_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    by_email: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class PosPaidOut(Base):
     """Cash paid out of the till during a shift (spending plan part C),
     when the business allows it; it comes off the cash expected."""

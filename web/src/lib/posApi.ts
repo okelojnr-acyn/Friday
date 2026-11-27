@@ -20,6 +20,8 @@ export interface PosShift {
     returns: number;
     /** Spending plan part C; missing on an older Invoicing. */
     paid_out_cents?: number;
+    /** Mid-shift cashier changes, each with its own stretch's over/short. */
+    handovers?: { by: string; counted_cents: number; expected_cents: number; short_cents: number }[];
     expected_cash_cents: number;
   } | null;
 }

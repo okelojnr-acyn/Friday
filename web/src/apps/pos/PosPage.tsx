@@ -29,6 +29,7 @@ import { fmtQty, unitLabel, useUnits } from "../../lib/units";
 import { ProductTile, VariantPicker } from "./ProductTile";
 import { ProductEditor } from "../inventory/ProductEditor";
 import { ReturnsPanel } from "./ReturnsPanel";
+import { Handover } from "./Handover";
 import { PayOut, useTillPayouts } from "./PayOut";
 import { categoryTint } from "../../lib/productImages";
 
@@ -118,6 +119,7 @@ export function PosPage({
   const [menuOpen, setMenuOpen] = useState(false);
   const payouts = useTillPayouts();
   const [payingOut, setPayingOut] = useState(false);
+  const [handingOver, setHandingOver] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [customName, setCustomName] = useState("");
   const [customPrice, setCustomPrice] = useState("");
@@ -835,7 +837,7 @@ export function PosPage({
             <button type="button" onClick={() => (setMenuOpen(false), onSwitchTill())}>
               <Icon name="storefront" size={18} /> Switch till
             </button>
-            <button type="button" onClick={() => (setMenuOpen(false), onSwitchCashier())}>
+            <button type="button" onClick={() => (setMenuOpen(false), setHandingOver(true))}>
               <Icon name="users" size={18} /> Switch cashier
             </button>
             <button type="button" onClick={() => (setMenuOpen(false), onPinSettings())}>
@@ -1046,6 +1048,9 @@ export function PosPage({
           onClose={() => setPayingOut(false)}
           onDone={(text) => (setPayingOut(false), flash(text))}
         />
+      ) : null}
+      {handingOver ? (
+        <Handover shiftId={shift.id} onClose={() => setHandingOver(false)} onDone={() => (setHandingOver(false), onSwitchCashier())} />
       ) : null}
       {notice ? <div className="till-notice glass">{notice}</div> : null}
     </div>

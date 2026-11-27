@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from friday_common.access import Scope, require, spending_policy
 
-from .models import Invoice, Payment, PosPaidOut, PosRegister, PosShift
+from .models import Invoice, Payment, PosHandover, PosPaidOut, PosRegister, PosShift
 from .schemas import PosShiftOut
 
 router = APIRouter(prefix="/pos", tags=["pos-registers"])
@@ -304,13 +304,84 @@ async def shift_summary(session: AsyncSession, shift: PosShift) -> dict:
     paid_out = await session.scalar(
         select(func.coalesce(func.sum(PosPaidOut.amount_cents), 0)).where(PosPaidOut.shift_id == shift.id)
     )
+    # Cash taken per cashier, so a shared drawer's takings are split by
+    # who rang them up (plan 20.3).
+    per = await session.execute(
+        select(Invoice.cashier_email, func.coalesce(func.sum(Payment.amount_cents), 0))
+        .join(Invoice, Invoice.id == Payment.invoice_id)
+        .where(Invoice.pos_shift_id == shift.id, Payment.method.in_(("cash", "refund")))
+        .group_by(Invoice.cashier_email)
+    )
+    handovers = (
+        await session.execute(
+            select(PosHandover).where(PosHandover.shift_id == shift.id).order_by(PosHandover.created_at)
+        )
+    ).scalars().all()
     return {
         "by_method": by_method,
         "sales": sales,
         "returns": returns,
         "paid_out_cents": int(paid_out),
         "expected_cash_cents": shift.opening_float_cents + cash + refunds - int(paid_out),
+        "cash_by_cashier": {(e or "unknown"): int(c) for e, c in per.all()},
+        "handovers": handover_stretches(
+            [(h.by_email, h.counted_cents, h.expected_cents, h.created_at.isoformat()) for h in handovers]
+        ),
     }
+
+
+def handover_stretches(rows: list[tuple[str, int, int, str]]) -> list[dict]:
+    """Each handover's over/short for its own stretch: the drawer's running
+    difference (counted - expected) now, less what it already was at the
+    previous handover, so one cashier's shortage isn't carried by the next."""
+    out, before = [], 0
+    for email, counted, expected, at in rows:
+        diff = counted - expected
+        out.append({"by": email, "at": at, "counted_cents": counted, "expected_cents": expected, "short_cents": diff - before})
+        before = diff
+    return out
+
+
+class HandoverIn(BaseModel):
+    counted_cents: int = Field(ge=0)
+    note: str = Field(default="", max_length=500)
+
+
+@router.post("/shifts/{shift_id}/handover")
+async def hand_over(
+    shift_id: uuid.UUID,
+    body: HandoverIn,
+    principal: Principal = Depends(get_current_principal),
+    scope: Scope = Depends(require("pos.sell")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """The outgoing cashier's blind count when the cashier changes mid-
+    shift. Answers what was expected and this stretch's over/short."""
+    shift = (
+        await session.execute(select(PosShift).where(PosShift.id == shift_id).with_for_update())
+    ).scalars().first()
+    if shift is None or str(shift.org_id) != principal.org_id:
+        raise HTTPException(404, "shift not found")
+    if shift.status != "open":
+        raise HTTPException(400, "this shift is already closed")
+    await till_location_check(session, scope, shift)
+    summary = await shift_summary(session, shift)
+    session.add(
+        PosHandover(
+            org_id=shift.org_id,
+            shift_id=shift.id,
+            counted_cents=body.counted_cents,
+            expected_cents=summary["expected_cash_cents"],
+            by_user_id=principal.user_id or "",
+            by_email=principal.email or "",
+            note=body.note.strip(),
+            created_at=datetime.now(UTC),
+        )
+    )
+    await session.flush()
+    stretches = (await shift_summary(session, shift))["handovers"]
+    await session.commit()
+    return stretches[-1]
 
 
 @router.get("/shifts/{shift_id}", response_model=PosShiftOut)
