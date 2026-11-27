@@ -69,6 +69,7 @@ export function StockTakePage() {
     const failed: string[] = [];
     const failedIds = new Set<string>();
     let ok = 0;
+    // shortcut: one request per product; add a bulk endpoint if counts run to thousands.
     for (const d of diffs) {
       try {
         await api.post(`/api/inventory/products/${d.p.id}/adjust-stock`, {
