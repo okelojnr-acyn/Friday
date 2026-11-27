@@ -85,7 +85,7 @@ func TestShopKeysAndPublicCatalog(t *testing.T) {
 		h.Catalog(w, r)
 		return w
 	}
-	if w := get("/public/catalog", ""); w.Code != 401 {
+	if w := get("/public/catalog", ""); w.Code != 401 || w.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatalf("no key: %d", w.Code)
 	}
 	w = get("/public/catalog?key="+key.Key, "https://duka.example")
@@ -96,7 +96,8 @@ func TestShopKeysAndPublicCatalog(t *testing.T) {
 	if seen == nil || seen.Via != Via || seen.Role != "shop" || seen.OrgID != orgID || seen.ExpiresAt.Sub(time.Now()) > 2*time.Minute {
 		t.Fatalf("Inventory got %+v", seen)
 	}
-	if w := get("/public/catalog?key="+key.Key, "https://elsewhere.example"); w.Code != 403 || w.Header().Get("Access-Control-Allow-Origin") != "" {
+	// Refused, but readable there (an error holds no shop data).
+	if w := get("/public/catalog?key="+key.Key, "https://elsewhere.example"); w.Code != 403 || w.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatalf("another site: %d %q", w.Code, w.Header().Get("Access-Control-Allow-Origin"))
 	}
 
