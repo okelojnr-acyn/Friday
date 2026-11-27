@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { localDay } from "../../lib/localTime";
 import { ApiError } from "../../lib/api";
 import { fetchPosSale, returnPosSale, type PosSale } from "../../lib/pos";
 import { Button } from "../../ui/Button";
@@ -93,14 +94,24 @@ export function ReturnsPanel({ onClose, shiftId }: ReturnsPanelProps) {
     }
   }
 
-  async function lookup() {
-    if (!number.trim()) return;
+  // Today's sales on the tills, newest first, to tap instead of typing a
+  // receipt number (a customer at the counter rarely has it).
+  const [recent, setRecent] = useState<{ number: string; issued_at: string; total_cents: number; currency: string; cashier: string }[]>([]);
+  useEffect(() => {
+    api
+      .get<typeof recent>(`/api/invoicing/pos/sales?day=${localDay()}&channel=till`)
+      .then((rows) => setRecent(rows.filter((r) => !r.number.startsWith("RET-")).slice(0, 8)))
+      .catch(() => setRecent([]));
+  }, []);
+
+  async function lookup(n = number) {
+    if (!n.trim()) return;
     setLoading(true);
     setError(null);
     setSale(null);
     setRefunded(null);
     try {
-      setSale(await fetchPosSale(number.trim()));
+      setSale(await fetchPosSale(n.trim()));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not find that sale");
     } finally {
@@ -160,10 +171,32 @@ export function ReturnsPanel({ onClose, shiftId }: ReturnsPanelProps) {
           onKeyDown={(e) => e.key === "Enter" && lookup()}
           style={{ flex: 1 }}
         />
-        <Button type="button" onClick={lookup} disabled={loading}>
+        <Button type="button" onClick={() => void lookup()} disabled={loading}>
           <Icon name="search" size={14} /> Find
         </Button>
       </div>
+      {!sale && recent.length ? (
+        <div style={{ marginTop: 12, display: "grid", gap: 6 }}>
+          <div className="field-label">Today on the tills</div>
+          {recent.map((r) => (
+            <button
+              key={r.number}
+              type="button"
+              className="card card-padded"
+              style={{ display: "flex", justifyContent: "space-between", gap: 8, textAlign: "left", cursor: "pointer" }}
+              onClick={() => {
+                setNumber(r.number);
+                void lookup(r.number);
+              }}
+            >
+              <span>
+                {new Date(r.issued_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {r.cashier.split("@")[0]}
+              </span>
+              <strong>{formatMoney(r.total_cents, { currency: r.currency })}</strong>
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {sale ? (
         <div className="card card-padded" style={{ marginTop: 12 }}>

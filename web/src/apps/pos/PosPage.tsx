@@ -454,6 +454,15 @@ export function PosPage({
     const sale: Sale = annotate({ ...JSON.parse(saleJson), shift_id: shift.id });
     queue.enqueue_json(JSON.stringify(sale));
     persistQueue();
+    // The shelf's "N left" follows the sale at once (it showed 22 after
+    // one was sold); the next catalogue load brings the server's count.
+    const sold = new Map<string, number>();
+    lines.forEach((l) => l.product_id && sold.set(l.product_id, (sold.get(l.product_id) ?? 0) + l.quantity));
+    setProducts((cur) =>
+      cur.map((p) =>
+        sold.has(p.id) && p.track_inventory ? { ...p, on_hand_qty: Number(p.on_hand_qty) - sold.get(p.id)! * (p.sales_factor ?? 1) } : p,
+      ),
+    );
 
     const soldLines = lines;
     const soldTotals = totals;
