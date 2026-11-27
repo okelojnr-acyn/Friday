@@ -86,7 +86,8 @@ function ReferenceCell({ field, value }: { field: FieldSpec; value: unknown }) {
 function Cell({ field, value, record }: { field: FieldSpec; value: unknown; record: RecordRow }) {
   if (isOverdue(field, record)) {
     return (
-      <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      // Wraps under the date when the column is tight (Invoices scrolled sideways).
+      <span style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
         {formatCellValue(field, value, record)}
         <Badge tone="danger">Overdue</Badge>
       </span>

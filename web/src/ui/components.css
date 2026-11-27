@@ -142,12 +142,20 @@
   font-size: 13px;
   font-weight: 500;
   color: var(--text-muted);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2);
   border-bottom: 1px solid var(--border);
 }
 .table td {
-  padding: var(--space-3);
+  padding: var(--space-3) var(--space-2);
   border-bottom: 1px solid var(--border);
+}
+.table th:first-child,
+.table td:first-child {
+  padding-left: var(--space-3);
+}
+.table th:last-child,
+.table td:last-child {
+  padding-right: var(--space-3);
 }
 .table tbody tr {
   cursor: pointer;
