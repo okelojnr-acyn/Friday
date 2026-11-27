@@ -627,6 +627,21 @@
 .cell-nowrap {
   white-space: nowrap;
 }
+/* An action that reads as a link inside a sentence. */
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.link-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 /* Two or three ways to cut one list (Invoices | Till receipts), above its tabs. */
 .segmented {
   display: inline-flex;

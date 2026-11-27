@@ -111,6 +111,18 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
     [records, isInvoices, tillView],
   );
 
+  // A search with matches on the other side of the switch says so (a till
+  // receipt number typed on the Invoices side, and the reverse).
+  const otherSideMatches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!isInvoices || !records || !q) return 0;
+    return records.filter(
+      (r) =>
+        (r.source === "pos") !== tillView &&
+        Object.values(r).some((v) => typeof v === "string" && v.toLowerCase().includes(q)),
+    ).length;
+  }, [records, isInvoices, tillView, query]);
+
   const visibleRecords = useMemo(() => {
     if (!baseRecords) return baseRecords;
     const q = query.trim().toLowerCase();
@@ -251,6 +263,15 @@ export function ResourcePage({ app: appProp }: { app?: string } = {}) {
               </button>
             );
           })}
+        </div>
+      ) : null}
+
+      {otherSideMatches > 0 ? (
+        <div className="field-label" role="status" style={{ marginBottom: 12 }}>
+          {otherSideMatches} {otherSideMatches === 1 ? "match" : "matches"} in {tillView ? "invoices" : "till receipts"} ·{" "}
+          <button type="button" className="link-button" onClick={() => showTill(!tillView)}>
+            Show {tillView ? "invoices" : "till receipts"}
+          </button>
         </div>
       ) : null}
 
