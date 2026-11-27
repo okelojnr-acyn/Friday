@@ -47,7 +47,7 @@ export function ShopSection({ canEdit }: { canEdit: boolean }) {
     <div style={{ display: "grid", gap: 16 }}>
       <p className="field-label">
         Your online shop reads what you sell from Friday with a shop key: names, prices, photos and what&apos;s in
-        stock, never costs or quantities. Every product with a price is listed.
+        stock, never costs or quantities. Products with a price and &quot;Sell in the online shop&quot; ticked (Inventory) are listed; orders arrive in Inventory, Online orders.
       </p>
       {keys?.map((k) => (
         <div key={k.id} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 12 }}>
