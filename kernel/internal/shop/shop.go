@@ -10,6 +10,7 @@
 package shop
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -193,14 +194,16 @@ func (h *Handlers) lookup(ctx context.Context, key string) (keyInfo, error) {
 }
 
 // allow counts a call against the key's minute.
-func (h *Handlers) allow(keyID string) bool {
+func (h *Handlers) allow(keyID string) bool { return h.allowN(keyID, perMinute) }
+
+func (h *Handlers) allowN(name string, limit int) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if now := time.Now(); now.Sub(h.window) >= time.Minute || h.counts == nil {
 		h.window, h.counts = now, map[string]int{}
 	}
-	h.counts[keyID]++
-	return h.counts[keyID] <= perMinute
+	h.counts[name]++
+	return h.counts[name] <= limit
 }
 
 // public checks a request's key and site and sets its CORS headers. It
@@ -256,17 +259,25 @@ func containsFold(list []string, s string) bool {
 	return false
 }
 
-// inventory asks Inventory's /shop/* for the key's business.
-func (h *Handlers) inventory(ctx context.Context, k keyInfo, path string) (*http.Response, error) {
+// inventory asks Inventory's /shop/* for the key's business (GET, or
+// POST with a JSON body).
+func (h *Handlers) inventory(ctx context.Context, k keyInfo, path string, body ...[]byte) (*http.Response, error) {
 	token, err := h.Issuer.IssueVia("shop:"+k.id, k.orgID, Via, "", Via, nil, time.Minute) // role "shop" matches no staff permission
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(h.InventoryURL, "/")+path, nil)
+	method, rd := http.MethodGet, io.Reader(nil)
+	if len(body) > 0 {
+		method, rd = http.MethodPost, bytes.NewReader(body[0])
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(h.InventoryURL, "/")+path, rd)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	if rd != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	client := h.HTTP
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
@@ -332,4 +343,82 @@ func (h *Handlers) Image(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	io.Copy(w, io.LimitReader(resp.Body, 8<<20))
+}
+
+// orderPerMinute caps orders placed per key: a fake-order flood stays small.
+const orderPerMinute = 30
+
+// relay passes Inventory's answer through: its JSON object (with the
+// business's currency added) or its error, so the page can say why.
+func (h *Handlers) relay(w http.ResponseWriter, k keyInfo, resp *http.Response) {
+	var out map[string]any
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		writeError(w, http.StatusBadGateway, "the shop didn't answer clearly")
+		return
+	}
+	if resp.StatusCode < 300 {
+		out["currency"] = k.currency
+	} else if d, ok := out["detail"]; ok {
+		// FastAPI's {"detail": ...}: a message, or {"message", "problems"}.
+		out = map[string]any{"error": d}
+		if m, ok := d.(map[string]any); ok {
+			out = map[string]any{"error": m["message"], "problems": m["problems"]}
+		}
+	}
+	writeJSON(w, resp.StatusCode, out)
+}
+
+func (h *Handlers) post(w http.ResponseWriter, r *http.Request, path string, orders bool) {
+	k, ok := h.public(w, r)
+	if !ok {
+		return
+	}
+	if orders && !h.allowN(k.id+":order", orderPerMinute) {
+		writeError(w, http.StatusTooManyRequests, "too many orders from this shop; try again in a minute")
+		return
+	}
+	// Any Content-Type: a page may send text/plain to skip the preflight.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<10))
+	if err != nil || !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, "send JSON")
+		return
+	}
+	resp, err := h.inventory(r.Context(), k, path, body)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "the shop isn't reachable")
+		return
+	}
+	defer resp.Body.Close()
+	h.relay(w, k, resp)
+}
+
+// Quote (POST /public/quote?key=): {"lines": [{"product_id", "quantity"}]}
+// priced by Friday, with anything that can't be bought.
+func (h *Handlers) Quote(w http.ResponseWriter, r *http.Request) { h.post(w, r, "/shop/quote", false) }
+
+// PlaceOrder (POST /public/orders?key=): the basket plus who and how
+// (pickup or delivery). Returns the order and its tracking token once.
+func (h *Handlers) PlaceOrder(w http.ResponseWriter, r *http.Request) {
+	h.post(w, r, "/shop/orders", true)
+}
+
+// Track (GET /public/orders/{id}?key=&token=): the order, for its shopper.
+func (h *Handlers) Track(w http.ResponseWriter, r *http.Request) {
+	k, ok := h.public(w, r)
+	if !ok {
+		return
+	}
+	id, token := r.PathValue("id"), r.URL.Query().Get("token")
+	if len(id) != 36 || token == "" || len(token) > 100 {
+		writeError(w, http.StatusNotFound, "order not found")
+		return
+	}
+	resp, err := h.inventory(r.Context(), k, "/shop/orders/"+url.PathEscape(id)+"?token="+url.QueryEscape(token))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "the shop isn't reachable")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Cache-Control", "no-store")
+	h.relay(w, k, resp)
 }

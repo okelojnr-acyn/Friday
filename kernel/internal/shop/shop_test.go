@@ -126,3 +126,87 @@ func TestShopKeysAndPublicCatalog(t *testing.T) {
 		t.Fatalf("revoked key still works: %d", w.Code)
 	}
 }
+
+func TestShopQuoteOrderAndTrack(t *testing.T) {
+	dsn := os.Getenv("KERNEL_TEST_DATABASE_URL")
+	if dsn == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("KERNEL_TEST_DATABASE_URL must be set in CI")
+		}
+		t.Skip("KERNEL_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err := db.Migrate(ctx, pool, "../../migrations"); err != nil {
+		t.Fatal(err)
+	}
+	var orgID string
+	pool.QueryRow(ctx, `INSERT INTO core.orgs (name, slug, currency) VALUES ('Duka', $1, 'KES') RETURNING id::text`,
+		fmt.Sprintf("duka2-%d", time.Now().UnixNano())).Scan(&orgID)
+	key := "fpk_" + strings.Repeat("a", 30) + fmt.Sprint(time.Now().UnixNano()%1e9)
+	pool.Exec(ctx, `INSERT INTO core.shop_keys (org_id, name, key) VALUES ($1::uuid, 'Web', $2)`, orgID, key)
+
+	var gotBody string
+	inventory := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b := new(bytes.Buffer)
+		b.ReadFrom(r.Body)
+		gotBody = b.String()
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/shop/quote":
+			if r.Header.Get("Content-Type") != "application/json" {
+				w.WriteHeader(415)
+				return
+			}
+			w.Write([]byte(`{"lines":[],"total_cents":70000,"problems":[]}`))
+		case r.Method == "POST" && r.URL.Path == "/shop/orders":
+			w.WriteHeader(409)
+			w.Write([]byte(`{"detail":{"message":"some items can't be ordered","problems":[{"product_id":"p1","reason":"not enough in stock"}]}}`))
+		case r.URL.Path == "/shop/orders/11111111-2222-3333-4444-555555555555" && r.URL.Query().Get("token") == "tok":
+			w.Write([]byte(`{"number":"W1","status":"placed"}`))
+		default:
+			w.WriteHeader(404)
+			w.Write([]byte(`{"detail":"order not found"}`))
+		}
+	}))
+	defer inventory.Close()
+	h := &Handlers{Pool: pool, Issuer: auth.NewIssuer(strings.Repeat("s", 32), time.Hour), InventoryURL: inventory.URL}
+	call := func(hf http.HandlerFunc, method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "text/plain") // a page skipping the preflight
+		if i := strings.Index(path, "/public/orders/"); i >= 0 {
+			r.SetPathValue("id", strings.SplitN(path[i+len("/public/orders/"):], "?", 2)[0])
+		}
+		w := httptest.NewRecorder()
+		hf(w, r)
+		return w
+	}
+
+	w := call(h.Quote, "POST", "/public/quote?key="+key, `{"lines":[{"product_id":"p1","quantity":2}]}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"currency":"KES"`) || !strings.Contains(gotBody, `"quantity":2`) {
+		t.Fatalf("quote: %d %s (inventory got %s)", w.Code, w.Body, gotBody)
+	}
+	if w := call(h.Quote, "POST", "/public/quote?key="+key, `not json`); w.Code != 400 {
+		t.Fatalf("bad body: %d", w.Code)
+	}
+	w = call(h.PlaceOrder, "POST", "/public/orders?key="+key, `{"lines":[]}`)
+	if w.Code != 409 || !strings.Contains(w.Body.String(), `"reason":"not enough in stock"`) || !strings.Contains(w.Body.String(), `"error":"some items can't be ordered"`) {
+		t.Fatalf("refused order: %d %s", w.Code, w.Body)
+	}
+	w = call(h.Track, "GET", "/public/orders/11111111-2222-3333-4444-555555555555?key="+key+"&token=tok", "")
+	if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" || !strings.Contains(w.Body.String(), `"number":"W1"`) {
+		t.Fatalf("track: %d %s", w.Code, w.Body)
+	}
+	if w := call(h.Track, "GET", "/public/orders/11111111-2222-3333-4444-555555555555?key="+key+"&token=nope", ""); w.Code != 404 {
+		t.Fatalf("wrong token: %d", w.Code)
+	}
+	for i := 0; i < orderPerMinute-1; i++ {
+		call(h.PlaceOrder, "POST", "/public/orders?key="+key, `{}`)
+	}
+	if w := call(h.PlaceOrder, "POST", "/public/orders?key="+key, `{}`); w.Code != 429 {
+		t.Fatalf("order flood not limited: %d", w.Code)
+	}
+}

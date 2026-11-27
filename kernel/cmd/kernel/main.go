@@ -197,6 +197,9 @@ func main() {
 	mux.Handle("DELETE /orgs/shop-keys/{id}", requireAuth(http.HandlerFunc(shopHandlers.Revoke)))
 	mux.HandleFunc("GET /public/catalog", shopHandlers.Catalog)
 	mux.HandleFunc("GET /public/catalog/products/{id}/image", shopHandlers.Image)
+	mux.HandleFunc("POST /public/quote", shopHandlers.Quote)
+	mux.HandleFunc("POST /public/orders", shopHandlers.PlaceOrder)
+	mux.HandleFunc("GET /public/orders/{id}", shopHandlers.Track)
 	mux.Handle("GET /orgs/settings", requireAuth(http.HandlerFunc(orgSettings.Get)))
 	mux.Handle("PUT /orgs/settings", requireAuth(http.HandlerFunc(orgSettings.Put)))
 	orgEtims := &org.Etims{Pool: pool, InternalToken: eventsToken, Automation: os.Getenv("ETIMS_AUTOMATION") == "1"}
@@ -379,6 +382,11 @@ func main() {
 func withCORS(origin string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
+		if strings.HasPrefix(r.URL.Path, "/public/") {
+			// A shop's pages, on their own sites; the handlers check the
+			// key's sites before any data goes out (internal/shop).
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Pos-Device")
 		w.Header().Add("Vary", "Origin")
