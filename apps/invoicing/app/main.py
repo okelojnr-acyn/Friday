@@ -26,7 +26,8 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import pay_requests
+from . import pay_requests, statements
+from .credit import _owed, _unpaid
 from .credit import customer_by_name, rebook_ref
 from .credit import router as credit_router
 from .events import invoice_lines_payload, publish_invoice_paid, publish_pos_sale_recorded
@@ -48,6 +49,7 @@ from .schemas import (
     CustomerBulkCreate,
     CustomerCreate,
     CustomerOut,
+    CustomerUpdate,
     InvoiceCreate,
     InvoiceOut,
     InvoiceStatusUpdate,
@@ -88,6 +90,7 @@ resource(
             FieldSpec("company", "Company", "text"),
             FieldSpec("email", "Email", "email"),
             FieldSpec("payment_terms_days", "Payment terms (days)", "number", help="Days this customer has to pay. An invoice's due date is the issue date plus this; 0 means pay on receipt."),
+            FieldSpec("credit_limit_cents", "Credit limit", "currency", list_visible=False, help="The most this customer may owe on credit sales at the till or through Guss. Leave it empty or 0 for no limit. Invoices you send aren't limited."),
             FieldSpec("created_at", "Added", "datetime", form_visible=False),
         ),
     )
@@ -259,6 +262,42 @@ async def create_customer(
     return customer
 
 
+async def _customer(session: AsyncSession, principal: Principal, customer_id: uuid.UUID) -> Customer:
+    customer = await session.get(Customer, customer_id)
+    if customer is None or str(customer.org_id) != principal.org_id:
+        raise HTTPException(404, "customer not found")
+    return customer
+
+
+@customers_router.get("/{customer_id}", response_model=CustomerOut)
+async def get_customer(
+    customer_id: uuid.UUID,
+    principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("customers.read")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    return await _customer(session, principal, customer_id)
+
+
+@customers_router.patch("/{customer_id}", response_model=CustomerOut)
+async def update_customer(
+    customer_id: uuid.UUID,
+    body: CustomerUpdate,
+    principal: Principal = Depends(get_current_principal),
+    _scope: Scope = Depends(require("customers.write")),
+    session: AsyncSession = Depends(get_org_session),
+):
+    """Edits a customer (the form had nowhere to save to before)."""
+    customer = await _customer(session, principal, customer_id)
+    for key, value in body.model_dump(exclude_unset=True).items():
+        if value is None and key != "credit_limit_cents":
+            continue  # None clears only the credit limit
+        setattr(customer, key, value)
+    await session.commit()
+    await session.refresh(customer)
+    return customer
+
+
 @customers_router.post("/bulk", response_model=list[CustomerOut], status_code=201)
 async def bulk_create_customers(
     body: CustomerBulkCreate,
@@ -413,6 +452,8 @@ async def set_invoice_status(
         inv.issued_at = inv.updated_at
     if body.status == "void":
         await pay_requests.cancel(principal.org_id, inv)  # so it can't be paid now
+    if newly_sent:
+        await statements.schedule_reminders(session, principal.org_id, inv)
     await session.commit()
     await session.refresh(inv, attribute_names=["lines", "payments"])
     if newly_sent:
@@ -787,6 +828,17 @@ async def record_pos_sale(
         customer = await customer_by_name(session, principal, str(body.get("customer_name") or ""), create=True)
         if customer is None:
             raise HTTPException(422, "a credit sale needs the customer's name")
+        # 0 or empty: no limit (as accounting packages read it; a blank form field sends 0).
+        if customer.credit_limit_cents:
+            owed = sum(_owed(i) for i in await _unpaid(session, principal, customer.id))
+            this = int(body.get("amount_cents") or 0)
+            if owed + this > customer.credit_limit_cents:
+                cur = str(body.get("currency") or "")
+                raise HTTPException(
+                    409,
+                    f"{customer.name} owes {owed / 100:,.2f} {cur} already; this sale would pass their credit limit "
+                    f"of {customer.credit_limit_cents / 100:,.2f}. Take payment now, or a manager raises the limit in Customers.",
+                )
     shift_id = None if channel == "guss" else await shift_for_sale(session, principal, body.get("shift_id"))
     # Where it was sold: the till's location (a Guss sale has no till).
     location_id = await till_location(session, shift_id)
@@ -1896,5 +1948,7 @@ app.include_router(paystack_router)
 app.include_router(registers_router)
 app.include_router(etims_router)
 app.include_router(pay_requests.router)
+app.include_router(statements.router)
+app.include_router(statements.hooks)
 app.include_router(webhooks_router)
 app.include_router(external_router)

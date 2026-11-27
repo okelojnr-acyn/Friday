@@ -10,6 +10,17 @@ class CustomerCreate(BaseModel):
     email: str = ""
     company: str = ""
     payment_terms_days: int = 30
+    credit_limit_cents: int | None = Field(default=None, ge=0)
+
+
+class CustomerUpdate(BaseModel):
+    """Only the fields sent change."""
+
+    name: str | None = Field(default=None, min_length=1)
+    email: str | None = None
+    company: str | None = None
+    payment_terms_days: int | None = Field(default=None, ge=0)
+    credit_limit_cents: int | None = Field(default=None, ge=0)
 
 
 class CustomerOut(BaseModel):
@@ -19,6 +30,7 @@ class CustomerOut(BaseModel):
     email: str
     company: str
     payment_terms_days: int
+    credit_limit_cents: int | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

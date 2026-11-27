@@ -96,6 +96,8 @@ var subscriptions = []subscription{
 	{Event: "projects.task.due", App: "projects", WebhookPath: "/internal/webhooks/task-due"},
 	// Scheduled after a pay request is sent: Invoicing asks the provider if it's paid.
 	{Event: "invoicing.pay_request.check", App: "invoicing", WebhookPath: "/internal/webhooks/pay-request-check"},
+	// Scheduled 1, 7 and 14 days after a sent invoice falls due: Invoicing reminds the customer if it's still owed.
+	{Event: "invoicing.invoice.remind", App: "invoicing", WebhookPath: "/internal/webhooks/invoice-remind"},
 }
 
 
