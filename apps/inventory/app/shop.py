@@ -218,3 +218,24 @@ async def track_order(
     if order is None or str(order.org_id) != principal.org_id or not secrets.compare_digest(order.token_hash, _token_hash(token)):
         raise HTTPException(404, "order not found")
     return _view(order)
+
+
+@router.get("/orders/{order_id}/checkout")
+async def order_for_checkout(
+    order_id: uuid.UUID, token: str, principal: Principal = Depends(shop_only), session: AsyncSession = Depends(get_org_session)
+):
+    """What the kernel needs to take payment: the stored lines (with
+    product ids, so the sale takes the stock) and how to reach the buyer."""
+    order = await session.get(ShopOrder, order_id)
+    if order is None or str(order.org_id) != principal.org_id or not secrets.compare_digest(order.token_hash, _token_hash(token)):
+        raise HTTPException(404, "order not found")
+    return {
+        **_view(order),
+        "email": order.email,
+        "phone": order.phone,
+        "lines": [
+            {"product_id": str(li.product_id) if li.product_id else None, "name": li.name, "variant_name": li.variant_name,
+             "unit_price_cents": li.unit_price_cents, "quantity": li.quantity}
+            for li in order.lines
+        ],
+    }

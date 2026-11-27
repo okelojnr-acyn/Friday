@@ -66,3 +66,22 @@ async def test_the_shop_prices_baskets_and_places_orders_itself(client, principa
     tracked = await client.get(f"/shop/orders/{order['id']}", params={"token": order["token"]})
     assert tracked.status_code == 200 and tracked.json()["number"] == order["number"] and "token" not in tracked.json()
     assert (await client.get(f"/shop/orders/{order['id']}", params={"token": "guess"})).status_code == 404
+
+
+async def test_a_paid_order_takes_the_stock_and_shows_paid(client, principal, as_principal, kernel_auth_header):
+    tea = (await client.post("/products", json={"name": "Tea 500g", "price_cents": 35000, "on_hand_qty": 5})).json()
+    as_principal(as_shop(principal))
+    order = (await client.post("/shop/orders", json={"customer_name": "Wanjiru", "phone": "0711 111 111", "fulfilment": "pickup", "lines": [{"product_id": tea["id"], "quantity": 2}]})).json()
+    checkout = (await client.get(f"/shop/orders/{order['id']}/checkout", params={"token": order["token"]})).json()
+    assert checkout["lines"][0]["product_id"] == tea["id"] and checkout["phone"] == "0711 111 111"
+    assert (await client.get(f"/shop/orders/{order['id']}/checkout", params={"token": "x"})).status_code == 404
+
+    # Invoicing's settle publishes the sale with the order id.
+    sale = {"id": "evt-shop-1", "org_id": principal.org_id, "payload": {
+        "invoice_number": "WEB-" + order["number"], "shop_order_id": order["id"],
+        "lines": [{"product_id": tea["id"], "quantity": 2}]}}
+    assert (await client.post("/internal/webhooks/pos-sale", headers=kernel_auth_header, json=sale)).status_code == 204
+    tracked = (await client.get(f"/shop/orders/{order['id']}", params={"token": order["token"]})).json()
+    assert tracked["status"] == "paid"
+    as_principal(principal)
+    assert (await client.get(f"/products/{tea['id']}")).json()["on_hand_qty"] == 3

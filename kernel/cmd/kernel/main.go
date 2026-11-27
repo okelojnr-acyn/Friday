@@ -188,8 +188,11 @@ func main() {
 	// Online shop (internal/shop): keys for owners, a public catalogue.
 	shopHandlers := &shop.Handlers{Pool: pool, Issuer: issuer}
 	for _, app := range apps {
-		if app.Name == "inventory" {
+		switch app.Name {
+		case "inventory":
 			shopHandlers.InventoryURL = app.BaseURL
+		case "invoicing":
+			shopHandlers.InvoicingURL = app.BaseURL
 		}
 	}
 	mux.Handle("GET /orgs/shop-keys", requireAuth(http.HandlerFunc(shopHandlers.List)))
@@ -200,6 +203,7 @@ func main() {
 	mux.HandleFunc("POST /public/quote", shopHandlers.Quote)
 	mux.HandleFunc("POST /public/orders", shopHandlers.PlaceOrder)
 	mux.HandleFunc("GET /public/orders/{id}", shopHandlers.Track)
+	mux.HandleFunc("POST /public/orders/{id}/pay", shopHandlers.Pay)
 	mux.Handle("GET /orgs/settings", requireAuth(http.HandlerFunc(orgSettings.Get)))
 	mux.Handle("PUT /orgs/settings", requireAuth(http.HandlerFunc(orgSettings.Put)))
 	orgEtims := &org.Etims{Pool: pool, InternalToken: eventsToken, Automation: os.Getenv("ETIMS_AUTOMATION") == "1"}

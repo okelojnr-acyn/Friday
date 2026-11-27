@@ -210,3 +210,70 @@ func TestShopQuoteOrderAndTrack(t *testing.T) {
 		t.Fatalf("order flood not limited: %d", w.Code)
 	}
 }
+
+func TestShopPayUsesTheStoredOrder(t *testing.T) {
+	dsn := os.Getenv("KERNEL_TEST_DATABASE_URL")
+	if dsn == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("KERNEL_TEST_DATABASE_URL must be set in CI")
+		}
+		t.Skip("KERNEL_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err := db.Migrate(ctx, pool, "../../migrations"); err != nil {
+		t.Fatal(err)
+	}
+	n := time.Now().UnixNano()
+	var orgID, userID string
+	pool.QueryRow(ctx, `INSERT INTO core.orgs (name, slug, currency) VALUES ('Duka', $1, 'KES') RETURNING id::text`, fmt.Sprintf("duka3-%d", n)).Scan(&orgID)
+	pool.QueryRow(ctx, `INSERT INTO core.users (email) VALUES ($1) RETURNING id::text`, fmt.Sprintf("owner%d@duka.test", n)).Scan(&userID)
+	pool.Exec(ctx, `INSERT INTO core.memberships (org_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'owner')`, orgID, userID)
+	key := fmt.Sprintf("fpk_pay%d", n)
+	pool.Exec(ctx, `INSERT INTO core.shop_keys (org_id, name, key) VALUES ($1::uuid, 'Web', $2)`, orgID, key)
+
+	status := "placed"
+	inventory := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/shop/orders/11111111-2222-3333-4444-555555555555/checkout" && r.URL.Query().Get("token") == "tok" {
+			fmt.Fprintf(w, `{"number":"W1","status":%q,"total_cents":70000,"email":"","lines":[{"product_id":"p1","quantity":2,"unit_price_cents":35000}]}`, status)
+			return
+		}
+		w.WriteHeader(404)
+		w.Write([]byte(`{"detail":"order not found"}`))
+	}))
+	defer inventory.Close()
+	var sent map[string]any
+	invoicing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&sent)
+		w.WriteHeader(201)
+		w.Write([]byte(`{"redirect_url":"https://checkout.paystack.com/x","invoice_number":"WEB-W1"}`))
+	}))
+	defer invoicing.Close()
+	h := &Handlers{Pool: pool, Issuer: auth.NewIssuer(strings.Repeat("s", 32), time.Hour), InventoryURL: inventory.URL, InvoicingURL: invoicing.URL}
+	pay := func(token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/public/orders/x/pay?key="+key+"&token="+token, strings.NewReader(`{"total_cents":1,"lines":[]}`))
+		r.SetPathValue("id", "11111111-2222-3333-4444-555555555555")
+		w := httptest.NewRecorder()
+		h.Pay(w, r)
+		return w
+	}
+	w := pay("tok")
+	if w.Code != 201 || !strings.Contains(w.Body.String(), "checkout.paystack.com") {
+		t.Fatalf("pay: %d %s", w.Code, w.Body)
+	}
+	if sent["total_cents"] != float64(70000) || sent["currency"] != "KES" || sent["fallback_email"] != fmt.Sprintf("owner%d@duka.test", n) ||
+		sent["order_id"] != "11111111-2222-3333-4444-555555555555" || len(sent["lines"].([]any)) != 1 {
+		t.Fatalf("Invoicing got %v (the page's body must be ignored)", sent)
+	}
+	if w := pay("wrong"); w.Code != 404 {
+		t.Fatalf("wrong token: %d", w.Code)
+	}
+	status = "paid"
+	if w := pay("tok"); w.Code != 409 {
+		t.Fatalf("paid order paid again: %d", w.Code)
+	}
+}
