@@ -179,7 +179,6 @@ export function StorePage() {
         </div>
       </div>
 
-      <div className="dashboard-section-title">Overview</div>
       <div className="dashboard-layout" style={{ marginBottom: 24 }}>
         <div className="dashboard-hero">
           {can("crm") ? (
