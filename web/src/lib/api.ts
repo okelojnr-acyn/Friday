@@ -145,6 +145,8 @@ export function pluralize(name: string): string {
 const PATH_OVERRIDES: Record<string, string> = {
   "inventory.unit_of_measure": "units_of_measure",
   "invoicing.pos_shift": "pos/shifts",
+  // People > Time off answered "Not Found" (time_offs), 27 Nov.
+  "minions.time_off": "time_off",
 };
 
 export function resourceBasePath(app: string, resourceName: string): string {

@@ -155,6 +155,34 @@
 .table tbody tr:hover {
   background: var(--surface);
 }
+.table tbody tr:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* A day's heading in a list by date ("Today", "Mon, 24 Nov"). */
+.table tr.row-day {
+  cursor: default;
+}
+.table tr.row-day:hover {
+  background: none;
+}
+.table tr.row-day th {
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.table td.cell-clamp {
+  min-width: 18ch;
+  max-width: 42ch;
+}
+.table td.cell-clamp > .clamp-2 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
 .table td.cell-currency,
 .table th.col-currency {
   text-align: right;
