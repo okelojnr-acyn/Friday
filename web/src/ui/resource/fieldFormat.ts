@@ -28,9 +28,9 @@ export function formatCellValue(field: FieldSpec, value: unknown, record?: Recor
     case "boolean":
       return value ? "Yes" : "No";
     case "date":
-      return typeof value === "string" ? new Date(value).toLocaleDateString() : String(value);
+      return typeof value === "string" ? shortDate(value, false) : String(value);
     case "datetime":
-      return typeof value === "string" ? new Date(value).toLocaleString() : String(value);
+      return typeof value === "string" ? shortDate(value, true) : String(value);
     default:
       return String(value);
   }
@@ -93,4 +93,19 @@ export function sumCents(records: { [key: string]: unknown }[], field: FieldSpec
     const v = r[field.name];
     return total + (typeof v === "number" ? v : 0);
   }, 0);
+}
+
+/** "27 Nov 2026" / "27 Nov, 14:12" (the year only when it isn't this one):
+ * full locale strings with seconds pushed lists wider than the screen. */
+export function shortDate(iso: string, withTime: boolean): string {
+  // A bare YYYY-MM-DD is a calendar day: read it as local, not UTC midnight.
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T00:00` : iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const thisYear = d.getFullYear() === new Date().getFullYear();
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(withTime ? (thisYear ? {} : { year: "numeric" as const }) : { year: "numeric" as const }),
+    ...(withTime ? { hour: "2-digit" as const, minute: "2-digit" as const } : {}),
+  }).format(d);
 }
