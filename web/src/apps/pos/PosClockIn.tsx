@@ -1,6 +1,7 @@
 import { IdleLock, IDLE_MS } from "./IdleLock";
 import { fetchMyPermissions, forgetMyPermissions } from "../../lib/permissions";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { takeFreshSignIn } from "../../lib/session";
 import { Navigate } from "react-router-dom";
 import { browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { useAuth } from "../../lib/auth";
@@ -48,6 +49,14 @@ function PosClockInGate() {
   const [refused, setRefused] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
   const lastActive = useRef(Date.now());
+
+  // Just signed in on this till (fingerprint or code): that was the
+  // clock-in. Only the permission check is left.
+  useEffect(() => {
+    if (session && takeFreshSignIn()) void admit();
+    // Once, on arriving from the sign-in page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Only someone who may sell clocks in at the till (plan 20.3): owners
   // and managers, and staff with the cashier job. The apps refuse a sale

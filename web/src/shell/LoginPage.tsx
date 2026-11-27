@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { browserSupportsWebAuthn } from "@simplewebauthn/browser";
+import { markSignedInNow } from "../lib/session";
 import { useAuth } from "../lib/auth";
 import { ApiError } from "../lib/api";
 import { Button } from "../ui/Button";
@@ -29,6 +30,7 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       await loginWithPasskey();
+      markSignedInNow();
       navigate("/");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not sign in with that passkey");
@@ -57,6 +59,7 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       await verifyCode(email, code);
+      markSignedInNow();
       // Signed in with a code: no passkey for this address on this device
       // (a new phone, or this Friday moved to a new domain). Offer one.
       if (browserSupportsWebAuthn()) setMode("add-passkey");
