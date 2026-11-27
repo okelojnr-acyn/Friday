@@ -339,3 +339,35 @@ func forgetAccess(orgID, userID string) {
 	delete(accessCache.m, orgID+":"+userID)
 	accessCache.Unlock()
 }
+
+var suspendCache = struct {
+	sync.Mutex
+	m map[string]cachedSuspend
+}{m: map[string]cachedSuspend{}}
+
+type cachedSuspend struct {
+	on      bool
+	checked time.Time
+}
+
+// OrgSuspended: the business is suspended (`kernel suspend`). Checked at
+// most every checkEvery per org; a database hiccup says no.
+func (s *Sessions) OrgSuspended(ctx context.Context, orgID string) bool {
+	suspendCache.Lock()
+	c, ok := suspendCache.m[orgID]
+	suspendCache.Unlock()
+	if ok && time.Since(c.checked) < checkEvery {
+		return c.on
+	}
+	var on bool
+	if err := s.Pool.QueryRow(ctx, `SELECT suspended_at IS NOT NULL FROM core.orgs WHERE id::text = $1`, orgID).Scan(&on); err != nil {
+		return false
+	}
+	suspendCache.Lock()
+	if len(suspendCache.m) > 10000 {
+		suspendCache.m = map[string]cachedSuspend{}
+	}
+	suspendCache.m[orgID] = cachedSuspend{on: on, checked: time.Now()}
+	suspendCache.Unlock()
+	return on
+}

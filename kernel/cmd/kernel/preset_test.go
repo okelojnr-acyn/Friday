@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/acyn-innovation/friday/kernel/internal/auth"
 	"github.com/acyn-innovation/friday/kernel/internal/db"
 	"github.com/acyn-innovation/friday/kernel/internal/org"
 	"github.com/acyn-innovation/friday/kernel/internal/registry"
@@ -133,5 +134,47 @@ func TestBootstrapRespectsOrgCap(t *testing.T) {
 	t.Setenv("MAX_ORGS", fmt.Sprint(n+1000)) // other tests add orgs meanwhile
 	if _, created, err := bootstrap(ctx, pool, "Second Shop", "other"+owner, ""); err != nil || !created {
 		t.Fatalf("under the cap: %v %v", created, err)
+	}
+}
+
+// `kernel suspend` blocks a business (the auth middleware's check) and
+// lifting it clears the mark; an unknown org is an error.
+func TestSuspendABusiness(t *testing.T) {
+	dsn := os.Getenv("KERNEL_TEST_DATABASE_URL")
+	if dsn == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("KERNEL_TEST_DATABASE_URL must be set in CI")
+		}
+		t.Skip("KERNEL_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err := db.Migrate(ctx, pool, "../../migrations"); err != nil {
+		t.Fatal(err)
+	}
+	orgID, _, err := bootstrap(ctx, pool, "Lapsed Shop", fmt.Sprintf("lapsed%d@x.test", time.Now().UnixNano()), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := suspend(ctx, pool, orgID, true); err != nil {
+		t.Fatal(err)
+	}
+	if !(&auth.Sessions{Pool: pool}).OrgSuspended(ctx, orgID) {
+		t.Fatal("suspended business not seen as suspended")
+	}
+	if err := suspend(ctx, pool, orgID, false); err != nil {
+		t.Fatal(err)
+	}
+	var on bool
+	pool.QueryRow(ctx, `SELECT suspended_at IS NOT NULL FROM core.orgs WHERE id = $1`, orgID).Scan(&on)
+	if on {
+		t.Fatal("still suspended after off")
+	}
+	if err := suspend(ctx, pool, "00000000-0000-0000-0000-000000000000", true); err == nil {
+		t.Fatal("unknown org suspended")
 	}
 }
