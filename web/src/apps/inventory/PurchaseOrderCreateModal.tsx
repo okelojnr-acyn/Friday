@@ -53,7 +53,7 @@ interface PurchaseOrderCreateModalProps {
   onSaved: (record: RecordRow) => void;
 }
 
-/** Same shape as InvoiceCreateModal, same reason: a supplier and line
+/** A supplier and line
  * items up front aren't a flat field list, so this doesn't go through
  * the generic FormView either (see ARCHITECTURE.md's schema-driven UI
  * contract on when a resource earns a hand-written create screen). */

@@ -1,7 +1,6 @@
 import type { ComponentType } from "react";
 import type { RecordRow } from "../lib/types";
-import { QuoteCreateModal } from "../apps/invoicing/InvoiceCreateModal";
-import { GoToInvoiceEditor } from "../apps/invoicing/InvoiceEditorPage";
+import { GoToInvoiceEditor, GoToQuoteEditor } from "../apps/invoicing/InvoiceEditorPage";
 import { PurchaseOrderCreateModal } from "../apps/inventory/PurchaseOrderCreateModal";
 
 export interface CustomCreateProps {
@@ -18,6 +17,7 @@ export interface CustomCreateProps {
 export const CUSTOM_CREATE_SCREENS: Record<string, ComponentType<CustomCreateProps>> = {
   // Invoices get the full editor with a live preview (plan 18.4 step 4).
   "invoicing.invoice": GoToInvoiceEditor,
-  "invoicing.quote": QuoteCreateModal,
+  // Quotes get the same editor (roadmap item 6).
+  "invoicing.quote": GoToQuoteEditor,
   "inventory.purchase_order": PurchaseOrderCreateModal,
 };
