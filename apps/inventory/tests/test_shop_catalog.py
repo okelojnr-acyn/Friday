@@ -35,3 +35,34 @@ async def test_the_shop_sees_prices_and_stock_never_costs(client, principal, as_
 
     # Other routes refuse a shop session.
     assert (await client.get("/products")).status_code in (401, 403)
+
+
+async def test_the_shop_prices_baskets_and_places_orders_itself(client, principal, as_principal):
+    tea = (await client.post("/products", json={"name": "Tea 500g", "price_cents": 35000, "on_hand_qty": 3})).json()
+    gone = (await client.post("/products", json={"name": "Rice 2kg", "price_cents": 40000})).json()
+    delivery = (await client.post("/products", json={"name": "Delivery", "kind": "service", "price_cents": 20000})).json()
+    staff_view = await client.get("/products")
+    assert staff_view.status_code == 200
+    as_principal(as_shop(principal))
+
+    # The page's prices are never used; Inventory's are.
+    q = (await client.post("/shop/quote", json={"lines": [{"product_id": tea["id"], "quantity": 2, "unit_price_cents": 1}, {"product_id": delivery["id"], "quantity": 1}]})).json()
+    assert q["total_cents"] == 2 * 35000 + 20000 and q["problems"] == []
+    q = (await client.post("/shop/quote", json={"lines": [{"product_id": tea["id"], "quantity": 4}, {"product_id": gone["id"], "quantity": 1}]})).json()
+    assert {p["reason"] for p in q["problems"]} == {"not enough in stock"} and len(q["problems"]) == 2
+
+    base = {"customer_name": "Wanjiru", "phone": "0711 111 111", "fulfilment": "pickup", "lines": [{"product_id": tea["id"], "quantity": 2}]}
+    assert (await client.post("/shop/orders", json={**base, "phone": ""})).status_code == 422, "no way to reach them"
+    assert (await client.post("/shop/orders", json={**base, "fulfilment": "delivery"})).status_code == 422, "no address"
+    r = await client.post("/shop/orders", json={**base, "lines": [{"product_id": gone["id"], "quantity": 1}]})
+    assert r.status_code == 409
+
+    r = await client.post("/shop/orders", json=base)
+    assert r.status_code == 201, r.text
+    order = r.json()
+    assert order["total_cents"] == 70000 and order["status"] == "placed" and order["number"].startswith("W") and order["token"]
+    assert order["lines"] == [{"name": "Tea 500g", "variant_name": "", "unit_price_cents": 35000, "quantity": 2, "total_cents": 70000}]
+
+    tracked = await client.get(f"/shop/orders/{order['id']}", params={"token": order["token"]})
+    assert tracked.status_code == 200 and tracked.json()["number"] == order["number"] and "token" not in tracked.json()
+    assert (await client.get(f"/shop/orders/{order['id']}", params={"token": "guess"})).status_code == 404
