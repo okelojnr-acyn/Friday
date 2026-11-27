@@ -2,6 +2,7 @@ import { IdleLock, IDLE_MS } from "./IdleLock";
 import { fetchMyPermissions, forgetMyPermissions } from "../../lib/permissions";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { takeFreshSignIn } from "../../lib/session";
+import { useDemoRoles } from "../../lib/demo";
 import { Navigate } from "react-router-dom";
 import { browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { useAuth } from "../../lib/auth";
@@ -82,8 +83,10 @@ function PosClockInGate() {
   }
 
   // Idle for IDLE_MS: lock over the open order until the same cashier's PIN.
+  // Not on the demo: its cashier has no PIN, so the till just wakes.
+  const demo = useDemoRoles();
   useEffect(() => {
-    if (!clockedIn) return;
+    if (!clockedIn || demo) return;
     const seen = () => {
       lastActive.current = Date.now();
     };
@@ -96,7 +99,7 @@ function PosClockInGate() {
       events.forEach((e) => window.removeEventListener(e, seen));
       window.clearInterval(t);
     };
-  }, [clockedIn]);
+  }, [clockedIn, demo]);
 
   if (!clockedIn || !session) {
     return <ClockInScreen onClockedIn={admit} refused={refused} />;
