@@ -73,7 +73,13 @@ const isoDay = (d: Date) => localDay(d); // the viewer's calendar, not UTC's
  * pattern: one page, the form beside a live preview of what the customer
  * gets; lines picked from products; terms that set the due date; then
  * Save draft or Send, and a clear "done" with the pay link. */
-export function InvoiceEditorPage() {
+export function InvoiceEditorPage({ kind = "invoice" }: { kind?: "invoice" | "quote" } = {}) {
+  // Quotes use the same editor (roadmap item 6): "valid for" instead of
+  // "due", no repeats, no charged-on spends, no pay link.
+  const isQuote = kind === "quote";
+  const Kind = isQuote ? "Quote" : "Invoice";
+  const listPath = isQuote ? "/invoicing/quote" : "/invoicing/invoice";
+  const [validDays, setValidDays] = useState("30");
   const navigate = useNavigate();
   const org = useOrgSettings();
   const defaultTax = org.tax_rate_bp ? String(org.tax_rate_bp / 100) : "";
@@ -103,7 +109,7 @@ export function InvoiceEditorPage() {
 
   useEffect(() => {
     setBillable([]);
-    if (!customerId) return;
+    if (!customerId || isQuote) return;
     api
       .get<BillableSpend[]>(`/api/minions/spends/billable?customer_id=${encodeURIComponent(String(customerId))}`)
       .then(setBillable)
@@ -162,10 +168,27 @@ export function InvoiceEditorPage() {
     const valid = lines.filter((l) => l.description.trim());
     if (!valid.length) return setError("Add at least one item.");
     if (valid.some((l) => Number(l.taxPercent) < 0 || Number(l.taxPercent) > 100)) return setError("Tax must be between 0% and 100%.");
-    if (send && !customerId) return setError("Pick who the invoice is for before sending it.");
+    if (send && !customerId) return setError(`Pick who the ${kind} is for before sending it.`);
     setBusy(send ? "send" : "draft");
     setError(null);
     try {
+      if (isQuote) {
+        const quote = await createRecord("invoicing", "quote", {
+          customer_id: customerId || null,
+          currency,
+          valid_days: Number(validDays) || 30,
+          lines: valid.map((l) => ({
+            description: l.description.trim(),
+            quantity: Number(l.quantity) || 1,
+            unit_price_cents: amountInputToCents(l.unitPrice || "0"),
+            tax_rate_bp: Math.round((Number(l.taxPercent) || 0) * 100),
+            ...(l.productId ? { product_id: l.productId } : {}),
+          })),
+        });
+        const final = send ? await updateRecord("invoicing", "quote", quote.id, { status: "sent" }) : quote;
+        setDone({ invoice: final, sent: send, email: String(customer?.email ?? "") });
+        return;
+      }
       const invoice = await createRecord("invoicing", "invoice", {
         customer_id: customerId || null,
         currency,
@@ -194,7 +217,7 @@ export function InvoiceEditorPage() {
       const final = send ? await updateRecord("invoicing", "invoice", invoice.id, { status: "sent" }) : invoice;
       setDone({ invoice: final, sent: send, email: String(customer?.email ?? "") });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not save the invoice.");
+      setError(err instanceof ApiError ? err.message : `Could not save the ${kind}.`);
     } finally {
       setBusy(null);
     }
@@ -220,17 +243,21 @@ export function InvoiceEditorPage() {
             <Icon name="send" size={22} />
           </span>
           <h1 className="page-title">
-            {sent ? `Invoice ${invoice.number} sent` : `Draft ${invoice.number} saved`}
+            {sent ? `${Kind} ${invoice.number} sent` : `Draft ${invoice.number} saved`}
           </h1>
           <p style={{ margin: 0 }}>
-            {sent
-              ? email
-                ? `We emailed it to ${email}. They can pay from the email.`
-                : "This customer has no email on file, so nothing was emailed. Share the pay link instead."
-              : "It isn't sent yet. Open it from Invoices when you're ready."}
+            {isQuote
+              ? sent
+                ? "It's marked sent. When the customer says yes, open it from Quotes and turn it into an invoice."
+                : "It isn't sent yet. Open it from Quotes when you're ready."
+              : sent
+                ? email
+                  ? `We emailed it to ${email}. They can pay from the email.`
+                  : "This customer has no email on file, so nothing was emailed. Share the pay link instead."
+                : "It isn't sent yet. Open it from Invoices when you're ready."}
           </p>
           {billWarning ? <div className="error-banner">{billWarning}</div> : null}
-          {sent ? (
+          {sent && !isQuote ? (
             <div style={{ display: "grid", gap: 8 }}>
               <Button variant={email ? "secondary" : "primary"} onClick={() => getPayLink(invoice.id)}>
                 {payLink ? "Copied: get it again" : "Copy the pay link"}
@@ -240,8 +267,8 @@ export function InvoiceEditorPage() {
             </div>
           ) : null}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Link to="/invoicing/invoice" className="btn btn-secondary btn-pill">
-              Back to invoices
+            <Link to={listPath} className="btn btn-secondary btn-pill">
+              Back to {isQuote ? "quotes" : "invoices"}
             </Link>
             <Button
               className="btn-pill"
@@ -252,7 +279,7 @@ export function InvoiceEditorPage() {
                 setLines([{ description: "", quantity: "1", unitPrice: "", taxPercent: defaultTax }]);
               }}
             >
-              New invoice
+              New {kind}
             </Button>
           </div>
         </div>
@@ -266,16 +293,16 @@ export function InvoiceEditorPage() {
     <div className="page invoice-editor">
       <div className="page-header">
         <div>
-          <Link to="/invoicing/invoice" className="field-label">
-            ← Invoices
+          <Link to={listPath} className="field-label">
+            ← {isQuote ? "Quotes" : "Invoices"}
           </Link>
-          <h1 className="page-title">New invoice</h1>
+          <h1 className="page-title">New {kind}</h1>
         </div>
       </div>
 
       <div className="invoice-editor-grid">
-        <section className="card card-padded invoice-form" aria-label="Invoice details">
-          <FieldWrap label="Bill to">
+        <section className="card card-padded invoice-form" aria-label={`${Kind} details`}>
+          <FieldWrap label={isQuote ? "For" : "Bill to"}>
             <ReferenceInput field={CUSTOMER_FIELD} value={customerId} onChange={setCustomerId} />
           </FieldWrap>
           {offered.length ? (
@@ -293,15 +320,27 @@ export function InvoiceEditorPage() {
             </div>
           ) : null}
           <div className="invoice-form-row">
-            <FieldWrap label="Due">
-              <Select value={terms} onChange={(e) => setTerms(e.target.value)}>
-                {TERMS.map(([v, label]) => (
-                  <option key={v} value={v}>
-                    {v === "" && customer ? `${label} (${customer.payment_terms_days ?? 0} days)` : label}
-                  </option>
-                ))}
-              </Select>
-            </FieldWrap>
+            {isQuote ? (
+              <FieldWrap label="Valid for">
+                <Select value={validDays} onChange={(e) => setValidDays(e.target.value)}>
+                  {["7", "14", "30", "60", "90"].map((d) => (
+                    <option key={d} value={d}>
+                      {d} days
+                    </option>
+                  ))}
+                </Select>
+              </FieldWrap>
+            ) : (
+              <FieldWrap label="Due">
+                <Select value={terms} onChange={(e) => setTerms(e.target.value)}>
+                  {TERMS.map(([v, label]) => (
+                    <option key={v} value={v}>
+                      {v === "" && customer ? `${label} (${customer.payment_terms_days ?? 0} days)` : label}
+                    </option>
+                  ))}
+                </Select>
+              </FieldWrap>
+            )}
             <FieldWrap label="Currency">
               <Select value={currency} onChange={(e) => setCurrency(e.target.value)}>
                 {[...new Set([currency, ...CURRENCIES])].map((c) => (
@@ -346,6 +385,7 @@ export function InvoiceEditorPage() {
             </Button>
           </div>
 
+          {isQuote ? null : (
           <details className="invoice-more">
             <summary>More options</summary>
             <FieldWrap label="Repeats">
@@ -357,23 +397,26 @@ export function InvoiceEditorPage() {
               </Select>
             </FieldWrap>
           </details>
+          )}
         </section>
 
         <aside className="invoice-preview" aria-label="What the customer sees">
           <div className="invoice-paper">
             <div className="invoice-paper-head">
               <strong>{org.name || "Your business"}</strong>
-              <span className="invoice-paper-kind">Invoice</span>
+              <span className="invoice-paper-kind">{Kind}</span>
             </div>
             <div className="invoice-paper-meta">
               <div>
-                <div className="field-label">Bill to</div>
+                <div className="field-label">{isQuote ? "For" : "Bill to"}</div>
                 <div>{customer ? String(customer.name) : "—"}</div>
                 {customer?.email ? <div className="field-label">{String(customer.email)}</div> : null}
               </div>
               <div style={{ textAlign: "right" }}>
                 <div className="field-label">Issued {fullDate(new Date(), false)}</div>
-                <div className="field-label">Due {termsDays ? fullDate(due, false) : "on receipt"}</div>
+                <div className="field-label">
+                  {isQuote ? `Valid until ${fullDate(addDays(Number(validDays) || 30), false)}` : `Due ${termsDays ? fullDate(due, false) : "on receipt"}`}
+                </div>
               </div>
             </div>
             <table className="invoice-paper-lines">
@@ -395,7 +438,7 @@ export function InvoiceEditorPage() {
               <span className="num">{money(totals.net)}</span>
               <span>Tax</span>
               <span className="num">{money(totals.tax)}</span>
-              <strong>Total due</strong>
+              <strong>{isQuote ? "Total" : "Total due"}</strong>
               <strong className="num">{money(totals.net + totals.tax)}</strong>
             </div>
           </div>
@@ -404,14 +447,14 @@ export function InvoiceEditorPage() {
 
       <div className="invoice-actions">
         {error ? <div className="error-banner" role="alert">{error}</div> : null}
-        <Button variant="ghost" className="btn-pill" onClick={() => navigate("/invoicing/invoice")}>
+        <Button variant="ghost" className="btn-pill" onClick={() => navigate(listPath)}>
           Cancel
         </Button>
         <Button className="btn-pill" disabled={!!busy} onClick={() => save(false)}>
           {busy === "draft" ? "Saving…" : "Save draft"}
         </Button>
         <Button variant="primary" className="btn-pill" disabled={!!busy} onClick={() => save(true)}>
-          <Icon name="send" size={14} /> {busy === "send" ? "Sending…" : "Send invoice"}
+          <Icon name="send" size={14} /> {busy === "send" ? "Sending…" : `Send ${kind}`}
         </Button>
       </div>
     </div>
@@ -423,6 +466,14 @@ export function GoToInvoiceEditor() {
   const navigate = useNavigate();
   useEffect(() => {
     navigate("/invoicing/invoice/new");
+  }, [navigate]);
+  return null;
+}
+
+export function GoToQuoteEditor() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    navigate("/invoicing/quote/new");
   }, [navigate]);
   return null;
 }
