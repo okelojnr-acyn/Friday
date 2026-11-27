@@ -56,6 +56,8 @@ async def publish_pos_sale_recorded(org_id: str, inv: Invoice, charged_cents: in
             "cashier_email": inv.cashier_email,
             # The till's location: Inventory takes the stock from there.
             "location_id": str(inv.location_id) if inv.location_id else None,
+            # An online shop order (source "shop"): Inventory marks it paid.
+            **({"shop_order_id": inv.source_ref} if getattr(inv, "source", "") == "shop" else {}),
             "lines": [
                 {
                     "product_id": str(line.product_id),

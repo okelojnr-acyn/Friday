@@ -412,3 +412,51 @@ async def test_an_event_that_isnt_fridays_goes_on_only_to_the_business_it_belong
     forged = {**headers, "x-paystack-signature": "0" * 128}
     await client.post("/external/webhooks/paystack", content=raw, headers=forged)
     assert sent == []
+
+
+async def test_an_online_shop_order_is_paid_like_a_till_sale(client, principal, as_principal, paystack, monkeypatch):
+    """Commerce slice 3: the kernel sends the order Inventory stored; the
+    shopper pays on the business's Paystack; settling publishes the sale
+    (stock, books) with the order id so Inventory marks it paid."""
+    from friday_common import Principal
+
+    async def no_vat(org_id):
+        return {"vat_registered": False}
+
+    events = []
+
+    async def capture(event_type, org_id, payload, **kw):
+        events.append((event_type, payload))
+
+    monkeypatch.setattr("app.main.get_etims_config", no_vat)
+    monkeypatch.setattr("app.events.publish_event", capture)
+    order_id = "11111111-2222-3333-4444-555555555555"
+    body = {
+        "order_id": order_id,
+        "number": "W1A2B3C4D",
+        "total_cents": 70000,
+        "currency": "KES",
+        "email": "",
+        "fallback_email": "owner@duka.test",
+        "lines": [{"product_id": "66666666-7777-8888-9999-000000000000", "name": "Tea 500g", "variant_name": "", "quantity": 2, "unit_price_cents": 35000}],
+    }
+    assert (await client.post("/shop/checkout", json=body)).status_code == 403, "staff sessions can't"
+    as_principal(Principal(user_id="shop:k1", org_id=principal.org_id, role="shop", email="", via="shop"))
+    assert (await client.post("/shop/checkout", json={**body, "total_cents": 1})).status_code == 422, "total must match the lines"
+
+    r = await client.post("/shop/checkout", json=body)
+    assert r.status_code == 201, r.text
+    assert r.json()["redirect_url"].startswith("https://checkout.paystack.com/") and r.json()["invoice_number"] == "WEB-W1A2B3C4D"
+    amount, currency, meta = paystack["started"][-1]
+    assert (amount, currency, meta["email"]) == (70000, "KES", "owner@duka.test")
+    # Abandoned and retried: the same invoice, a fresh reference.
+    again = await client.post("/shop/checkout", json=body)
+    assert again.json()["invoice_number"] == "WEB-W1A2B3C4D" and paystack["started"][-1][2]["reference"] != meta["reference"]
+
+    reference = paystack["started"][-1][2]["reference"]
+    paystack["verified"][reference] = {"status": "success", "amount": 70000, "currency": "KES", "channel": "mobile_money"}
+    raw, headers = _signed({"event": "charge.success", "data": {"reference": reference}})
+    assert (await client.post("/external/webhooks/paystack", content=raw, headers=headers)).status_code == 200
+    sale = [p for t, p in events if t == "invoicing.pos_sale.recorded"]
+    assert sale and sale[0]["shop_order_id"] == order_id and sale[0]["lines"][0]["quantity"] == 2
+    assert (await client.post("/shop/checkout", json=body)).status_code == 409, "already paid"

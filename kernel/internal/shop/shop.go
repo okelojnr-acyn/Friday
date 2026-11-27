@@ -39,9 +39,9 @@ const perMinute = 600
 type Handlers struct {
 	Pool   *pgxpool.Pool
 	Issuer *auth.Issuer
-	// InventoryURL is Inventory's own address (registry BaseURL).
-	InventoryURL string
-	HTTP         *http.Client
+	// InventoryURL and InvoicingURL are the apps' own addresses (registry).
+	InventoryURL, InvoicingURL string
+	HTTP                       *http.Client
 
 	mu     sync.Mutex
 	window time.Time
@@ -262,6 +262,11 @@ func containsFold(list []string, s string) bool {
 // inventory asks Inventory's /shop/* for the key's business (GET, or
 // POST with a JSON body).
 func (h *Handlers) inventory(ctx context.Context, k keyInfo, path string, body ...[]byte) (*http.Response, error) {
+	return h.app(ctx, k, h.InventoryURL, path, body...)
+}
+
+// app asks an app's /shop/* (Inventory, Invoicing) for the key's business.
+func (h *Handlers) app(ctx context.Context, k keyInfo, base, path string, body ...[]byte) (*http.Response, error) {
 	token, err := h.Issuer.IssueVia("shop:"+k.id, k.orgID, Via, "", Via, nil, time.Minute) // role "shop" matches no staff permission
 	if err != nil {
 		return nil, err
@@ -270,7 +275,7 @@ func (h *Handlers) inventory(ctx context.Context, k keyInfo, path string, body .
 	if len(body) > 0 {
 		method, rd = http.MethodPost, bytes.NewReader(body[0])
 	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(h.InventoryURL, "/")+path, rd)
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(base, "/")+path, rd)
 	if err != nil {
 		return nil, err
 	}
@@ -421,4 +426,63 @@ func (h *Handlers) Track(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 	w.Header().Set("Cache-Control", "no-store")
 	h.relay(w, k, resp)
+}
+
+// Pay (POST /public/orders/{id}/pay?key=&token=): a Paystack checkout on
+// the business's own account for the order Inventory stored (never the
+// page's prices). Returns {"redirect_url"}; paying settles it like a till
+// sale, and the order shows as paid.
+func (h *Handlers) Pay(w http.ResponseWriter, r *http.Request) {
+	k, ok := h.public(w, r)
+	if !ok {
+		return
+	}
+	if !h.allowN(k.id+":order", orderPerMinute) {
+		writeError(w, http.StatusTooManyRequests, "too many payments from this shop; try again in a minute")
+		return
+	}
+	id, token := r.PathValue("id"), r.URL.Query().Get("token")
+	if len(id) != 36 || token == "" || len(token) > 100 {
+		writeError(w, http.StatusNotFound, "order not found")
+		return
+	}
+	resp, err := h.inventory(r.Context(), k, "/shop/orders/"+url.PathEscape(id)+"/checkout?token="+url.QueryEscape(token))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "the shop isn't reachable")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		h.relay(w, k, resp)
+		return
+	}
+	var order struct {
+		Number     string            `json:"number"`
+		Status     string            `json:"status"`
+		TotalCents int64             `json:"total_cents"`
+		Email      string            `json:"email"`
+		Lines      []json.RawMessage `json:"lines"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&order); err != nil {
+		writeError(w, http.StatusBadGateway, "the shop didn't answer clearly")
+		return
+	}
+	if order.Status != "placed" {
+		writeError(w, http.StatusConflict, "this order is "+order.Status)
+		return
+	}
+	var owner string
+	h.Pool.QueryRow(r.Context(), `SELECT u.email FROM core.memberships m JOIN core.users u ON u.id = m.user_id
+		WHERE m.org_id::text = $1 AND m.role = 'owner' ORDER BY m.created_at LIMIT 1`, k.orgID).Scan(&owner)
+	body, _ := json.Marshal(map[string]any{
+		"order_id": id, "number": order.Number, "total_cents": order.TotalCents, "lines": order.Lines,
+		"email": order.Email, "currency": k.currency, "fallback_email": owner,
+	})
+	pay, err := h.app(r.Context(), k, h.InvoicingURL, "/shop/checkout", body)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "payments aren't reachable")
+		return
+	}
+	defer pay.Body.Close()
+	h.relay(w, k, pay)
 }
