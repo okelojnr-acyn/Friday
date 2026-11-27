@@ -457,6 +457,10 @@
     height: 64px;
     border-radius: 18px;
   }
+  .app-tile-icon > svg {
+    width: 34px;
+    height: 34px;
+  }
   .app-tile-label {
     font-size: 12px;
   }

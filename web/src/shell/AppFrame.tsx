@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { PageErrorBoundary } from "../ui/PageErrorBoundary";
 import { APP_ICONS } from "../ui/AppTile";
+import { AppMark } from "../ui/AppMark";
 import { Icon } from "../ui/Icon";
 import { navForPath, type NavItem } from "./appNav";
 
@@ -46,7 +47,7 @@ export function AppFrame() {
         <nav className="hub-nav" aria-label={nav.label}>
           <Link to={nav.sections[0][1][0].to} className="app-frame-title">
             <span className="app-tile-icon app-tile-icon-sm" style={{ ["--tile" as string]: tile?.color }}>
-              <Icon name={tile?.icon ?? "app-window"} size={18} />
+              {tile ? <AppMark app={nav.app} size={20} /> : <Icon name="app-window" size={18} />}
             </span>
             <span>{nav.label}</span>
           </Link>
