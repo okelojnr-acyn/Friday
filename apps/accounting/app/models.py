@@ -12,7 +12,7 @@ class Base(DeclarativeBase):
 
 ACCOUNT_TYPES = ("asset", "liability", "equity", "income", "expense")
 JOURNAL_SOURCES = ("manual", "invoicing", "pos", "payroll", "guss", "inventory")
-JOURNAL_STATUSES = ("draft", "posted")
+JOURNAL_STATUSES = ("draft", "pending", "posted")
 FISCAL_PERIOD_STATUSES = ("open", "closed")
 BANK_TRANSACTION_STATUSES = ("unmatched", "matched")
 
@@ -60,6 +60,8 @@ class JournalEntry(Base):
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
     source_ref: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    # The owner who let a pending (large manual) entry post.
+    approved_by: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

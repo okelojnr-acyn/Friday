@@ -33,6 +33,9 @@ type SpendingPolicy struct {
 	// At the till, a discount of this percent or more (or a price below
 	// the shelf) needs a team leader's or manager's PIN. 0: every one does.
 	TillDiscountPct int `json:"till_discount_pct"`
+	// A manual journal entry above this, posted by an admin, waits for an
+	// owner. 0: never waits.
+	ManualEntryAskAbove int64 `json:"manual_entry_ask_above"`
 }
 
 // SpendingPresets: Simple (a small shop), Standard (the default: receipts
@@ -42,18 +45,18 @@ type SpendingPolicy struct {
 var SpendingPresets = map[string]SpendingPolicy{
 	"simple": {Preset: "simple", AskFirstMember: 500_000, AskFirstTeamLeader: 2_000_000, AskFirstBranchManager: 10_000_000,
 		TripsAskFirst: true, NoReceiptUnder: 200_000, NoReceiptPerYear: 6, TolerancePct: 15, TillPayouts: true,
-		PettyFloat: 2_000_000, PettySlipMax: 500_000, TillDiscountPct: 15},
+		PettyFloat: 2_000_000, PettySlipMax: 500_000, TillDiscountPct: 15, ManualEntryAskAbove: 0},
 	"standard": {Preset: "standard", AskFirstMember: 200_000, AskFirstTeamLeader: 1_000_000, AskFirstBranchManager: 5_000_000,
 		TripsAskFirst: true, NoReceiptUnder: 100_000, NoReceiptPerYear: 3, TolerancePct: 10, TillPayouts: false,
-		PettyFloat: 1_000_000, PettySlipMax: 200_000, TillDiscountPct: 10},
+		PettyFloat: 1_000_000, PettySlipMax: 200_000, TillDiscountPct: 10, ManualEntryAskAbove: 5_000_000},
 	"strict": {Preset: "strict", AskFirstMember: 100_000, AskFirstTeamLeader: 500_000, AskFirstBranchManager: 2_000_000,
 		TripsAskFirst: true, NoReceiptUnder: 50_000, NoReceiptPerYear: 2, TolerancePct: 5, TillPayouts: false,
-		PettyFloat: 1_000_000, PettySlipMax: 100_000, TillDiscountPct: 5},
+		PettyFloat: 1_000_000, PettySlipMax: 100_000, TillDiscountPct: 5, ManualEntryAskAbove: 1_000_000},
 }
 
 func (s SpendingPolicy) valid() bool {
 	const most = 1_000_000_000_00
-	for _, v := range []int64{s.AskFirstMember, s.AskFirstTeamLeader, s.AskFirstBranchManager, s.NoReceiptUnder, s.PettyFloat, s.PettySlipMax} {
+	for _, v := range []int64{s.AskFirstMember, s.AskFirstTeamLeader, s.AskFirstBranchManager, s.NoReceiptUnder, s.PettyFloat, s.PettySlipMax, s.ManualEntryAskAbove} {
 		if v < 0 || v > most {
 			return false
 		}
