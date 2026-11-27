@@ -6,7 +6,7 @@ VERSION="${1:?release sha}"
 DIR=/opt/friday-demo
 SRC="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$DIR/firewall" "$DIR/sites"
-cp "$SRC/../compose.yml" "$SRC/../Caddyfile" "$SRC/compose.demo.yml" "$SRC/seed.py" "$SRC/seed.sh" "$SRC/reset.sh" "$DIR/"
+cp "$SRC/../compose.yml" "$SRC/../Caddyfile" "$SRC/compose.demo.yml" "$SRC/seed.py" "$SRC/seed.sh" "$SRC/reset.sh" "$SRC/update.sh" "$SRC/friday-demo.cron" "$DIR/"
 cd "$DIR"
 if [ ! -f .env ]; then
   umask 077

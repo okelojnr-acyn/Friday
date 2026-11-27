@@ -86,6 +86,12 @@ func demoRefused(method, path string) string {
 		return "inviting people and new sign-ups are switched off in the demo"
 	case strings.HasPrefix(path, "/guss/"):
 		return "Guss isn't connected in the demo"
+	case strings.HasPrefix(path, "/orgs/import/source"):
+		return "importing from another database is switched off in the demo"
+	case strings.HasPrefix(path, "/me/push/"), strings.HasPrefix(path, "/auth/otp/"):
+		return "notifications and email codes are switched off in the demo"
+	case strings.HasPrefix(path, "/orgs/shop-keys"), strings.HasPrefix(path, "/public/"):
+		return "the online shop is switched off in the demo"
 	}
 	return ""
 }

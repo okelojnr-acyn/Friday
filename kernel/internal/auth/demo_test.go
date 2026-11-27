@@ -32,6 +32,11 @@ func TestDemoGuard(t *testing.T) {
 		{"POST", "/invites/abc/accept", true},
 		{"POST", "/auth/register", true},
 		{"POST", "/guss/link", true},
+		{"POST", "/orgs/import/source", true},
+		{"POST", "/me/push/subscriptions", true},
+		{"POST", "/auth/otp/request", true},
+		{"POST", "/orgs/shop-keys", true},
+		{"POST", "/public/orders", true},
 		{"POST", "/api/invoicing/pos/sales", false},
 		{"PATCH", "/api/inventory/products/1", false},
 	} {
