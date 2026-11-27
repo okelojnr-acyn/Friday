@@ -64,6 +64,9 @@ services:
       # without it, saved Paystack/Stripe/email keys must be entered again.
       FRIDAY_SECRETS_KEY: ${FRIDAY_SECRETS_KEY:-}
       MIGRATIONS_DIR: migrations
+      # One business per customer server: only Friday Host's shared Friday
+      # takes sign-ups for many (kernel/internal/db/orgcap.go).
+      MAX_ORGS: ${MAX_ORGS:-1}
       FRIDAY_VERSION: ${FRIDAY_VERSION:?}
       CORS_ORIGIN: https://${FRIDAY_DOMAIN:?}
       KERNEL_PUBLIC_URL: https://${FRIDAY_DOMAIN:?}/kernel

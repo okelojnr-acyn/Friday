@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -93,5 +94,44 @@ func TestPresetShapesANewBusiness(t *testing.T) {
 	}
 	if err := preset(ctx, pool, orgID, "casino", "UG", 1, 1); err == nil {
 		t.Fatal("an unknown trade was accepted")
+	}
+}
+
+// MAX_ORGS keeps a customer's own Friday to one business: no new org
+// past the cap, while its existing owner still gets their org back.
+func TestBootstrapRespectsOrgCap(t *testing.T) {
+	dsn := os.Getenv("KERNEL_TEST_DATABASE_URL")
+	if dsn == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("KERNEL_TEST_DATABASE_URL must be set in CI")
+		}
+		t.Skip("KERNEL_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err := db.Migrate(ctx, pool, "../../migrations"); err != nil {
+		t.Fatal(err)
+	}
+	owner := fmt.Sprintf("cap%d@x.test", time.Now().UnixNano())
+	first, _, err := bootstrap(ctx, pool, "Cap Shop", owner, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	pool.QueryRow(ctx, `SELECT count(*) FROM core.orgs`).Scan(&n)
+	t.Setenv("MAX_ORGS", fmt.Sprint(n))
+	if _, _, err := bootstrap(ctx, pool, "Second Shop", "other"+owner, ""); !errors.Is(err, db.ErrOrgCap) {
+		t.Fatalf("second business past the cap: %v", err)
+	}
+	if again, created, err := bootstrap(ctx, pool, "Cap Shop", owner, ""); err != nil || created || again != first {
+		t.Fatalf("existing owner: %s %v %v", again, created, err)
+	}
+	t.Setenv("MAX_ORGS", fmt.Sprint(n+1000)) // other tests add orgs meanwhile
+	if _, created, err := bootstrap(ctx, pool, "Second Shop", "other"+owner, ""); err != nil || !created {
+		t.Fatalf("under the cap: %v %v", created, err)
 	}
 }
