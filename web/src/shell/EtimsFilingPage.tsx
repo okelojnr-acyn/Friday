@@ -1,3 +1,4 @@
+import { fullDate } from "../ui/resource/fieldFormat";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError } from "../lib/api";
@@ -140,7 +141,7 @@ export function EtimsFilingPage() {
                   {r.credit_note ? <span className="field-label"> · credit note for {r.original_number}</span> : null}
                   <br />
                   <span className="field-label">
-                    {r.issued_at ? new Date(r.issued_at).toLocaleString() : ""}
+                    {r.issued_at ? fullDate(r.issued_at) : ""}
                     {r.buyer_pin ? ` · ${r.buyer_pin}${r.buyer_name ? ` ${r.buyer_name}` : ""}` : " · walk-in"}
                   </span>
                 </span>
@@ -265,7 +266,7 @@ function FilingSheet({ row, onChanged }: { row: EtimsRow; onChanged: (r: EtimsRo
             <span className="field-label">
               {" "}
               · {row.filed_by}
-              {row.filed_at ? `, ${new Date(row.filed_at).toLocaleString()}` : ""}
+              {row.filed_at ? `, ${fullDate(row.filed_at)}` : ""}
             </span>
           </span>
           {row.receipt_check_url ? (

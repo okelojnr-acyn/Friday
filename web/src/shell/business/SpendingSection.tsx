@@ -145,10 +145,9 @@ export function SpendingSection({ canEdit }: { canEdit: boolean }) {
             <input type="checkbox" disabled={!canEdit} checked={policy.till_payouts} onChange={(e) => set({ till_payouts: e.target.checked })} />
             The till may pay small costs (recorded on the shift)
           </label>
-          <SaveRow canEdit={canEdit} saving={saving} onSave={() => save(policy)} />
+          <SaveRow canEdit={canEdit} saving={saving} saved={saved} onSave={() => save(policy)} />
         </>
       )}
-      {saved ? <span className="field-label">Saved.</span> : null}
     </div>
   );
 }

@@ -38,6 +38,9 @@ class FieldSpec:
     reference: str | None = None  # resource name, for type="reference"
     list_visible: bool = True
     form_visible: bool = True
+    # One or two sentences behind the field's "?" in forms: what it does
+    # and a sensible value. Omitted from the JSON when empty.
+    help: str = ""
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,7 @@ class ResourceSpec:
                     "reference": f.reference,
                     "listVisible": f.list_visible,
                     "formVisible": f.form_visible,
+                    **({"help": f.help} if f.help else {}),
                 }
                 for f in self.fields
             ],

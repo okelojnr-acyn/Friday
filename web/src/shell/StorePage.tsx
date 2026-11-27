@@ -116,7 +116,7 @@ export function StorePage() {
 
   const invoicingStats = useMemo(() => {
     const rows = invoices ?? [];
-    const unpaid = rows.filter((i) => i.status !== "paid" && i.status !== "void");
+    const unpaid = rows.filter((i) => i.status !== "paid" && i.status !== "void" && i.status !== "draft");
     const outstanding = unpaid.reduce((sum, i) => sum + (Number(i.balance_cents) || 0), 0);
     const collected = rows.reduce((sum, i) => sum + (Number(i.paid_cents) || 0), 0);
     const now = Date.now();
