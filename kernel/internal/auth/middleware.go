@@ -28,6 +28,10 @@ func RequireAuth(issuer *Issuer) func(http.Handler) http.Handler {
 				writeError(w, http.StatusUnauthorized, "this device was signed out; sign in again")
 				return
 			}
+			if issuer.Sessions != nil && issuer.Sessions.OrgSuspended(r.Context(), claims.OrgID) {
+				writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": "this business is suspended until its Friday Host subscription is paid; the owner can pay at fridayhost.dev", "code": "suspended"})
+				return
+			}
 			// Their access changed since this token: the app asks for a fresh
 			// one (POST /auth/refresh) and tries again.
 			if claims.Via == "" && claims.IssuedAt != nil && issuer.Sessions != nil &&
