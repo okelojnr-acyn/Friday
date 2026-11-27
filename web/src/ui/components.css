@@ -2968,6 +2968,7 @@
   background: #fdf6f1;
   border: 1px solid rgba(224, 122, 53, 0.45);
   font-weight: 600;
+}
 /* Minions calendar (minions/CalendarPage) and today's meetings on Today. */
 .minions-time {
   min-width: 52px;

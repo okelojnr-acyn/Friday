@@ -32,6 +32,7 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       await loginToDemo(as);
+      markSignedInNow(); // on the till, this was the clock-in
       navigate("/");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't open the demo; try again");
@@ -109,7 +110,8 @@ export function LoginPage() {
             <p className="field-label" style={{ margin: 0 }}>
               A sample shop with its sales, stock, books and staff. Try anything: it all goes back to the start every night.
             </p>
-            {demo.map((as) => (
+            {/* Owner first: what the shop looks like to the person who runs it. */}
+            {[...demo].sort((a, b) => (a === "owner" ? -1 : b === "owner" ? 1 : a.localeCompare(b))).map((as) => (
               <Button key={as} type="button" variant={as === "owner" ? "primary" : "secondary"} disabled={submitting} onClick={() => void onDemo(as)}>
                 Try as {as.charAt(0).toUpperCase() + as.slice(1)}
               </Button>
@@ -117,6 +119,9 @@ export function LoginPage() {
           </div>
         ) : null}
 
+        {/* The demo has only its own people: no sign-in or sign-up of a real account. */}
+        {demo ? null : (
+        <>
         {mode === "passkey" ? (
           <div className="form-grid">
             <Button type="button" variant="primary" onClick={onPasskeyLogin} disabled={submitting}>
@@ -179,6 +184,8 @@ export function LoginPage() {
           New here? <Link to="/register">Create an organization</Link> or{" "}
           <Link to="/join">join with an invite</Link>
         </p>
+        </>
+        )}
       </Card>
     </div>
   );
