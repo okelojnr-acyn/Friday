@@ -194,6 +194,7 @@ STANDARD_SPENDING = {
     "ask_first_branch_manager": 5_000_000, "trips_ask_first": True, "no_receipt_under": 100_000,
     "no_receipt_per_year": 3, "tolerance_pct": 10, "till_payouts": False,
     "petty_float": 1_000_000, "petty_slip_max": 200_000, "till_discount_pct": 10,
+    "manual_entry_ask_above": 5_000_000,
 }
 
 

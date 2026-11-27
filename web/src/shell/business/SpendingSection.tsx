@@ -19,6 +19,7 @@ interface Policy {
   petty_slip_max: number;
   /** Absent on an older kernel. */
   till_discount_pct?: number;
+  manual_entry_ask_above?: number;
 }
 type Presets = Record<"simple" | "standard" | "strict", Policy>;
 
@@ -138,6 +139,19 @@ export function SpendingSection({ canEdit }: { canEdit: boolean }) {
             <FieldWrap label="Flag a claim over what was approved by more than (%)">
               <Input inputMode="numeric" disabled={!canEdit} value={String(policy.tolerance_pct)} onChange={(e) => set({ tolerance_pct: Number.parseInt(e.target.value) || 0 })} />
             </FieldWrap>
+            {policy.manual_entry_ask_above !== undefined ? (
+              <FieldWrap
+                label="Manual journal entries above this wait for an owner"
+                hint="An admin's manual entry for more than this stays Pending in Accounting until an owner posts it. Owners post their own; sales, payroll and other entries Friday books itself never wait. 0 means never."
+              >
+                <Input
+                  inputMode="numeric"
+                  disabled={!canEdit}
+                  value={String(Math.round((policy.manual_entry_ask_above ?? 0) / 100))}
+                  onChange={(e) => set({ manual_entry_ask_above: Math.max(0, Math.round((Number.parseFloat(e.target.value) || 0) * 100)) })}
+                />
+              </FieldWrap>
+            ) : null}
             {policy.till_discount_pct !== undefined ? (
               <FieldWrap
                 label="Till discounts that need a manager's PIN, from (%)"

@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from friday_common import FieldSpec, Principal, ResourceSpec, create_app, get_current_principal, get_org_session, resource
-from friday_common.access import Scope, require, scope_for, whole_business
+from friday_common.access import Scope, require, scope_for, spending_policy, whole_business
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -69,7 +69,7 @@ resource(
             FieldSpec("entry_date", "Date", "date", required=True),
             FieldSpec("memo", "Memo", "text"),
             FieldSpec("source", "Source", "select", options=JOURNAL_SOURCES, form_visible=False),
-            FieldSpec("status", "Status", "select", options=JOURNAL_STATUSES, required=True, help="A draft changes nothing. Posted entries move the balances; correct a posted entry with a new one rather than editing it."),
+            FieldSpec("status", "Status", "select", options=JOURNAL_STATUSES, required=True, help="A draft changes nothing. Posted entries move the balances; correct a posted entry with a new one rather than editing it. A large manual entry posted by an admin waits as Pending until an owner posts it (the limit is in Business settings, Spending)."),
             FieldSpec("total_debit_cents", "Debit total", "currency", form_visible=False),
             FieldSpec("total_credit_cents", "Credit total", "currency", form_visible=False),
             FieldSpec("created_at", "Created", "datetime", form_visible=False),
@@ -274,7 +274,23 @@ async def set_journal_entry_status(
     entry = await _get_journal_entry(session, principal, entry_id)
     if entry.status == "posted" and body.status == "draft":
         raise HTTPException(400, "a posted journal entry cannot be reverted to draft")
-    entry.status = body.status
+    status_now = body.status
+    if body.status == "posted" and entry.status != "posted" and entry.source == "manual":
+        # A large manual entry from an admin waits for an owner (roadmap
+        # item 8); owners post their own. Entries the apps book themselves
+        # (sales, payroll) never wait.
+        limit = int((await spending_policy(principal.org_id)).get("manual_entry_ask_above") or 0)
+        await session.refresh(entry, attribute_names=["lines"])
+        total = sum(line.debit_cents for line in entry.lines)
+        if principal.role != "owner" and limit and total > limit:
+            if entry.status == "pending":
+                raise HTTPException(403, "this entry is waiting for an owner to approve it")
+            status_now = "pending"
+        elif entry.status == "pending":
+            entry.approved_by = principal.email or principal.user_id
+    if body.status == "pending" and entry.status != "pending":
+        raise HTTPException(422, "an entry goes to pending by itself when it needs an owner")
+    entry.status = status_now
     entry.updated_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(entry, attribute_names=["lines"])

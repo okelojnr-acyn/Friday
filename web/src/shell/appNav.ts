@@ -89,7 +89,7 @@ export const APP_NAV: Record<string, AppNav> = {
         { label: "Reports", to: "/accounting/reports", icon: "trend-up", hint: "Profit & loss, balance sheet and trial balance, from the same books." },
       ]],
       ["Books", [
-        { label: "Journal entries", to: "/accounting/journal_entry", icon: "ledger", hint: "Sales, payments and payouts post here by themselves; add manual entries for the rest." },
+        { label: "Journal entries", to: "/accounting/journal_entry", icon: "ledger", hint: "Sales, payments and payouts post here by themselves; add manual entries for the rest.", waiting: { path: "/api/accounting/journal_entries", statuses: ["pending"] } },
         { label: "Chart of accounts", to: "/accounting/account", icon: "database" },
       ]],
       ["Banking", [
