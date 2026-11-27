@@ -278,7 +278,9 @@ async def order_for_checkout(
 
 
 # Staff side: the online orders queue (Friday > Inventory > Online orders).
-NEXT = {"paid": {"ready", "completed"}, "ready": {"completed"}, "placed": {"cancelled"}}
+# A paid order is cancelled after its sale is returned (Invoicing's
+# /pos/sales/WEB-<number>/return refunds and restocks; the web does both).
+NEXT = {"paid": {"ready", "completed", "cancelled"}, "ready": {"completed", "cancelled"}, "placed": {"cancelled"}}
 
 
 def _staff_view(o: ShopOrder) -> dict:
@@ -316,7 +318,8 @@ async def move_shop_order(
     session: AsyncSession = Depends(get_org_session),
 ):
     """Paid -> ready -> collected/delivered (completed); an unpaid order can
-    be cancelled (its held stock goes back at once)."""
+    be cancelled (its held stock goes back at once), a paid or ready one
+    once its sale is returned."""
     order = await session.get(ShopOrder, order_id, with_for_update=True)
     if order is None or str(order.org_id) != principal.org_id:
         raise HTTPException(404, "order not found")
