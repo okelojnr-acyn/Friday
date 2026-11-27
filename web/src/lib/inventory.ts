@@ -57,3 +57,19 @@ export interface ProductBulkRow {
  * trip per row. */
 export const bulkCreateProducts = (products: ProductBulkRow[]) =>
   api.post<RecordRow[]>("/api/inventory/products/bulk", { products });
+
+/** The till's warning when an order asks for more than the shelf should
+ * have (plan 20.2 #3): the sale still goes through (the shelf is the
+ * truth), the cashier is told, and the count goes negative for a recount.
+ * Null when there's enough, or the product isn't counted. */
+export function shortWarning(
+  p: { name: string; on_hand_qty: number; track_inventory: boolean; sales_factor?: number },
+  qtyInOrder: number,
+): string | null {
+  if (!p.track_inventory) return null;
+  const onHand = Number(p.on_hand_qty);
+  const factor = p.sales_factor ?? 1;
+  if (qtyInOrder * factor <= onHand) return null;
+  const left = Math.max(0, Math.floor(onHand / factor));
+  return `Only ${left} ${p.name} on record. Selling anyway; count it when you can.`;
+}
