@@ -56,6 +56,9 @@ made = api(
 )
 by_name = {p["name"]: p for p in made}
 
+# The till the cashier opens (any location may use it).
+api("POST", "/api/invoicing/pos/registers", {"name": "Till 1"})
+
 # A morning at the till.
 SALES = [
     [("Unga wa Ugali 2kg", 2), ("Sugar 1kg", 1), ("Milk 500ml", 4)],
@@ -111,4 +114,4 @@ for contact, company, stage, value in [
 ]:
     api("POST", "/api/crm/opportunities", {"contact_name": contact, "company": company, "stage": stage, "value_cents": value, "currency": "KES"})
 
-print("demo data in:", len(made), "products,", len(SALES), "sales, 2 invoices, 3 deals")
+print("demo data in: 1 till,", len(made), "products,", len(SALES), "sales, 2 invoices, 3 deals")
