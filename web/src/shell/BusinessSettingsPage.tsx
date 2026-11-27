@@ -9,7 +9,7 @@ import { ApprovalsSection } from "./business/ApprovalsSection";
 import { SpendingSection } from "./business/SpendingSection";
 import { EtimsSection } from "./business/EtimsSection";
 import { PaymentsSection } from "./business/PaymentsSection";
-import { SaveRow } from "./business/SaveRow";
+import { SaveRow, reloadSaved } from "./business/SaveRow";
 import { ShopSection } from "./business/ShopSection";
 import { TaxSection } from "./business/TaxSection";
 import { TillsSection } from "./business/TillsSection";
@@ -114,7 +114,7 @@ function GeneralSection({ canEdit }: { canEdit: boolean }) {
         ...(timeZone && timeZone !== settings.time_zone ? { time_zone: timeZone } : {}),
       });
       // Every screen reads these once; reload so all of them pick it up.
-      window.location.reload();
+      reloadSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save.");
       setSaving(false);
@@ -125,7 +125,7 @@ function GeneralSection({ canEdit }: { canEdit: boolean }) {
   return (
     <div className="card card-padded form-grid">
       {error ? <div className="error-banner">{error}</div> : null}
-      <FieldWrap label="Currency">
+      <FieldWrap label="Currency" hint="The money your prices, invoices and books are in. Changing it doesn't convert amounts already recorded.">
         <Select value={currency} onChange={(e) => setCurrency(e.target.value)} disabled={!canEdit}>
           {CURRENCIES.map(([code, label]) => (
             <option key={code} value={code}>
@@ -141,12 +141,10 @@ function GeneralSection({ canEdit }: { canEdit: boolean }) {
           <Button size="sm" variant="ghost" onClick={() => setCurrency(settings.suggested_currency!)}>
             Use {settings.suggested_currency}
           </Button>
-          <br />
-          Changing it doesn't convert amounts already recorded.
         </p>
       ) : null}
       {settings.time_zone !== undefined ? (
-        <FieldWrap label="Time zone: when the business's day starts and ends (reports, the books)">
+        <FieldWrap label="Time zone" hint="When the business's day starts and ends: daily sales, reports and the books' dates follow it.">
           <Select value={timeZone} onChange={(e) => setTimeZone(e.target.value)} disabled={!canEdit}>
             {timeZone ? null : <option value="">Not set (UTC)</option>}
             {ZONES.map((z) => (

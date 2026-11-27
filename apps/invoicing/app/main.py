@@ -87,7 +87,7 @@ resource(
             FieldSpec("name", "Name", "text", required=True),
             FieldSpec("company", "Company", "text"),
             FieldSpec("email", "Email", "email"),
-            FieldSpec("payment_terms_days", "Payment terms (days)", "number"),
+            FieldSpec("payment_terms_days", "Payment terms (days)", "number", help="Days this customer has to pay. An invoice's due date is the issue date plus this; 0 means pay on receipt."),
             FieldSpec("created_at", "Added", "datetime", form_visible=False),
         ),
     )
@@ -165,7 +165,7 @@ resource(
         fields=(
             FieldSpec("opened_at", "Opened", "datetime", required=True),
             FieldSpec("closed_at", "Closed", "datetime"),
-            FieldSpec("opening_float_cents", "Opening float", "currency", required=True),
+            FieldSpec("opening_float_cents", "Opening float", "currency", required=True, help="The cash put in the drawer for change at the start of the shift. The closing count expects this plus cash sales."),
             FieldSpec("closing_count_cents", "Counted", "currency"),
             FieldSpec("expected_cents", "Expected", "currency"),
             FieldSpec("status", "Status", "select", options=POS_SHIFT_STATUSES, required=True),

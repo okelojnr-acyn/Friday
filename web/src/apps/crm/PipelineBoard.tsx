@@ -1,3 +1,4 @@
+import { fullDate } from "../../ui/resource/fieldFormat";
 import { useState, type DragEvent, type FormEvent } from "react";
 import { formatMoney } from "../../lib/orgSettings";
 import type { RecordRow } from "../../lib/types";
@@ -108,7 +109,7 @@ export function PipelineBoard({
                       {d.next_step_at ? (
                         <span className={overdue ? "pipeline-overdue" : "field-label"}>
                           {overdue ? "Overdue: " : "Next: "}
-                          {new Date(String(d.next_step_at)).toLocaleDateString()}
+                          {fullDate(String(d.next_step_at), false)}
                         </span>
                       ) : (
                         <span className="pipeline-overdue">No next step</span>

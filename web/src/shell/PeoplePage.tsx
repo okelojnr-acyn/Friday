@@ -1,3 +1,4 @@
+import { fullDate } from "../ui/resource/fieldFormat";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ApiError } from "../lib/api";
@@ -559,7 +560,7 @@ function InvitesTab({
               <td>
                 <Badge tone={tone(i.status)}>{i.status}</Badge>
               </td>
-              <td>{i.status === "pending" ? new Date(i.expires_at).toLocaleDateString() : "—"}</td>
+              <td>{i.status === "pending" ? fullDate(i.expires_at, false) : "—"}</td>
               <td style={{ textAlign: "right" }}>
                 {i.status === "pending" ? (
                   <Button

@@ -11,7 +11,7 @@ import { Button } from "../../ui/Button";
 import { FieldWrap, Input, Select } from "../../ui/Field";
 import { Icon } from "../../ui/Icon";
 import { ReferenceInput } from "../../ui/resource/ReferenceInput";
-import { amountInputToCents } from "../../ui/resource/fieldFormat";
+import { amountInputToCents, fullDate } from "../../ui/resource/fieldFormat";
 
 interface Line {
   description: string;
@@ -372,8 +372,8 @@ export function InvoiceEditorPage() {
                 {customer?.email ? <div className="field-label">{String(customer.email)}</div> : null}
               </div>
               <div style={{ textAlign: "right" }}>
-                <div className="field-label">Issued {new Date().toLocaleDateString()}</div>
-                <div className="field-label">Due {termsDays ? due.toLocaleDateString() : "on receipt"}</div>
+                <div className="field-label">Issued {fullDate(new Date(), false)}</div>
+                <div className="field-label">Due {termsDays ? fullDate(due, false) : "on receipt"}</div>
               </div>
             </div>
             <table className="invoice-paper-lines">

@@ -5,7 +5,7 @@ import { saveOrgSettings, useOrgSettings } from "../../lib/orgSettings";
 import { PAYMENT_METHODS, PAYMENT_METHOD_LABEL } from "../../lib/pos";
 import { listRegisters, updateRegister, type PosRegister } from "../../lib/posApi";
 import { Checkbox } from "../../ui/Field";
-import { SaveRow } from "./SaveRow";
+import { SaveRow, reloadSaved } from "./SaveRow";
 
 const GATEWAYS = ["paystack", "pesapal"];
 
@@ -43,7 +43,7 @@ export function PaymentsSection({ canEdit }: { canEdit: boolean }) {
     try {
       await saveOrgSettings({ payment_methods: methods });
       // The till reads these once; reload so it picks them up.
-      window.location.reload();
+      reloadSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save.");
       setSaving(false);

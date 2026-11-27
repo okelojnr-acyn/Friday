@@ -1,4 +1,6 @@
+import { fullDate } from "../../ui/resource/fieldFormat";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../../lib/api";
 import { formatMoney, useOrgSettings } from "../../lib/orgSettings";
 import { Badge } from "../../ui/Badge";
@@ -36,6 +38,13 @@ export function OnlineOrdersPage() {
   const [error, setError] = useState<string | null>(null);
   const [method, setMethod] = useState<Record<string, string>>({});
   const { currency } = useOrgSettings();
+  // Open orders first; handed-over and cancelled ones one click away (?show=done).
+  const [params, setParams] = useSearchParams();
+  const showDone = params.get("show") === "done";
+  const isDone = (o: OnlineOrder) => o.status === "completed" || o.status === "cancelled";
+  const open = orders?.filter((o) => !isDone(o)) ?? [];
+  const done = orders?.filter(isDone) ?? [];
+  const shown = showDone ? done : open;
 
   /** Paid at collection: booked like a till sale (Invoicing), so the
    * stock and books follow and the order turns paid. */
@@ -111,9 +120,22 @@ export function OnlineOrdersPage() {
           {error}
         </p>
       ) : null}
-      {orders && orders.length === 0 ? <p className="field-label">No online orders yet.</p> : null}
+      {orders && orders.length > 0 ? (
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <Button size="sm" className="btn-pill" variant={showDone ? "secondary" : "primary"} onClick={() => setParams({}, { replace: true })}>
+            To do {open.length}
+          </Button>
+          <Button size="sm" className="btn-pill" variant={showDone ? "primary" : "secondary"} onClick={() => setParams({ show: "done" }, { replace: true })}>
+            Done {done.length}
+          </Button>
+        </div>
+      ) : null}
+      {orders && orders.length === 0 ? <p className="field-label">No online orders yet. They appear here as soon as a shopper orders from your website.</p> : null}
+      {orders && orders.length > 0 && shown.length === 0 ? (
+        <p className="field-label">{showDone ? "Nothing handed over or cancelled yet." : "All caught up: no orders waiting."}</p>
+      ) : null}
       <div style={{ display: "grid", gap: 12 }}>
-        {orders?.map((o) => (
+        {shown.map((o) => (
           <div key={o.id} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 14 }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between", alignItems: "baseline" }}>
               <strong>
@@ -123,7 +145,7 @@ export function OnlineOrdersPage() {
             </div>
             <p className="field-label" style={{ margin: "4px 0" }}>
               {[o.phone, o.email].filter(Boolean).join(" · ")} · {o.fulfilment === "delivery" ? `Deliver to ${o.address}` : "Pickup"} ·{" "}
-              {new Date(o.created_at).toLocaleString()}
+              {fullDate(o.created_at)}
             </p>
             <ul style={{ margin: "8px 0", paddingLeft: 18 }}>
               {o.lines.map((l, i) => (
