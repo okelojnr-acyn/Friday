@@ -67,6 +67,7 @@ export const APP_NAV: Record<string, AppNav> = {
         { label: "Products", to: "/inventory/product", icon: "box" },
         { label: "Stock moves", to: "/inventory/stock_move", icon: "history", hint: "Every unit in or out, and why: sales, receipts, transfers, counts." },
         { label: "Warehouses", to: "/inventory/warehouse", icon: "storefront" },
+        { label: "Online orders", to: "/inventory/online-orders", icon: "receipt", hint: "Orders from your online shop: get them ready, hand them over." },
       ]],
       ["Purchasing", [
         { label: "Purchase orders", to: "/inventory/purchase_order", icon: "receipt" },

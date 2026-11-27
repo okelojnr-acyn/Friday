@@ -20,6 +20,7 @@ import { BusinessSettingsPage } from "./shell/BusinessSettingsPage";
 import { StoreSettingsPage } from "./shell/StoreSettingsPage";
 import { EtimsFilingPage } from "./shell/EtimsFilingPage";
 import { UnitsPage } from "./apps/inventory/UnitsPage";
+import { OnlineOrdersPage } from "./apps/inventory/OnlineOrdersPage";
 import { ResourcePage, AppIndexRedirect } from "./shell/ResourcePage";
 import { TreasuryPage } from "./apps/web3/TreasuryPage";
 import { MarketPage } from "./apps/web3/MarketPage";
@@ -65,6 +66,7 @@ export default function App() {
           <Route element={<AppFrame />}>
             <Route path="/etims" element={<EtimsFilingPage />} />
             <Route path="/inventory/unit_of_measure" element={<UnitsPage />} />
+            <Route path="/inventory/online-orders" element={<OnlineOrdersPage />} />
             {/* POS moved to its own installable mini-app (web/pos.html,
                 apps/pos/PosApp.tsx) -- gated behind a biometric cashier
                 clock-in that only makes sense as a dedicated entry, same

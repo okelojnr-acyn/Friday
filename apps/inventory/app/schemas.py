@@ -31,6 +31,7 @@ class ProductCreate(BaseModel):
     on_hand_qty: Qty = Decimal(0)
     reorder_point: Qty = Decimal(0)
     track_inventory: bool = True
+    sell_online: bool = True
     default_warehouse_id: uuid.UUID | None = None
     uom_id: uuid.UUID | None = None
     uom_conversion_factor: Decimal = Decimal(1)
@@ -57,6 +58,7 @@ class ProductUpdate(BaseModel):
     cost_cents: int | None = None
     reorder_point: Qty | None = None
     track_inventory: bool | None = None
+    sell_online: bool | None = None
     default_warehouse_id: uuid.UUID | None = None
     uom_id: uuid.UUID | None = None
     uom_conversion_factor: Decimal | None = None
@@ -87,6 +89,7 @@ class ProductOut(BaseModel):
     on_hand_qty: Qty
     reorder_point: Qty
     track_inventory: bool
+    sell_online: bool = True
     default_warehouse_id: uuid.UUID | None
     uom_id: uuid.UUID | None
     uom_conversion_factor: Decimal

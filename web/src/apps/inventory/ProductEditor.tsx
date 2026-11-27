@@ -36,6 +36,7 @@ export function ProductEditor({
   const [sku, setSku] = useState(product?.sku ?? "");
   const [barcode, setBarcode] = useState(product?.barcode ?? "");
   const [track, setTrack] = useState(product?.track_inventory ?? true);
+  const [online, setOnline] = useState(product?.sell_online ?? true);
   const [taxCode, setTaxCode] = useState(product?.tax_code ?? "");
   const [itemClass, setItemClass] = useState(product?.etims_item_class ?? "");
   const [pkgUnit, setPkgUnit] = useState(product?.etims_packaging_unit || "NT");
@@ -97,6 +98,7 @@ export function ProductEditor({
         sku: sku.trim(),
         barcode: barcode.trim(),
         track_inventory: track,
+        sell_online: online,
         ...unitFields(),
         tax_code: taxCode,
         etims_item_class: itemClass.trim(),
@@ -336,6 +338,9 @@ export function ProductEditor({
           )}
           <label className="wide" style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 15 }}>
             <Checkbox checked={track} onChange={(e) => setTrack(e.target.checked)} /> Track stock for this product
+          </label>
+          <label className="wide" style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 15 }}>
+            <Checkbox checked={online} onChange={(e) => setOnline(e.target.checked)} /> Sell in the online shop
           </label>
 
           {!isVariant ? (
