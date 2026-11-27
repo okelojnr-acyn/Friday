@@ -1,3 +1,4 @@
+import { fullDate } from "../../ui/resource/fieldFormat";
 import { AppHint } from "../../shell/AppFrame";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -132,7 +133,7 @@ export function ReceivablesPage() {
             </table>
           </Card>
           <div className="field-label" style={{ marginTop: 8 }}>
-            As of {new Date(report.as_of).toLocaleString()} · ages count from each invoice's due date.
+            As of {fullDate(report.as_of)} · ages count from each invoice's due date.
           </div>
         </>
       ) : null}

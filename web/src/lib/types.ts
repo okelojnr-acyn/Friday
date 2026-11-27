@@ -27,6 +27,8 @@ export interface FieldSpec {
   reference: string | null;
   listVisible: boolean;
   formVisible: boolean;
+  /** Behind the field's "?" in forms; absent on older apps. */
+  help?: string;
 }
 
 export type ViewKind = "list" | "kanban" | "form";

@@ -9,6 +9,10 @@ export interface NavItem {
   hint?: string;
   /** A separate HTML entry (the till, the staff app): a full navigation. */
   external?: boolean;
+  /** A queue someone must act on: the rail shows how many are waiting.
+   * Kept to the few that need a person (UI standard: badges everywhere
+   * stop being seen). */
+  waiting?: { path: string; statuses: string[] };
 }
 export interface AppNav {
   /** The registry app whose API the resources live in. */
@@ -67,7 +71,7 @@ export const APP_NAV: Record<string, AppNav> = {
         { label: "Products", to: "/inventory/product", icon: "box" },
         { label: "Stock moves", to: "/inventory/stock_move", icon: "history", hint: "Every unit in or out, and why: sales, receipts, transfers, counts." },
         { label: "Warehouses", to: "/inventory/warehouse", icon: "storefront" },
-        { label: "Online orders", to: "/inventory/online-orders", icon: "receipt", hint: "Orders from your online shop: get them ready, hand them over." },
+        { label: "Online orders", to: "/inventory/online-orders", icon: "receipt", hint: "Orders from your online shop: get them ready, hand them over.", waiting: { path: "/api/inventory/shop_orders", statuses: ["paid", "ready"] } },
       ]],
       ["Purchasing", [
         { label: "Purchase orders", to: "/inventory/purchase_order", icon: "receipt" },
@@ -138,7 +142,7 @@ export const APP_NAV: Record<string, AppNav> = {
       ["Pay", [
         { label: "Payroll", to: "/people/payroll_run", icon: "wallet" },
         { label: "Pay details", to: "/people/employee", icon: "user", hint: "Pay rate, payout details and start date for each person." },
-        { label: "Expense claims", to: "/people/expense_claim", icon: "receipt" },
+        { label: "Expense claims", to: "/people/expense_claim", icon: "receipt", waiting: { path: "/api/minions/expense_claims", statuses: ["submitted"] } },
         { label: "Salary advances", to: "/people/salary_advance", icon: "wallet" },
         { label: "Time off", to: "/people/time_off", icon: "calendar" },
       ]],
