@@ -116,7 +116,7 @@ async def test_stripe_webhook_publishes_invoice_paid(client, principal, monkeypa
         "/external/webhooks/stripe",
         json={
             "type": "payment_intent.succeeded",
-            "data": {"object": {"metadata": {"org_id": principal.org_id, "invoice_id": inv["id"]}, "amount_received": 5000}},
+            "data": {"object": {"id": "pi_1", "metadata": {"org_id": principal.org_id, "invoice_id": inv["id"]}, "amount_received": 5000}},
         },
         headers={"stripe-signature": "t=1,v1=fake"},
     )

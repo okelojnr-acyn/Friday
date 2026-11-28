@@ -78,6 +78,7 @@ export const PROVIDERS: ProviderDescriptor[] = [
     docAnchor: "stripe",
     webhook: "paste",
     fields: [
+      { key: "publishable_key", label: "Publishable key", placeholder: "pk_live_..." },
       { key: "secret_key", label: "Secret key", secret: true, placeholder: "sk_live_..." },
       { key: "webhook_secret", label: "Webhook secret", secret: true, placeholder: "whsec_..." },
     ],

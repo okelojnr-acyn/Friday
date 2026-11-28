@@ -6,7 +6,8 @@ token (`POST /api/Auth/RequestToken`) before each call. There's no inline
 card-element equivalent -- `create_payment_intent` submits a hosted order
 (`POST /api/Transactions/SubmitOrderRequest`) and returns a `redirect_url`
 the customer completes payment on; the result only becomes known via the
-IPN callback registered once per process (`POST /api/URLSetup/RegisterIPN`)
+IPN callback registered once per business (`POST /api/URLSetup/RegisterIPN`;
+invoicing stores the id and passes it back as `metadata["ipn_id"]`)
 and re-verified with `get_transaction_status` -- never trust the IPN
 body's own claimed status, same principle as Stripe's signature check,
 just Pesapal's version is "ask the API directly." See
@@ -27,8 +28,9 @@ PESAPAL_API_BASE = "https://pay.pesapal.com/v3"
 # stripe.py's module-level STRIPE_API_BASE for the same "no dependency we
 # don't need" posture; a token/IPN-id store shared across processes would
 # need a real cache, not worth it for how rarely this rotates). Lost on
-# restart, which just means the next call re-fetches/re-registers -- both
-# are idempotent from Pesapal's side.
+# restart, which just means the next call re-fetches the token. The IPN id
+# cache is only a fallback: invoicing stores the id per business and passes
+# it in as metadata["ipn_id"], so a restart doesn't register the URL again.
 _token_cache: dict[str, tuple[str, float]] = {}
 _ipn_id_cache: dict[str, str] = {}
 
@@ -90,7 +92,8 @@ class PesapalProvider(PaymentProvider):
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             token = await self._access_token(client)
-            ipn_id = await self._ipn_id(client, token, metadata.get("ipn_url") or callback_url)
+            # The caller's stored id (per business, survives restarts), else registered now.
+            ipn_id = metadata.get("ipn_id") or await self._ipn_id(client, token, metadata.get("ipn_url") or callback_url)
             resp = await client.post(
                 f"{PESAPAL_API_BASE}/api/Transactions/SubmitOrderRequest",
                 json={
@@ -108,7 +111,7 @@ class PesapalProvider(PaymentProvider):
             data = resp.json()
             if data.get("error"):
                 raise RuntimeError(f"Pesapal SubmitOrderRequest failed: {data['error']}")
-            return {"id": data["order_tracking_id"], "redirect_url": data["redirect_url"]}
+            return {"id": data["order_tracking_id"], "redirect_url": data["redirect_url"], "ipn_id": ipn_id}
 
     async def create_pay_request(
         self, amount_cents: int, currency: str, *, email: str, name: str, description: str,
@@ -118,7 +121,7 @@ class PesapalProvider(PaymentProvider):
         page ("url") goes in Friday's own invoice email. metadata carries
         `merchant_reference`, `callback_url` and `ipn_url`."""
         out = await self.create_payment_intent(amount_cents, currency, {**metadata, "email": email, "description": description})
-        return {"ref": out["id"], "url": out["redirect_url"]}
+        return {"ref": out["id"], "url": out["redirect_url"], "ipn_id": out.get("ipn_id", "")}
 
     async def pay_request_status(self, ref: str) -> dict:
         paid = await self.get_transaction_status(ref) == "COMPLETED"

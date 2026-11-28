@@ -75,7 +75,9 @@ class Invoice(Base):
     # The latest Paystack checkout's reference (0016), so a till's poll can
     # verify it even when the webhook never arrives (see paystack_pay.py).
     paystack_reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    # Last time the till's poll asked Paystack about this sale (0019).
+    # The Pesapal order a till sale waits on (0026), for the till's poll.
+    pesapal_tracking_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Last time the till's poll asked Paystack (or Pesapal) about this sale (0019).
     paystack_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # The open pay request (0021, pay_requests.py): which provider, its id
     # there, where the customer pays ("" when the provider only emails it),

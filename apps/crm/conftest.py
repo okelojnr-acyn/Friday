@@ -69,3 +69,14 @@ async def client():
 async def _dispose_engine_after_test():
     yield
     await dispose_engine()
+
+
+@pytest.fixture(autouse=True)
+def _integrations_not_connected(monkeypatch):
+    """No kernel in tests: every provider reads as not connected unless a
+    test patches get_integration_config itself."""
+
+    async def not_connected(org_id, provider):
+        return {}
+
+    monkeypatch.setattr("friday_common.integrations.config._fetch", not_connected)

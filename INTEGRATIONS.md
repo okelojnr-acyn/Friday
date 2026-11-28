@@ -11,10 +11,16 @@ pattern instead of a bespoke integration per provider:
    `core.integration_credentials` table (`kernel/internal/integrations`).
 2. An app fetches that config with one call --
    `friday_common.get_integration_config(org_id, provider)` -- which
-   returns `{}` if the org never connected it. Never raises; an
-   unconfigured provider just means "this feature isn't available for
-   this org," the same posture `web/src/lib/inventory.ts`'s product-
-   catalog fetch already uses for "Inventory isn't installed."
+   returns `{}` if the org never connected it; an unconfigured provider
+   just means "this feature isn't available for this org." If the kernel
+   can't be reached it raises `IntegrationConfigUnavailable` (an
+   `httpx.HTTPError`), which the app factory turns into a 503 "couldn't
+   reach settings, try again", so a kernel blip never reads as "not
+   connected". Best-effort callers (Slack, invoice emails, reminders,
+   Calendar sync) catch it and skip. A connected config is kept 60 s per
+   process (keyed by org and provider), so a key changed in Apps &
+   integrations reaches each app within a minute; "not connected" isn't
+   kept, so a key pasted now works at once.
 3. An **adapter** (`packages/py-common/friday_common/integrations/*.py`)
    wraps that provider's actual API behind one of a handful of small
    interfaces (`base.py`): `PaymentProvider`, `ChatProvider`,
@@ -43,8 +49,17 @@ Every provider below is one of two things:
 ### Stripe -- code-ready
 
 - Adapter: `friday_common/integrations/stripe.py` (`StripeProvider`).
-- Config: `secret_key` (`sk_test_...` / `sk_live_...`), `webhook_secret`
-  (`whsec_...`, from the Stripe Dashboard's webhook endpoint settings).
+- Config: `publishable_key` (`pk_test_...` / `pk_live_...`, for Stripe.js
+  in the browser), `secret_key` (`sk_test_...` / `sk_live_...`),
+  `webhook_secret` (`whsec_...`, from the Stripe Dashboard's webhook
+  endpoint settings). `pay_with_card` refuses (400) before creating a
+  PaymentIntent when the publishable key is missing.
+- The webhook's `Stripe-Signature` must be under 5 minutes old (Stripe's
+  default tolerance; older is a replay) and any of its `v1` values may
+  match (Stripe sends several while a secret is rolled).
+  `payment_intent.succeeded` is recorded once per PaymentIntent
+  (`client_ref = "stripe:<pi id>"`, invoice row locked), however often
+  Stripe delivers it.
 - Call site: `apps/invoicing/app/main.py`'s `pay_with_card` (creates a
   PaymentIntent for an invoice's balance) and
   `apps/invoicing/app/webhooks.py`'s `stripe_webhook` (marks the invoice
@@ -80,6 +95,17 @@ Every provider below is one of two things:
   the business's Paystack dashboard. Signed with `x-paystack-signature`
   (HMAC-SHA512 of the body with the secret key), then verified anyway.
   Route it straight to the invoicing service like Stripe's and Pesapal's.
+  `charge.success` settles a till sale, invoice link or debt link;
+  `paymentrequest.success` settles an invoice's Payment Request at once
+  (found from the `org_id`/`invoice_id` metadata Friday sent with it; the
+  scheduled checks stay as the fallback and stop once it's paid). An
+  event for a business that has disconnected Paystack gets a 200, so
+  Paystack doesn't retry it for 72 hours.
+- Pay links Guss sends (`GET /pos/debts/paystack-link/{reference}`): Guss
+  asks often for 14 days, but Friday asks Paystack at most once a minute
+  in the link's first hour of checks and every 15 minutes after
+  (`paystack_link_checks`, claimed atomically); in between it answers
+  `pending`. A recorded payment (from the webhook) is answered at once.
 - Which methods a business and each till offer: Business settings >
   Payments (kernel `payment_methods`, invoicing
   `pos_registers.payment_methods`).
@@ -99,6 +125,17 @@ Every provider below is one of two things:
   it -- same "the webhook is the only thing that moves money
   server-side" posture as Stripe's `pay_with_card`, just with an extra
   verification step since Pesapal's IPN body is never trusted on its own.
+- The IPN is answered with the acknowledgement Pesapal documents
+  (`{"orderNotificationType", "orderTrackingId", "orderMerchantReference",
+  "status": 200}`), and the sale's row is locked before recording, so two
+  IPNs in flight (or an IPN and a poll) record one payment.
+- The till's status poll asks Pesapal (`GetTransactionStatus` for the
+  sale's stored `pesapal_tracking_id`) when the sale is still pending, on
+  the same schedule as Paystack's (every 5 s for 2 min, 15 s to 10 min,
+  then 60 s), so a lost IPN still settles.
+- The IPN id from `RegisterIPN` is stored per business, Pesapal account
+  and URL (`pesapal_ipns`), so restarts and other workers reuse it
+  instead of registering the URL again.
 - **Deployment note**: unlike Stripe (where the webhook URL is typed
   into the Stripe Dashboard by hand), Pesapal's callback URL is
   registered by the adapter itself at runtime (`RegisterIPN`), which
