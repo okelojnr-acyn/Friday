@@ -7,6 +7,7 @@ from sqlalchemy import exc as sa_exc
 from sqlalchemy import text
 
 from .db import make_engine
+from .integrations.config import IntegrationConfigUnavailable
 from .public import PublicURLMiddleware
 from .resource import all_resources
 from .settings import get_settings
@@ -87,6 +88,18 @@ def create_app(service_name: str, version: str = "0.1.0") -> FastAPI:
             content={"error": "the database is unavailable for a moment; try again"},
             headers={"Retry-After": "5"},
         )
+
+    @app.exception_handler(IntegrationConfigUnavailable)
+    async def _settings_unavailable(request, exc: IntegrationConfigUnavailable):
+        """The kernel didn't answer for an integration's settings: a 503 to
+        retry (a webhook's sender retries too), never "not connected"."""
+        logging.getLogger("friday").warning("%s %s: %s", request.method, request.url.path, exc)
+        return JSONResponse(
+            status_code=503,
+            content={"error": "couldn't reach settings, try again"},
+            headers={"Retry-After": "5"},
+        )
+
     # Sends this app's outbox (events.publish_event) and retries anything
     # the kernel didn't take. Not started by test clients (no lifespan).
     @app.on_event("startup")

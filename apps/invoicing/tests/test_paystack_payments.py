@@ -49,6 +49,7 @@ def paystack(monkeypatch):
     monkeypatch.setattr("app.webhooks.get_integration_config", _config)
     # Each test polls back to back; the pause between checks is tested below.
     monkeypatch.setattr("app.main._verify_gap", lambda age: 0)
+    monkeypatch.setattr("app.paystack_pay.LINK_CHECK_GAPS", (0, 0))
     return state
 
 
@@ -318,6 +319,38 @@ async def test_a_debt_link_settles_the_oldest_sales_once(client, principal, pays
     assert (again["paid_cents"], again["method"]) == (1500, "mpesa")
     assert len(paystack["verify_calls"]) == asked, "a recorded link doesn't ask Paystack again"
     assert (await client.get("/pos/debts", params={"customer": "Achieng"})).json() == []
+
+
+async def test_guss_checking_a_pay_link_often_asks_paystack_rarely(client, paystack, monkeypatch):
+    from app import paystack_pay
+
+    async def no_vat(org_id):
+        return {"vat_registered": False}
+
+    monkeypatch.setattr("app.main.get_etims_config", no_vat)
+    monkeypatch.setattr(paystack_pay, "LINK_CHECK_GAPS", (60, 900))
+    await client.post("/pos/sales", json=_credit("Wanjiru", 700))
+    link = (await client.post("/pos/debts/paystack-link", json={"customer_name": "Wanjiru"})).json()
+    check = f"/pos/debts/paystack-link/{link['reference']}"
+    for _ in range(5):  # Guss every 30 s, or faster
+        assert (await client.get(check)).status_code == 200
+    assert paystack["verify_calls"].count(link["reference"]) == 1
+    # Paid meanwhile (the webhook records it): the next check says so without asking.
+    _paid(paystack, link["reference"], 700)
+    raw, headers = _signed({"event": "charge.success", "data": {"reference": link["reference"]}})
+    assert (await client.post("/external/webhooks/paystack", content=raw, headers=headers)).status_code == 200
+    assert (await client.get(check)).json()["status"] == "paid"
+
+
+async def test_an_event_for_a_business_without_paystack_is_acknowledged(client, monkeypatch):
+    async def not_connected(org_id, provider):
+        return {}
+
+    monkeypatch.setattr("app.webhooks.get_integration_config", not_connected)
+    org = "11111111-1111-1111-1111-111111111111"
+    raw, headers = _signed({"event": "charge.success", "data": {"reference": f"{org}.{org}.0a1b2c3d"}})
+    r = await client.post("/external/webhooks/paystack", content=raw, headers=headers)
+    assert r.status_code == 200 and "ignored" in r.json()  # a 400 has Paystack retry for 72 hours
 
 
 async def test_no_debt_link_for_someone_who_owes_nothing(client, paystack):

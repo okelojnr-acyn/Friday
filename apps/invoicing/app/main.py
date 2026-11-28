@@ -19,7 +19,7 @@ from friday_common import (
     get_settings,
     resource,
 )
-from friday_common.integrations import PesapalProvider, ResendProvider, StripeProvider
+from friday_common.integrations import IntegrationConfigUnavailable, PesapalProvider, ResendProvider, StripeProvider
 from friday_common.public import paid_page, webhook_url
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
@@ -74,7 +74,7 @@ from .paystack_pay import start_checkout as start_paystack_checkout
 from .paystack_pay import start_mpesa_prompt
 from .registers import router as registers_router
 from .registers import at_place, shift_for_sale, till_location
-from .webhooks import external_router
+from .webhooks import external_router, settle_pesapal_sale
 from .webhooks import router as webhooks_router
 
 resource(
@@ -191,7 +191,11 @@ async def _email_invoice(org_id: str, inv: Invoice, session: AsyncSession) -> No
     customer = await session.get(Customer, inv.customer_id)
     if customer is None or not customer.email:
         return
-    config = await get_integration_config(org_id, "resend")
+    try:
+        config = await get_integration_config(org_id, "resend")
+    except IntegrationConfigUnavailable as exc:
+        logger.warning("invoice email skipped: %s", exc)
+        return
     if not config.get("api_key"):
         return
     total = sum(line.total_cents + line.tax_cents for line in inv.lines)
@@ -554,6 +558,9 @@ async def pay_with_card(
     config = await get_integration_config(principal.org_id, "stripe")
     if not config.get("secret_key"):
         raise HTTPException(400, "Stripe is not connected -- add a secret key in Settings > Integrations")
+    # Checked before any PaymentIntent exists: without it the card form can't load.
+    if not config.get("publishable_key"):
+        raise HTTPException(400, "Stripe needs its publishable key (pk_live_...) -- add it in Apps & integrations > Stripe")
 
     if inv.kind != "invoice":
         raise HTTPException(400, "a quote can't be paid -- convert it to an invoice first")
@@ -568,7 +575,7 @@ async def pay_with_card(
     )
     inv.stripe_payment_intent_id = intent["id"]
     await session.commit()
-    return PayWithCardOut(client_secret=intent.get("client_secret"), publishable_key=config.get("publishable_key", ""))
+    return PayWithCardOut(client_secret=intent.get("client_secret"), publishable_key=config["publishable_key"])
 
 
 @invoices_router.post("/{invoice_id}/paystack-link", response_model=PaystackCheckoutOut, status_code=201)
@@ -986,23 +993,28 @@ async def pay_with_pesapal(
     # for the same reason Stripe's PaymentIntent metadata carries org_id:
     # pesapal_webhook has no Friday JWT to resolve org_id from otherwise,
     # and needs it before it can even open an org-scoped DB session.
+    stored_ipn = await pay_requests.pesapal_ipn_id(session, principal.org_id, config["consumer_key"], ipn_url)
+    metadata = {
+        "merchant_reference": f"{principal.org_id}:{invoice.id}",
+        # Pesapal tells Friday at ipn_url; the customer comes back to the paid page.
+        "ipn_url": ipn_url,
+        "callback_url": paid_page() or ipn_url,
+        "description": f"POS sale {invoice.number}",
+        "email": principal.email,
+    }
+    if stored_ipn:
+        metadata["ipn_id"] = stored_ipn
     try:
-        intent = await PesapalProvider(config).create_payment_intent(
-            charged_cents,
-            invoice.currency,
-            {
-                "merchant_reference": f"{principal.org_id}:{invoice.id}",
-                # Pesapal tells Friday at ipn_url; the customer comes back to the paid page.
-                "ipn_url": ipn_url,
-                "callback_url": paid_page() or ipn_url,
-                "description": f"POS sale {invoice.number}",
-                "email": principal.email,
-            },
-        )
+        intent = await PesapalProvider(config).create_payment_intent(charged_cents, invoice.currency, metadata)
     except (httpx.HTTPError, RuntimeError, ValueError) as exc:
         invoice.status = "void"
         await session.commit()
         raise HTTPException(502, f"Could not start Pesapal checkout: {exc}") from exc
+    # The till's poll asks Pesapal about this order if the IPN is late.
+    invoice.pesapal_tracking_id = intent.get("id") or ""
+    if not stored_ipn:
+        await pay_requests.remember_pesapal_ipn(session, principal.org_id, config["consumer_key"], ipn_url, intent.get("ipn_id", ""))
+    await session.commit()
 
     return PayWithPesapalOut(invoice_id=invoice.id, redirect_url=intent["redirect_url"])
 
@@ -1241,6 +1253,15 @@ async def get_pos_sale_status(
             await settle_paystack(session, principal.org_id, str(invoice.id), reference)
         except httpx.HTTPError as exc:
             logger.warning("paystack verify %s failed: %s", reference, exc)
+        invoice = await session.get(Invoice, invoice_id, populate_existing=True)
+    elif invoice.status == "pending" and invoice.pesapal_tracking_id and await _claim_verify(session, invoice):
+        # Same for Pesapal, so a sale settles even if its IPN is late or lost.
+        try:
+            config = await get_integration_config(principal.org_id, "pesapal")
+            if config.get("consumer_key"):
+                await settle_pesapal_sale(session, principal.org_id, invoice, invoice.pesapal_tracking_id, config)
+        except (httpx.HTTPError, RuntimeError) as exc:
+            logger.warning("pesapal status %s failed: %s", invoice.pesapal_tracking_id, exc)
         invoice = await session.get(Invoice, invoice_id, populate_existing=True)
     return PosSaleStatusOut(invoice_id=invoice.id, status=invoice.status)
 

@@ -3,6 +3,10 @@ Stripe or Pesapal, the same way) for the money; it counts only when the
 provider's own status says paid, checked on a schedule; a new request or a
 void cancels the last. Never calls a provider."""
 
+import hashlib
+import hmac
+import json
+
 import pytest
 
 import app.pay_requests as pr
@@ -13,10 +17,14 @@ def provider(monkeypatch):
     state = {"name": "paystack", "paid": {}, "made": [], "cancelled": [], "checks": []}
 
     class Fake:
+        consumer_key = "ck"
+
         async def create_pay_request(self, amount_cents, currency, **kw):
             ref = f"PRQ_{len(state['made']) + 1}"
             state["made"].append((ref, amount_cents, currency, kw["email"]))
-            return {"ref": ref, "url": "https://pay.example/" + ref if state["name"] == "pesapal" else ""}
+            state.setdefault("ipn_ids", []).append(kw["metadata"].get("ipn_id"))
+            return {"ref": ref, "url": "https://pay.example/" + ref if state["name"] == "pesapal" else "",
+                    "ipn_id": kw["metadata"].get("ipn_id") or "IPN_1"}
 
         async def pay_request_status(self, ref):
             amount = state["paid"].get(ref, 0)
@@ -93,3 +101,40 @@ async def test_pesapals_page_goes_in_the_invoice_and_no_provider_means_no_reques
     assert r.status_code == 400 and "connect" in r.json()["detail"]
     no_email = await _sent_invoice(client, email="")
     assert no_email["pay_request_provider"] == ""
+
+
+async def test_pesapal_requests_reuse_the_businesss_ipn_id(client, provider, monkeypatch):
+    monkeypatch.setattr(pr, "webhook_url", lambda name: "https://shop.example/kernel/external/webhooks/pesapal")
+    provider["name"] = "pesapal"
+    await _sent_invoice(client)
+    await _sent_invoice(client, email="bob@example.com")
+    assert provider["ipn_ids"] == [None, "IPN_1"]  # registered once, then reused
+
+
+async def test_paystacks_paymentrequest_success_settles_at_once(client, provider, kernel_auth_header, principal, monkeypatch):
+    secret = "sk_test_abc"
+
+    async def config(org_id, name):
+        assert org_id == principal.org_id
+        return {"secret_key": secret}
+
+    monkeypatch.setattr("app.webhooks.get_integration_config", config)
+    inv = await _sent_invoice(client)
+    provider["paid"]["PRQ_1"] = 5000
+    # Paystack sends back the metadata Friday gave the request (a JSON string).
+    meta = json.dumps({"org_id": principal.org_id, "invoice_id": inv["id"]})
+    raw = json.dumps({"event": "paymentrequest.success", "data": {"request_code": "PRQ_1", "metadata": meta}}).encode()
+    sig = hmac.new(secret.encode(), raw, hashlib.sha512).hexdigest()
+    headers = {"x-paystack-signature": sig, "content-type": "application/json"}
+    forged = dict(headers, **{"x-paystack-signature": "0" * 128})
+    assert (await client.post("/external/webhooks/paystack", content=raw, headers=forged)).status_code == 400
+    assert (await client.get(f"/invoices/{inv['id']}")).json()["status"] == "sent"
+
+    r = await client.post("/external/webhooks/paystack", content=raw, headers=headers)
+    assert r.status_code == 200, r.text
+    assert (await client.get(f"/invoices/{inv['id']}")).json()["status"] == "paid"
+    # The scheduled check that comes later finds it settled and stops.
+    [(first, _)] = provider["checks"]
+    await _check(client, kernel_auth_header, principal, first, 1)
+    assert len(provider["checks"]) == 1
+    assert len((await client.get(f"/invoices/{inv['id']}")).json()["payments"]) == 1

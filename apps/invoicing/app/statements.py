@@ -27,7 +27,7 @@ from friday_common import (
 )
 from friday_common.access import Scope, require
 from friday_common.clock import business_tz, local_date, local_midnight
-from friday_common.integrations import ResendProvider
+from friday_common.integrations import IntegrationConfigUnavailable, ResendProvider
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -132,7 +132,11 @@ async def invoice_remind(body: dict, session: AsyncSession = Depends(get_session
     if inv is None or inv.status != "sent" or inv.balance_cents <= 0 or inv.customer_id is None:
         return
     customer = await session.get(Customer, inv.customer_id)
-    config = await get_integration_config(org_id, "resend")
+    try:
+        config = await get_integration_config(org_id, "resend")
+    except IntegrationConfigUnavailable as exc:
+        log.warning("reminder for %s skipped: %s", inv.number, exc)
+        return
     if customer is None or not customer.email or not config.get("api_key"):
         return
     days = (datetime.now(UTC) - inv.due_at).days if inv.due_at else 0

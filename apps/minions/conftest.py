@@ -94,3 +94,14 @@ async def _dispose_engine_after_test():
 @pytest.fixture
 def kernel_auth_header():
     return {"Authorization": f"Bearer {get_settings().kernel_events_token}"}
+
+
+@pytest.fixture(autouse=True)
+def _integrations_not_connected(monkeypatch):
+    """No kernel in tests: every provider reads as not connected unless a
+    test patches get_integration_config itself."""
+
+    async def not_connected(org_id, provider):
+        return {}
+
+    monkeypatch.setattr("friday_common.integrations.config._fetch", not_connected)

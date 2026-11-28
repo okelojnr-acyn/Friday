@@ -16,6 +16,7 @@
 """
 
 import json
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -37,6 +38,7 @@ from .pay_requests import settle as settle_pay_request
 
 router = APIRouter(prefix="/internal/webhooks", tags=["webhooks"])
 external_router = APIRouter(prefix="/external/webhooks", tags=["external-webhooks"])
+log = logging.getLogger(__name__)
 
 
 @router.post("/crm-won", dependencies=[Depends(require_kernel_token)], status_code=201)
@@ -145,18 +147,33 @@ async def stripe_webhook(request: Request, session: AsyncSession = Depends(get_s
         return {"ignored": event.get("type")}
 
     await set_org_context(session, org_id)
-    inv = await session.get(Invoice, uuid.UUID(invoice_id))
+    # Locked so two deliveries of one event (Stripe retries) can't both record it.
+    inv = await session.get(Invoice, uuid.UUID(invoice_id), with_for_update=True, populate_existing=True)
     if inv is None or str(inv.org_id) != org_id:
         raise HTTPException(404, "invoice not found")
 
     await session.refresh(inv, attribute_names=["lines", "payments"])
+    # One payment per PaymentIntent, however often Stripe delivers it.
+    client_ref = f"stripe:{payment_intent.get('id') or ''}"
+    if client_ref == "stripe:":
+        raise HTTPException(400, "payment intent has no id")
+    if any(p.client_ref == client_ref for p in inv.payments):
+        await session.commit()
+        return {"ok": True}
     total = inv.grand_total_cents  # incl. tax -- see Invoice.grand_total_cents
     already_paid = inv.paid_cents
     amount = payment_intent.get("amount_received", total - already_paid)
     now = datetime.now(UTC)
 
     session.add(
-        Payment(org_id=uuid.UUID(org_id), invoice_id=inv.id, amount_cents=amount, method="card", received_at=now)
+        Payment(
+            org_id=uuid.UUID(org_id),
+            invoice_id=inv.id,
+            amount_cents=amount,
+            method="card",
+            received_at=now,
+            client_ref=client_ref,
+        )
     )
     await session.flush()
     await session.refresh(inv, attribute_names=["payments"])
@@ -179,9 +196,10 @@ async def stripe_webhook(request: Request, session: AsyncSession = Depends(get_s
 async def pesapal_webhook(
     order_tracking_id: str = Query(alias="OrderTrackingId"),
     order_merchant_reference: str = Query(alias="OrderMerchantReference"),
+    order_notification_type: str = Query("IPNCHANGE", alias="OrderNotificationType"),
     session: AsyncSession = Depends(get_session),
 ):
-    """Pesapal calls this directly (registered once per process via
+    """Pesapal calls this directly (registered once per business via
     PesapalProvider's RegisterIPN, see pay_with_pesapal in main.py) --
     same "no Friday JWT or kernel token" trust model as stripe_webhook,
     but Pesapal's version of "don't trust the callback" is stronger: the
@@ -194,7 +212,17 @@ async def pesapal_webhook(
     set by pay_with_pesapal) for the same chicken-and-egg reason
     stripe_webhook's PaymentIntent metadata carries org_id: nothing
     identifies which org's config to check until the reference is
-    parsed."""
+    parsed.
+
+    Answers with the acknowledgement Pesapal documents (its IPN section:
+    the notification's own fields echoed back with "status": 200), so it
+    stops re-sending."""
+    ack = {
+        "orderNotificationType": order_notification_type,
+        "orderTrackingId": order_tracking_id,
+        "orderMerchantReference": order_merchant_reference,
+        "status": 200,
+    }
     # "{org_id}:{invoice_id}" from the till; a pay request adds ":<random>".
     parts = order_merchant_reference.split(":")
     if len(parts) not in (2, 3):
@@ -206,7 +234,7 @@ async def pesapal_webhook(
             raise HTTPException(400, "pesapal not configured for this org")
         await set_org_context(session, org_id)
         await settle_pay_request(session, org_id, invoice_id, order_tracking_id)
-        return {"ok": True}
+        return ack
 
     config = await get_integration_config(org_id, "pesapal")
     if not config.get("consumer_key"):
@@ -216,10 +244,27 @@ async def pesapal_webhook(
     invoice = await session.get(Invoice, uuid.UUID(invoice_id))
     if invoice is None or str(invoice.org_id) != org_id:
         raise HTTPException(404, "invoice not found")
-    if invoice.status != "pending":
-        return {"ok": True}  # already resolved -- IPN delivery can repeat
+    await settle_pesapal_sale(session, org_id, invoice, order_tracking_id, config)
+    return ack
 
-    status = await PesapalProvider(config).get_transaction_status(order_tracking_id)
+
+async def settle_pesapal_sale(session: AsyncSession, org_id: str, invoice: Invoice, tracking_id: str, config: dict) -> None:
+    """Asks Pesapal about a till sale's order and records the result once
+    (the IPN and the till's status poll both end here). `session` is
+    scoped to `org_id`; this commits when it changes anything."""
+    if invoice.status != "pending":
+        return  # already resolved -- IPN delivery can repeat
+    if invoice.pesapal_tracking_id and invoice.pesapal_tracking_id != tracking_id:
+        log.warning("pesapal %s is not the order sale %s waits on", tracking_id, invoice.number)
+        return
+
+    status = await PesapalProvider(config).get_transaction_status(tracking_id)
+    # Locked, and checked again: two IPNs (or an IPN and a poll) in flight
+    # must not both record the payment.
+    invoice = await session.get(Invoice, invoice.id, with_for_update=True, populate_existing=True)
+    if invoice is None or invoice.status != "pending":
+        await session.commit()
+        return
     now = datetime.now(UTC)
 
     if status == "COMPLETED":
@@ -248,10 +293,10 @@ async def pesapal_webhook(
         invoice.status = "void"
         invoice.updated_at = now
         await session.commit()
-    # else ("PENDING", "REVERSED", or anything unrecognized): leave as
-    # "pending" -- Pesapal may call the IPN again as the status changes.
-
-    return {"ok": True}
+    else:
+        # "PENDING", "REVERSED", or anything unrecognized: left "pending" --
+        # Pesapal may call the IPN again as the status changes.
+        await session.commit()
 
 
 @external_router.post("/paystack")
@@ -260,25 +305,38 @@ async def paystack_webhook(request: Request, session: AsyncSession = Depends(get
     dashboard). The reference ("<org>.<invoice>.<random>", from
     paystack_pay.new_reference) only says which org's key checks the
     `x-paystack-signature` and which invoice to settle; settle then asks
-    Paystack itself. The body's own status and amount are never used."""
+    Paystack itself. The body's own status and amount are never used.
+
+    A Payment Request (pay_requests.py) has no Friday reference; its
+    `paymentrequest.success` carries the org and invoice in the metadata
+    Friday sent, and settles the invoice's request at once (the scheduled
+    checks stay as the fallback and stop once it's paid)."""
     raw_body = await request.body()
     try:
         event = json.loads(raw_body)
     except json.JSONDecodeError:
         raise HTTPException(400, "invalid payload")
-    reference = str((event.get("data") or {}).get("reference") or "")
+    data = event.get("data") or {}
+    signature = request.headers.get("x-paystack-signature", "")
+    reference = str(data.get("reference") or "")
     parsed = parse_reference(reference)
     debt = parse_debt_reference(reference)
-    if parsed is None and debt is None:
-        await _forward_foreign_paystack(raw_body, request.headers.get("x-paystack-signature", ""))
+    pay_request = _pay_request_target(event) if parsed is None and debt is None else None
+    if parsed is None and debt is None and pay_request is None:
+        await _forward_foreign_paystack(raw_body, signature)
         return {"ignored": "not a Friday reference"}
-    org_id = (parsed or debt)[0]
+    org_id = (parsed or debt or pay_request)[0]
 
     config = await get_integration_config(org_id, "paystack")
     if not config.get("secret_key"):
-        raise HTTPException(400, "paystack not configured for this org")
-    if not PaystackProvider(config).verify_webhook_signature(raw_body, request.headers.get("x-paystack-signature", "")):
+        # 200, not an error: a 400 has Paystack retry it for 72 hours for nothing.
+        return {"ignored": "paystack not connected for this business"}
+    if not PaystackProvider(config).verify_webhook_signature(raw_body, signature):
         raise HTTPException(400, "invalid signature")
+    if pay_request is not None:
+        await set_org_context(session, org_id)
+        await settle_pay_request(session, org_id, pay_request[1], pay_request[2])
+        return {"ok": True}
     if event.get("event") != "charge.success":
         return {"ignored": event.get("event")}
 
@@ -288,6 +346,28 @@ async def paystack_webhook(request: Request, session: AsyncSession = Depends(get
     else:
         await settle_debt(session, org_id, debt[1], reference)
     return {"ok": True}
+
+
+def _pay_request_target(event: dict) -> tuple[str, str, str] | None:
+    """(org, invoice, request_code) of a `paymentrequest.success` Friday
+    asked for, from the metadata pay_requests.start sent; None otherwise.
+    The org only picks which key checks the signature."""
+    if event.get("event") != "paymentrequest.success":
+        return None
+    data = event.get("data") or {}
+    meta = data.get("metadata")
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(meta, dict) or not data.get("request_code"):
+        return None
+    try:
+        org_id, invoice_id = str(uuid.UUID(str(meta.get("org_id")))), str(uuid.UUID(str(meta.get("invoice_id"))))
+    except ValueError:
+        return None
+    return org_id, invoice_id, str(data["request_code"])
 
 
 async def _forward_foreign_paystack(raw_body: bytes, signature: str) -> None:

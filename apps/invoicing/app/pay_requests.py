@@ -12,6 +12,7 @@ signed invoice.paid only makes it sooner. A new request cancels the last.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import secrets
 import uuid
@@ -22,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from friday_common import first_delivery, get_integration_config, get_session, publish_event, require_kernel_token, set_org_context
 from friday_common.integrations import PaystackProvider, PesapalProvider, StripeProvider
 from friday_common.public import paid_page, webhook_url
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .credit import rebook_ref
@@ -73,19 +75,55 @@ async def start(session: AsyncSession, org_id: str, inv: Invoice) -> str:
     await cancel(org_id, inv)
     reference = f"{org_id}:{inv.id}:{secrets.token_hex(4)}"
     due_days = max(0, (inv.due_at - datetime.now(UTC)).days) if inv.due_at else 7
+    ipn_url = webhook_url("pesapal")
+    metadata = {"org_id": org_id, "invoice_id": str(inv.id), "merchant_reference": reference,
+                "callback_url": paid_page(), "ipn_url": ipn_url}
+    stored_ipn = await pesapal_ipn_id(session, org_id, client.consumer_key, ipn_url) if name == "pesapal" else ""
+    if stored_ipn:
+        metadata["ipn_id"] = stored_ipn
     try:
         out = await client.create_pay_request(
             inv.balance_cents, inv.currency, email=customer.email, name=customer.name,
             description=f"Invoice {inv.number}", reference=reference, due_days=due_days,
-            metadata={"org_id": org_id, "invoice_id": str(inv.id), "merchant_reference": reference,
-                      "callback_url": paid_page(), "ipn_url": webhook_url("pesapal")},
+            metadata=metadata,
         )
     except (httpx.HTTPError, RuntimeError, ValueError, KeyError) as exc:
         raise HTTPException(502, f"{name.capitalize()} couldn't take the request: {exc}") from exc
+    if name == "pesapal" and not stored_ipn:
+        await remember_pesapal_ipn(session, org_id, client.consumer_key, ipn_url, out.get("ipn_id", ""))
     inv.pay_request_provider, inv.pay_request_ref, inv.pay_request_url = name, out["ref"], out["url"]
     inv.pay_request_cents = inv.balance_cents
     await _check_later(session, org_id, inv, 0)
     return name
+
+
+def _pesapal_account(consumer_key: str) -> str:
+    # A new Pesapal account (another consumer key) needs its own IPN id.
+    return hashlib.sha256(consumer_key.encode()).hexdigest()[:16]
+
+
+async def pesapal_ipn_id(session: AsyncSession, org_id: str, consumer_key: str, url: str) -> str:
+    """The IPN id Pesapal gave this business for `url` ("" when none is
+    stored yet). `session` is scoped to `org_id`."""
+    found = await session.scalar(
+        text("SELECT ipn_id FROM pesapal_ipns WHERE org_id = :org AND account = :account AND url = :url"),
+        {"org": org_id, "account": _pesapal_account(consumer_key), "url": url},
+    )
+    return found or ""
+
+
+async def remember_pesapal_ipn(session: AsyncSession, org_id: str, consumer_key: str, url: str, ipn_id: str) -> None:
+    """Keeps a newly registered IPN id, so no process registers it again.
+    The caller commits."""
+    if not ipn_id or not url:
+        return
+    await session.execute(
+        text(
+            "INSERT INTO pesapal_ipns (org_id, account, url, ipn_id) VALUES (:org, :account, :url, :ipn)"
+            " ON CONFLICT DO NOTHING"
+        ),
+        {"org": org_id, "account": _pesapal_account(consumer_key), "url": url, "ipn": ipn_id},
+    )
 
 
 async def cancel(org_id: str, inv: Invoice) -> None:

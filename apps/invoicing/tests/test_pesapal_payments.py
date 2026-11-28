@@ -5,7 +5,10 @@ PesapalProvider is monkeypatched with a fake standing in for the HTTP
 calls friday_common/integrations/pesapal.py makes.
 """
 
+import asyncio
 import types
+
+import pytest
 
 
 def _settings_with_public_url(url="http://localhost:8002"):
@@ -32,7 +35,9 @@ async def test_pay_with_pesapal_requires_app_public_url(client, monkeypatch):
     assert resp.status_code == 500
 
 
-async def test_pay_with_pesapal_creates_pending_invoice_and_returns_redirect(client, principal, monkeypatch):
+async def test_pay_with_pesapal_creates_pending_invoice_and_returns_redirect(client, principal, monkeypatch, pesapal_status):
+    pesapal_status.answer = "PENDING"  # what the status poll below hears from Pesapal
+
     async def fake_config(org_id, provider):
         return {"consumer_key": "ck", "consumer_secret": "cs"}
 
@@ -211,3 +216,86 @@ async def test_pesapal_hears_back_at_this_fridays_own_address(client, monkeypatc
     assert resp.status_code == 201, resp.text
     assert seen["ipn_url"] == "https://shop.example/kernel/external/webhooks/pesapal"
     assert seen["callback_url"] == "https://shop.example/paid"
+
+
+class _StatusPesapal:
+    """Pesapal's GetTransactionStatus, answering `answer` after a pause."""
+
+    calls = 0
+    answer = "COMPLETED"
+
+    def __init__(self, config):
+        pass
+
+    async def get_transaction_status(self, order_tracking_id):
+        assert order_tracking_id == "ot_123"
+        type(self).calls += 1
+        await asyncio.sleep(0.05)  # lets two deliveries overlap
+        return self.answer
+
+
+@pytest.fixture
+def pesapal_status(monkeypatch):
+    async def fake_config(org_id, provider):
+        return {"consumer_key": "ck", "consumer_secret": "cs"}
+
+    status = type("S", (_StatusPesapal,), {"calls": 0})
+    monkeypatch.setattr("app.webhooks.get_integration_config", fake_config)
+    monkeypatch.setattr("app.webhooks.PesapalProvider", status)
+    return status
+
+
+async def test_the_ipn_is_acknowledged_the_way_pesapal_documents(client, principal, monkeypatch, pesapal_status):
+    invoice_id = await _start_pending_sale(client, principal, monkeypatch)
+    ref = f"{principal.org_id}:{invoice_id}"
+    params = {"OrderTrackingId": "ot_123", "OrderMerchantReference": ref, "OrderNotificationType": "IPNCHANGE"}
+    resp = await client.get("/external/webhooks/pesapal", params=params)
+    assert resp.json() == {
+        "orderNotificationType": "IPNCHANGE",
+        "orderTrackingId": "ot_123",
+        "orderMerchantReference": ref,
+        "status": 200,
+    }
+
+
+async def test_two_ipns_at_once_record_one_payment(client, principal, monkeypatch, pesapal_status):
+    invoice_id = await _start_pending_sale(client, principal, monkeypatch)
+    params = {"OrderTrackingId": "ot_123", "OrderMerchantReference": f"{principal.org_id}:{invoice_id}"}
+    done = await asyncio.gather(*(client.get("/external/webhooks/pesapal", params=params) for _ in range(2)))
+    assert [r.status_code for r in done] == [200, 200]
+    inv = (await client.get(f"/invoices/{invoice_id}")).json()
+    assert inv["status"] == "paid" and [p["amount_cents"] for p in inv["payments"]] == [1000]
+
+
+async def test_the_till_poll_asks_pesapal_when_the_ipn_is_late(client, principal, monkeypatch, pesapal_status):
+    invoice_id = await _start_pending_sale(client, principal, monkeypatch)
+    pesapal_status.answer = "PENDING"
+    for _ in range(3):  # back to back: asked once, then on the till's schedule
+        assert (await client.get(f"/pos/sales/{invoice_id}/status")).json()["status"] == "pending"
+    assert pesapal_status.calls == 1
+    monkeypatch.setattr("app.main._verify_gap", lambda age: 0)
+    pesapal_status.answer = "COMPLETED"
+    assert (await client.get(f"/pos/sales/{invoice_id}/status")).json()["status"] == "paid"
+
+
+async def test_the_ipn_address_is_registered_once_per_business(client, monkeypatch):
+    seen = []
+
+    async def fake_config(org_id, provider):
+        return {"consumer_key": "ck", "consumer_secret": "cs"}
+
+    class FakePesapal:
+        def __init__(self, config):
+            pass
+
+        async def create_payment_intent(self, amount_cents, currency, metadata):
+            seen.append(metadata.get("ipn_id"))
+            # The adapter registers the IPN only when no id is passed in.
+            return {"id": "ot_1", "redirect_url": "https://pay.pesapal.com/x", "ipn_id": metadata.get("ipn_id") or "IPN_1"}
+
+    monkeypatch.setattr("app.main.get_integration_config", fake_config)
+    monkeypatch.setattr("friday_common.public.get_settings", lambda: _settings_with_public_url())
+    monkeypatch.setattr("app.main.PesapalProvider", FakePesapal)
+    for _ in range(2):
+        assert (await client.post("/pos/sales/pay-with-pesapal", json=await _pesapal_sale_body())).status_code == 201
+    assert seen == [None, "IPN_1"]

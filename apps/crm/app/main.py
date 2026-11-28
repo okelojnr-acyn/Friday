@@ -75,10 +75,10 @@ async def _notify_slack(org_id: str, text: str) -> None:
     just gets no notification, same posture as `publish_event` -- a
     notification failing or being unconfigured must never fail the
     opportunity update that triggered it."""
-    config = await get_integration_config(org_id, "slack")
-    if not config.get("webhook_url"):
-        return
     try:
+        config = await get_integration_config(org_id, "slack")
+        if not config.get("webhook_url"):
+            return
         await SlackProvider(config).notify(text)
     except Exception as exc:  # noqa: BLE001 -- see docstring, this must never propagate
         logger.warning("slack notify failed: %s", exc)

@@ -35,7 +35,7 @@ from friday_common.access import (
     spending_policy,
     who_can,
 )
-from friday_common.integrations import AcynWalletProvider, GoogleCalendarProvider
+from friday_common.integrations import AcynWalletProvider, GoogleCalendarProvider, IntegrationConfigUnavailable
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -347,7 +347,12 @@ async def _sync_meeting_to_calendar(meeting: Meeting) -> None:
     turn into a 500 on what is, from the caller's point of view, a
     successful meeting create/update; the result is just visible on the
     record instead (same posture as ExpenseClaim's payout step)."""
-    provider = await _calendar_provider(str(meeting.org_id))
+    try:
+        provider = await _calendar_provider(str(meeting.org_id))
+    except IntegrationConfigUnavailable as exc:
+        meeting.sync_status = "error"
+        meeting.sync_error = str(exc)
+        return
     if provider is None:
         meeting.sync_status = "pending"
         meeting.sync_error = "Google Calendar is not connected -- add it in Settings > Integrations"
@@ -654,12 +659,12 @@ async def delete_meeting(
     if not (_organises(principal, meeting) or _sees_all(principal)):
         raise HTTPException(403, "only whoever organised it cancels it")
     if meeting.calendar_event_id:
-        provider = await _calendar_provider(str(meeting.org_id))
-        if provider is not None:
-            try:
+        try:
+            provider = await _calendar_provider(str(meeting.org_id))
+            if provider is not None:
                 await provider.delete_event(meeting.calendar_event_id)
-            except Exception:  # noqa: BLE001 -- deleting our own record shouldn't hinge on Google's API being up
-                pass
+        except Exception:  # noqa: BLE001 -- deleting our own record shouldn't hinge on Google's API (or settings) being up
+            pass
     await _tell_meeting("minions.meeting.cancelled", principal, meeting, [a.user_id for a in people], session)
     await session.delete(meeting)
     await session.commit()

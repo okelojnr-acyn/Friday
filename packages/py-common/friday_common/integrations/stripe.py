@@ -11,12 +11,14 @@ on an invoice).
 
 import hashlib
 import hmac
+import time
 
 import httpx
 
 from .base import PaymentProvider
 
 STRIPE_API_BASE = "https://api.stripe.com/v1"
+SIGNATURE_TOLERANCE_SECONDS = 300
 
 
 class StripeProvider(PaymentProvider):
@@ -109,10 +111,15 @@ class StripeProvider(PaymentProvider):
         `payment_intent.succeeded` straight to the webhook route."""
         if not self.webhook_secret or not sig_header:
             return False
-        parts = dict(p.split("=", 1) for p in sig_header.split(",") if "=" in p)
-        timestamp, signature = parts.get("t"), parts.get("v1")
-        if not timestamp or not signature:
+        pairs = [p.strip().split("=", 1) for p in sig_header.split(",") if "=" in p]
+        timestamp = next((v for k, v in pairs if k == "t"), "")
+        # Several v1 values while the business rolls its secret: any may match.
+        signatures = [v for k, v in pairs if k == "v1"]
+        if not timestamp.isdigit() or not signatures:
+            return False
+        # A signed event older than Stripe's own 5-minute tolerance is a replay.
+        if abs(time.time() - int(timestamp)) > SIGNATURE_TOLERANCE_SECONDS:
             return False
         signed_payload = f"{timestamp}.".encode() + payload
         expected = hmac.new(self.webhook_secret.encode(), signed_payload, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, signature)
+        return any(hmac.compare_digest(expected, s) for s in signatures)

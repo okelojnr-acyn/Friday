@@ -23,7 +23,7 @@ from friday_common.public import paid_page
 from friday_common.integrations import PaystackProvider
 from friday_common.access import Scope, require
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .credit import _owed, _unpaid, apply_debt_payment, customer_by_name, rebook_ref
@@ -388,6 +388,31 @@ async def settle_debt(session: AsyncSession, org_id: str, customer_id: str, refe
     return {"status": "paid", "customer": customer.name, "paid_cents": amount, "method": method}
 
 
+# Seconds between Paystack checks of one pay link: in its first hour, after.
+LINK_CHECK_GAPS = (60, 900)
+
+
+async def _claim_link_check(session: AsyncSession, org_id: str, reference: str) -> bool:
+    """True if this check of a pay link may ask Paystack now: at most once
+    a minute for the first hour of checks, then every 15 minutes (the
+    webhook settles it sooner). Claimed atomically, so several workers or
+    a chatty Guss don't multiply the calls."""
+    claimed = await session.execute(
+        text(
+            "INSERT INTO paystack_link_checks (org_id, reference) VALUES (:org, :ref)"
+            " ON CONFLICT (org_id, reference) DO UPDATE SET checked_at = now()"
+            " WHERE paystack_link_checks.checked_at < now() - make_interval(secs => CASE"
+            "   WHEN now() - paystack_link_checks.first_checked_at < interval '1 hour' THEN CAST(:early AS float8)"
+            "   ELSE CAST(:late AS float8) END)"
+            " RETURNING 1"
+        ),
+        {"org": org_id, "ref": reference, "early": float(LINK_CHECK_GAPS[0]), "late": float(LINK_CHECK_GAPS[1])},
+    )
+    won = claimed.first() is not None
+    await session.commit()
+    return won
+
+
 @router.get("/debts/paystack-link/{reference}")
 async def check_debt_link(
     reference: str,
@@ -411,6 +436,9 @@ async def check_debt_link(
     if paid and paid[1]:
         customer = await session.get(Customer, uuid.UUID(parsed[1]))
         return {"status": "paid", "customer": customer.name if customer else "", "paid_cents": int(paid[1]), "method": paid[0]}
+    # Guss asks for 14 days; Paystack is asked on Friday's own schedule.
+    if not await _claim_link_check(session, principal.org_id, reference):
+        return {"status": "pending"}
     try:
         return await settle_debt(session, principal.org_id, parsed[1], reference)
     except httpx.HTTPError as exc:
